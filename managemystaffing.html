@@ -1193,14 +1193,35 @@ const App = {
       const demoBar = document.querySelector('.demo-bar');
       if (demoBar) demoBar.style.display = 'none';
 
-      // Try to restore session from stored token
-      if (_authToken) {
+      // Check for invite token in URL (?invite=TOKEN)
+      const urlParams = new URLSearchParams(window.location.search);
+      const inviteToken = urlParams.get('invite');
+      if (inviteToken) {
+        // Clean token from URL without reload
+        window.history.replaceState({}, document.title, window.location.pathname);
+        await this._handleInviteLink(inviteToken);
+        return;
+      }
+
+      // Try to restore session — prefer demo token from sessionStorage for demo@demo.com
+      const demoToken = (() => { try { return sessionStorage.getItem('mms_demo_token'); } catch(e) { return null; } })();
+      const sessionToken = _authToken || demoToken;
+      if (sessionToken) {
         try {
-          const vResp = await fetch('/api/auth/verify', {headers:{'Authorization':`Bearer ${_authToken}`}});
+          const vResp = await fetch('/api/auth/verify', {headers:{'Authorization':`Bearer ${sessionToken}`}});
           if (vResp.ok) {
             const {user} = await vResp.json();
-            const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${_authToken}`}});
+            if (user.demo) {
+              // Demo session — use seed data only
+              _authToken = sessionToken;
+              this.S.shifts = generateShifts(this.S.employees);
+              this.S.user = user;
+              this.showApp();
+              return;
+            }
+            const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${sessionToken}`}});
             if (dResp.ok) {
+              _authToken = sessionToken;
               this.applyServerData(await dResp.json());
               this.S.user = user;
               this.showApp();
@@ -1210,8 +1231,10 @@ const App = {
         } catch(e) {}
         // Token invalid — clear it
         localStorage.removeItem('mms_token');
+        try { sessionStorage.removeItem('mms_demo_token'); } catch(e2) {}
         _authToken = null;
       }
+
       // Show login page
       document.getElementById('login-page').style.display = 'flex';
       document.getElementById('app').style.display = 'none';
@@ -1305,14 +1328,21 @@ const App = {
         }
         const {token, user} = await resp.json();
         _authToken = token;
-        localStorage.setItem('mms_token', token);
-        // Load all data
-        const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${token}`}});
-        if (dResp.ok) this.applyServerData(await dResp.json());
-        else {
-          // No data yet (fresh server) — seed with current state + generate shifts
+        // Demo accounts use seed data only — nothing is read from or written to the server
+        if (user.demo) {
           this.S.shifts = generateShifts(this.S.employees);
-          this.persistData();
+          // Don't persist the token for demo sessions (sessionStorage only)
+          try { sessionStorage.setItem('mms_demo_token', token); } catch(e2) {}
+        } else {
+          localStorage.setItem('mms_token', token);
+          // Load real facility data from server
+          const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${token}`}});
+          if (dResp.ok) this.applyServerData(await dResp.json());
+          else {
+            // Fresh server with no data yet — seed and save
+            this.S.shifts = generateShifts(this.S.employees);
+            this.persistData();
+          }
         }
         if (errEl) errEl.style.display = 'none';
         this.S.user = user;
@@ -1675,19 +1705,33 @@ const App = {
           </div>
         </div>
         <div class="buildings-grid">${cards}</div>
+        ${IS_SERVER_MODE && !this.S.user?.demo ? `
+        <div style="margin-top:32px;padding:16px 20px;background:var(--blue-l);border:1px solid var(--blue-m);border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:16px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--blue-d)" stroke-width="2" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <div>
+              <div style="font-size:13px;font-weight:600;color:var(--g700)">Live Production Data</div>
+              <div style="font-size:12px;color:var(--g500);margin-top:1px">All data is stored server-side and persists across sessions. Invite admins to give them access to their building dashboard.</div>
+            </div>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="App.openInviteModal(null,'admin')" style="flex-shrink:0">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/></svg>
+            Invite Admin
+          </button>
+        </div>` : `
         <div style="margin-top:32px;padding:16px 20px;background:var(--g50);border:1px solid var(--g200);border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:16px">
           <div style="display:flex;align-items:center;gap:10px">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--g400)" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>
             <div>
-              <div style="font-size:13px;font-weight:600;color:var(--g700)">Persistent Data Storage</div>
-              <div style="font-size:12px;color:var(--g400);margin-top:1px">All facility data is saved locally and survives code updates. Last saved: ${(() => { try { const d=JSON.parse(localStorage.getItem(SEC.DATA_KEY)||'{}'); return d.savedAt ? new Date(d.savedAt).toLocaleString() : 'Never'; } catch(e){return 'Unknown';} })()}</div>
+              <div style="font-size:13px;font-weight:600;color:var(--g700)">Demo Mode — Seed Data</div>
+              <div style="font-size:12px;color:var(--g400);margin-top:1px">You are viewing demo data. Nothing you change here is saved permanently.</div>
             </div>
           </div>
           <button class="btn btn-ghost btn-sm" style="color:var(--red);border:1.5px solid var(--g200)" onclick="App.resetAllData()">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>
             Reset to Demo Data
           </button>
-        </div>
+        </div>`}
       </div>`;
   },
 
@@ -1716,9 +1760,13 @@ const App = {
   },
 
   addAdminToBuilding(buildingId) {
-    this.S._addingAdminToBuildingId = buildingId;
-    document.getElementById('emp-role').value = 'admin';
-    this.openModal('modal-add-emp');
+    if (IS_SERVER_MODE) {
+      this.openInviteModal(buildingId, 'admin');
+    } else {
+      this.S._addingAdminToBuildingId = buildingId;
+      document.getElementById('emp-role').value = 'admin';
+      this.openModal('modal-add-emp');
+    }
   },
 
   // ── SIDEBAR ─────────────────────────────────────────────────
@@ -2292,6 +2340,167 @@ const App = {
         </div>
         ${steps}
       </div>`;
+  },
+
+  // ── INVITE SYSTEM ────────────────────────────────────────────
+  async _handleInviteLink(token) {
+    // Show login page while we verify
+    document.getElementById('login-page').style.display = 'flex';
+    document.getElementById('app').style.display = 'none';
+    try {
+      const r = await fetch(`/api/invite/verify?token=${encodeURIComponent(token)}`);
+      const data = await r.json();
+      if (!r.ok) {
+        // Show error on login page
+        const errEl = document.getElementById('login-error');
+        if (errEl) { errEl.textContent = data.error || 'Invalid invitation link.'; errEl.style.display = 'block'; }
+        return;
+      }
+      // Transform login card into set-password form
+      this._showSetPasswordForm(token, data.email, data.name);
+    } catch(e) {
+      const errEl = document.getElementById('login-error');
+      if (errEl) { errEl.textContent = 'Could not verify invitation. Please try again.'; errEl.style.display = 'block'; }
+    }
+  },
+
+  _showSetPasswordForm(token, email, name) {
+    const card = document.querySelector('.login-card');
+    if (!card) return;
+    card.innerHTML = `
+      <div class="login-logo">
+        <div class="login-logo-icon" style="background:transparent;padding:0;width:52px;height:52px">
+          <svg viewBox="0 0 100 92" xmlns="http://www.w3.org/2000/svg" width="52" height="52">
+            <rect x="68" y="4" width="13" height="24" rx="4" fill="#6B9E7A"/>
+            <path d="M50 5 L0 52 Q0 54 2 54 L98 54 Q100 54 100 52 Z" fill="#6B9E7A"/>
+            <rect x="2" y="50" width="96" height="42" rx="6" fill="#6B9E7A"/>
+            <rect x="35" y="15" width="12" height="10" rx="2.5" fill="white"/>
+            <rect x="51" y="15" width="12" height="10" rx="2.5" fill="white"/>
+            <rect x="35" y="28" width="12" height="10" rx="2.5" fill="white"/>
+            <rect x="51" y="28" width="12" height="10" rx="2.5" fill="white"/>
+            <rect x="62" y="57" width="11" height="9" rx="2" fill="white"/>
+            <rect x="76" y="57" width="11" height="9" rx="2" fill="white"/>
+            <rect x="62" y="69" width="11" height="9" rx="2" fill="white"/>
+            <rect x="76" y="69" width="11" height="9" rx="2" fill="white"/>
+            <rect x="6" y="63" width="30" height="9" rx="4.5" fill="white"/>
+            <rect x="16" y="53" width="9" height="29" rx="4.5" fill="white"/>
+            <rect x="40" y="68" width="20" height="24" rx="3" fill="white"/>
+          </svg>
+        </div>
+        <div>
+          <div class="login-logo-text">ManageMyStaffing</div>
+          <span class="login-logo-sub">Set Your Password to Get Started</span>
+        </div>
+      </div>
+      <div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:10px;padding:14px 16px;margin-bottom:20px">
+        <div style="font-size:13px;font-weight:700;color:var(--blue-d)">Welcome, ${sanitize(name)}!</div>
+        <div style="font-size:12px;color:var(--g600);margin-top:3px">Choose a password for your account. You'll use it every time you sign in.</div>
+      </div>
+      <div id="invite-error" class="login-error-msg"></div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" value="${sanitize(email)}" readonly style="background:var(--g50);color:var(--g500);cursor:not-allowed">
+      </div>
+      <div class="form-group">
+        <label>Choose Password</label>
+        <input type="password" id="invite-pass" placeholder="At least 8 characters" maxlength="128"
+          oninput="const b=document.getElementById('invite-pw-bar');if(b)b.className='pw-strength-bar '+pwStrength(this.value)"
+          onkeydown="if(event.key==='Enter')App.acceptInvite('${token}','${sanitize(email)}')">
+        <div class="pw-strength-bar" id="invite-pw-bar"></div>
+      </div>
+      <div class="form-group">
+        <label>Confirm Password</label>
+        <input type="password" id="invite-pass2" placeholder="Re-enter password" maxlength="128"
+          onkeydown="if(event.key==='Enter')App.acceptInvite('${token}','${sanitize(email)}')">
+      </div>
+      <button class="btn btn-primary btn-full" onclick="App.acceptInvite('${token}','${sanitize(email)}')">Set Password &amp; Sign In</button>
+      <p style="font-size:11px;color:var(--g400);text-align:center;margin-top:12px">All sessions are monitored and audited per HIPAA 45 CFR §164.312.</p>`;
+  },
+
+  async acceptInvite(token, email) {
+    const pass  = document.getElementById('invite-pass')?.value || '';
+    const pass2 = document.getElementById('invite-pass2')?.value || '';
+    const errEl = document.getElementById('invite-error');
+    const showErr = msg => { if(errEl){errEl.textContent=msg;errEl.style.display='block';} };
+    if (pass.length < 8) { showErr('Password must be at least 8 characters.'); return; }
+    if (pass !== pass2)  { showErr('Passwords do not match.'); return; }
+    const btn = document.querySelector('.login-card .btn-primary');
+    if (btn) { btn.disabled = true; btn.textContent = 'Activating…'; }
+    try {
+      const hash = hashPw(email.toLowerCase(), pass);
+      const r    = await fetch('/api/invite/accept', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ token, passwordHash: hash }),
+      });
+      const data = await r.json();
+      if (!r.ok) { showErr(data.error || 'Activation failed.'); if(btn){btn.disabled=false;btn.textContent='Set Password & Sign In';} return; }
+      // Log in automatically
+      _authToken = data.token;
+      localStorage.setItem('mms_token', data.token);
+      const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${data.token}`}});
+      if (dResp.ok) this.applyServerData(await dResp.json());
+      this.S.user = data.user;
+      this.showToast(`Welcome, ${data.user.name}! Your account is ready.`);
+      this.showApp();
+    } catch(e) {
+      showErr('Connection error. Please try again.');
+      if(btn){btn.disabled=false;btn.textContent='Set Password & Sign In';}
+    }
+  },
+
+  openInviteModal(buildingId, role = 'admin') {
+    this.S._inviteBuildingId = buildingId;
+    this.S._inviteRole = role;
+    const b = this.S.buildings.find(b=>b.id===buildingId);
+    document.getElementById('invite-building-label').textContent = b?.name || 'this facility';
+    document.getElementById('invite-role-val').value = role;
+    document.getElementById('invite-name').value = '';
+    document.getElementById('invite-email').value = '';
+    document.getElementById('invite-error-msg').style.display = 'none';
+    document.getElementById('invite-error-msg').textContent = '';
+    this.openModal('modal-invite');
+  },
+
+  async sendInvite() {
+    const name  = document.getElementById('invite-name')?.value.trim();
+    const email = document.getElementById('invite-email')?.value.trim();
+    const role  = document.getElementById('invite-role-val')?.value || 'admin';
+    const bId   = this.S._inviteBuildingId;
+    const errEl = document.getElementById('invite-error-msg');
+    const showErr = msg => { if(errEl){errEl.textContent=msg;errEl.style.display='block';} };
+    if (!name)  { showErr('Name is required.'); return; }
+    if (!email) { showErr('Email is required.'); return; }
+    const btn = document.getElementById('invite-send-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+    try {
+      const r = await fetch('/api/invite', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},
+        body: JSON.stringify({ name, email, role, buildingId: bId }),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        showErr(data.error || 'Failed to send invite.');
+        if(btn){btn.disabled=false;btn.textContent='Send Invitation';}
+        return;
+      }
+      this.closeModal('modal-invite');
+      if (data.emailWarning) {
+        this.showToast('Account created — but email failed to send. Share the invite link manually.', 'warn');
+        this.S._lastInviteLink = data.inviteLink;
+      } else {
+        this.showToast(`Invitation sent to ${email}`);
+      }
+      // Refresh platform view so new account shows
+      if (IS_SERVER_MODE) {
+        const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${_authToken}`}});
+        if (dResp.ok) { this.applyServerData(await dResp.json()); this.render(); }
+      }
+    } catch(e) {
+      showErr('Connection error. Please try again.');
+      if(btn){btn.disabled=false;btn.textContent='Send Invitation';}
+    }
   },
 
   // ── PCC ─────────────────────────────────────────────────────
@@ -4259,7 +4468,7 @@ Tap the link below to view and claim:\nhttps://managemystaffing.com/claim?token=
       hrAccounts:this.S.hrAccounts,
       jobPostings:this.S.jobPostings,
     };
-    if (IS_SERVER_MODE && _authToken) {
+    if (IS_SERVER_MODE && _authToken && !this.S.user?.demo) {
       fetch('/api/data',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},body:JSON.stringify(payload)})
         .catch(()=>{});
       return;
@@ -4404,6 +4613,33 @@ App.init().catch(e => {
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="App.logout()">Decline &amp; Sign Out</button>
       <button class="btn btn-primary" id="privacy-confirm-btn" disabled onclick="App.acceptPrivacyNotice()">Accept &amp; Continue</button>
+    </div>
+  </div>
+</div>
+
+<!-- INVITE MODAL -->
+<div class="modal-overlay" id="modal-invite" role="dialog" aria-modal="true" aria-label="Invite User">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-header">
+      <span class="modal-title">
+        <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5"/><path d="M12 9v5M9.5 11.5h5"/></svg>
+        Send Invitation
+      </span>
+      <button class="modal-close" onclick="App.closeModal('modal-invite')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:13px;color:var(--g700)">
+        Inviting admin to: <strong id="invite-building-label">this facility</strong>
+      </div>
+      <input type="hidden" id="invite-role-val" value="admin">
+      <div id="invite-error-msg" class="login-error-msg"></div>
+      <div class="form-group"><label>Full Name *</label><input type="text" id="invite-name" placeholder="Jane Smith" maxlength="100"></div>
+      <div class="form-group"><label>Email Address *</label><input type="email" id="invite-email" placeholder="jane@example.com" maxlength="254" onkeydown="if(event.key==='Enter')App.sendInvite()"></div>
+      <p style="font-size:12px;color:var(--g500);margin-top:4px">They'll receive an email with a link to set their password and access their building dashboard.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="App.closeModal('modal-invite')">Cancel</button>
+      <button class="btn btn-primary" id="invite-send-btn" onclick="App.sendInvite()">Send Invitation</button>
     </div>
   </div>
 </div>

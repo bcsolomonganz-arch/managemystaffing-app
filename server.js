@@ -3,6 +3,7 @@ require('dotenv').config();
 
 const express  = require('express');
 const jwt      = require('jsonwebtoken');
+const crypto   = require('crypto');
 const fs       = require('fs');
 const path     = require('path');
 const os       = require('os');
@@ -193,6 +194,8 @@ app.post('/api/auth/login', (req, res) => {
     email:      acct.email,
     role:       acct.role,
     buildingId: acct.buildingId || null,
+    // Demo accounts use seed data client-side; nothing is persisted server-side
+    demo:       (acct.id === SEED_DEMO.id) || undefined,
   };
   const token = jwt.sign(userPayload, JWT_SECRET, { expiresIn: '7d' });
 
@@ -227,6 +230,140 @@ app.post('/api/data', requireAuth, requireAdmin, (req, res) => {
     console.error('[mms] Failed to save data:', e.message);
     res.status(500).json({ error: 'Failed to save data' });
   }
+});
+
+// ── POST /api/invite ─────────────────────────────────────────────────────────
+// Body: { name, email, role, buildingId }
+// Creates a pending account and sends an invite email with a one-time token link.
+app.post('/api/invite', requireAuth, requireAdmin, async (req, res) => {
+  const { name, email, role, buildingId } = req.body || {};
+  if (!name || !email) return res.status(400).json({ error: 'name and email are required' });
+  const emailNorm = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNorm)) {
+    return res.status(400).json({ error: 'Invalid email address' });
+  }
+  const allowedRoles = ['admin', 'employee'];
+  const acctRole = allowedRoles.includes(role) ? role : 'admin';
+
+  // Super admins can invite for any building; building admins can only invite for their own building
+  const callerBuildingId = req.user.buildingId;
+  const targetBuilding   = buildingId || callerBuildingId;
+  if (req.user.role === 'admin' && targetBuilding !== callerBuildingId) {
+    return res.status(403).json({ error: 'Admins can only invite users to their own building' });
+  }
+
+  const data = loadData();
+  const existing = (data.accounts || []).find(a => a.email.toLowerCase() === emailNorm);
+  if (existing) return res.status(409).json({ error: 'An account with this email already exists' });
+
+  const token      = crypto.randomBytes(24).toString('hex');
+  const expiry     = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days
+  const newAccount = {
+    id:           'acc_' + Date.now(),
+    name:         name.trim(),
+    email:        emailNorm,
+    role:         acctRole,
+    buildingId:   targetBuilding || null,
+    ph:           null,          // ph:null = first login sets permanent password
+    inviteToken:  token,
+    inviteExpiry: expiry,
+    invitedBy:    req.user.email,
+    invitedAt:    new Date().toISOString(),
+  };
+  data.accounts = data.accounts || [];
+  data.accounts.push(newAccount);
+  try { saveData(data); } catch (e) {
+    return res.status(500).json({ error: 'Failed to save account' });
+  }
+
+  // Send invite email
+  const appUrl  = process.env.APP_URL || 'https://managemystaffing.com';
+  const link    = `${appUrl}/?invite=${token}`;
+  const building = (data.buildings || []).find(b => b.id === targetBuilding);
+  const bName   = building?.name || 'your facility';
+
+  if (ACS_CONNECTION_STRING) {
+    try {
+      const { EmailClient } = require('@azure/communication-email');
+      const ec = new EmailClient(ACS_CONNECTION_STRING);
+      const poller = await ec.beginSend({
+        senderAddress: ACS_FROM_EMAIL,
+        recipients: { to: [{ address: emailNorm, displayName: name.trim() }] },
+        content: {
+          subject: 'You\'ve been invited to ManageMyStaffing',
+          plainText: `Hi ${name.trim()},\n\nYou've been invited to manage ${bName} on ManageMyStaffing.\n\nClick the link below to set your password and get started:\n${link}\n\nThis invitation expires in 7 days.\n\nIf you didn't expect this invitation, you can safely ignore this email.\n\n— ManageMyStaffing`,
+          html: `<div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#f9fafb">
+  <div style="background:#fff;border-radius:12px;padding:32px;border:1px solid #e5e7eb">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px">
+      <div style="width:36px;height:36px;background:#6B9E7A;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:16px">M</div>
+      <span style="font-size:17px;font-weight:700;color:#111827">ManageMyStaffing</span>
+    </div>
+    <h2 style="font-size:20px;font-weight:700;color:#111827;margin:0 0 8px">You've been invited!</h2>
+    <p style="color:#6b7280;font-size:14px;margin:0 0 20px">Hi ${name.trim()}, you've been invited to manage <strong>${bName}</strong> on ManageMyStaffing.</p>
+    <a href="${link}" style="display:inline-block;background:#6B9E7A;color:#fff;font-weight:700;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px">Set Your Password &amp; Sign In →</a>
+    <p style="color:#9ca3af;font-size:12px;margin:20px 0 0">This invitation expires in 7 days. If you didn't expect this, you can safely ignore this email.</p>
+  </div>
+</div>`,
+        },
+      });
+      await Promise.race([
+        poller.pollUntilDone(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 30000)),
+      ]);
+    } catch (e) {
+      console.error('[mms] Invite email error:', e.message);
+      // Account was created; warn about email but don't fail the request
+      return res.json({ ok: true, accountId: newAccount.id, emailWarning: 'Account created but invite email failed: ' + e.message, inviteLink: link });
+    }
+  }
+
+  console.log(`[mms] Invite sent to ${emailNorm} by ${req.user.email}`);
+  res.json({ ok: true, accountId: newAccount.id, inviteLink: link });
+});
+
+// ── GET /api/invite/verify?token= ─────────────────────────────────────────────
+app.get('/api/invite/verify', (req, res) => {
+  const { token } = req.query;
+  if (!token) return res.status(400).json({ error: 'token is required' });
+  const data = loadData();
+  const acct = (data.accounts || []).find(a => a.inviteToken === token);
+  if (!acct) return res.status(404).json({ error: 'Invalid or expired invitation' });
+  if (acct.inviteExpiry && Date.now() > acct.inviteExpiry) {
+    return res.status(410).json({ error: 'This invitation has expired. Please request a new one.' });
+  }
+  res.json({ ok: true, email: acct.email, name: acct.name, buildingId: acct.buildingId });
+});
+
+// ── POST /api/invite/accept ──────────────────────────────────────────────────
+// Body: { token, passwordHash }
+// Sets the account password and activates the account. Returns a JWT.
+app.post('/api/invite/accept', (req, res) => {
+  const { token, passwordHash } = req.body || {};
+  if (!token || !passwordHash) return res.status(400).json({ error: 'token and passwordHash are required' });
+
+  const data = loadData();
+  const acct = (data.accounts || []).find(a => a.inviteToken === token);
+  if (!acct) return res.status(404).json({ error: 'Invalid or expired invitation' });
+  if (acct.inviteExpiry && Date.now() > acct.inviteExpiry) {
+    return res.status(410).json({ error: 'This invitation has expired.' });
+  }
+
+  // Activate account
+  acct.ph           = passwordHash;
+  acct.inviteToken  = undefined;
+  acct.inviteExpiry = undefined;
+  acct.activatedAt  = new Date().toISOString();
+  try { saveData(data); } catch (e) {
+    return res.status(500).json({ error: 'Failed to activate account' });
+  }
+
+  const userPayload = {
+    id: acct.id, name: acct.name, email: acct.email,
+    role: acct.role, buildingId: acct.buildingId || null,
+  };
+  const jwtToken = jwt.sign(userPayload, JWT_SECRET, { expiresIn: '7d' });
+  console.log(`[mms] Invite accepted by ${acct.email}`);
+  res.json({ ok: true, token: jwtToken, user: userPayload });
 });
 
 // ── GET /api/pcc/status ───────────────────────────────────────────────────────
