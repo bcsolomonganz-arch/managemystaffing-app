@@ -18,6 +18,31 @@ const ACS_CONNECTION_STRING = process.env.ACS_CONNECTION_STRING || null;
 const ACS_FROM_EMAIL        = process.env.ACS_FROM_EMAIL || 'noreply@751842ed-e753-4e35-9ace-4f2a879b45b7.azurecomm.net';
 const ACS_FROM_PHONE        = process.env.ACS_FROM_PHONE || null; // E.164, e.g. +18885550100
 
+// ── PCC (PointClickCare) CONFIG ───────────────────────────────────────────────
+const PCC_CLIENT_ID     = process.env.PCC_CLIENT_ID     || null;
+const PCC_CLIENT_SECRET = process.env.PCC_CLIENT_SECRET || null;
+const PCC_FACILITY_ID   = process.env.PCC_FACILITY_ID   || null;
+const PCC_ORG_UUID      = process.env.PCC_ORG_UUID      || null;
+const PCC_BASE          = 'https://connect.pointclickcare.com';
+
+// In-memory PCC token cache (resets on restart — intentional, token lifetime ~60min)
+let _pccToken = null, _pccTokenExpiry = 0;
+
+async function getPCCToken() {
+  if (_pccToken && Date.now() < _pccTokenExpiry) return _pccToken;
+  const creds = Buffer.from(`${PCC_CLIENT_ID}:${PCC_CLIENT_SECRET}`).toString('base64');
+  const resp = await fetch(`${PCC_BASE}/auth/token`, {
+    method: 'POST',
+    headers: { 'Authorization': `Basic ${creds}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'grant_type=client_credentials',
+  });
+  if (!resp.ok) throw new Error(`PCC auth failed: ${resp.status} ${await resp.text()}`);
+  const { access_token, expires_in } = await resp.json();
+  _pccToken = access_token;
+  _pccTokenExpiry = Date.now() + ((expires_in || 3600) - 60) * 1000; // 60 s buffer
+  return _pccToken;
+}
+
 // ── SUPER-ADMIN SEED ACCOUNT ─────────────────────────────────────────────────
 const SEED_SA = {
   id: 'sa0',
@@ -201,6 +226,106 @@ app.post('/api/data', requireAuth, requireAdmin, (req, res) => {
   } catch (e) {
     console.error('[mms] Failed to save data:', e.message);
     res.status(500).json({ error: 'Failed to save data' });
+  }
+});
+
+// ── GET /api/pcc/status ───────────────────────────────────────────────────────
+app.get('/api/pcc/status', requireAuth, (_req, res) => {
+  res.json({
+    configured: !!(PCC_CLIENT_ID && PCC_CLIENT_SECRET && PCC_FACILITY_ID),
+    facilityId: PCC_FACILITY_ID || null,
+    orgUuid:    PCC_ORG_UUID ? `${PCC_ORG_UUID.slice(0, 8)}…` : null,
+  });
+});
+
+// ── GET /api/pcc/census?date=YYYY-MM-DD ───────────────────────────────────────
+app.get('/api/pcc/census', requireAuth, requireAdmin, async (req, res) => {
+  if (!PCC_CLIENT_ID || !PCC_CLIENT_SECRET || !PCC_FACILITY_ID) {
+    return res.status(503).json({
+      error: 'PCC not configured. Set PCC_CLIENT_ID, PCC_CLIENT_SECRET, PCC_FACILITY_ID (and optionally PCC_ORG_UUID) in Azure App Settings.',
+    });
+  }
+  const date = (req.query.date || new Date().toISOString().slice(0, 10)).replace(/[^0-9-]/g, '');
+  try {
+    const token   = await getPCCToken();
+    const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' };
+    if (PCC_ORG_UUID) headers['x-pcc-appkey'] = PCC_ORG_UUID;
+    // PCC census endpoint — partner/v1 path (exact path may vary by partnership tier)
+    const url  = `${PCC_BASE}/partner/v1/facilities/${PCC_FACILITY_ID}/census?censusDate=${date}`;
+    const resp = await fetch(url, { headers });
+    if (!resp.ok) {
+      const txt = await resp.text();
+      return res.status(502).json({ error: `PCC census API ${resp.status}: ${txt.slice(0, 300)}` });
+    }
+    const body = await resp.json();
+    // Normalise across PCC API versions (partner/v1 vs older)
+    const d = body.data || body;
+    const census = d.totalCensus ?? d.occupiedBeds ?? d.census ?? null;
+    res.json({
+      ok:      true,
+      census,
+      date:    d.censusDate || date,
+      details: {
+        totalBeds:     d.totalBeds     || null,
+        medicareCount: d.medicareCount || null,
+        medicaidCount: d.medicaidCount || null,
+        otherCount:    d.otherCount    || null,
+      },
+    });
+  } catch (e) {
+    console.error('[mms] PCC census error:', e.message);
+    res.status(502).json({ error: `PCC request failed: ${e.message}` });
+  }
+});
+
+// ── GET /jobs.xml — public XML job feed (Indeed / LinkedIn job crawler format) ─
+app.get('/jobs.xml', (_req, res) => {
+  try {
+    const data = loadData();
+    const jobs = (data.jobPostings || []).filter(j => j.status === 'active');
+    const baseUrl = process.env.APP_URL || 'https://managemystaffing.com';
+    const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const items = jobs.map(j => `  <job>
+    <id><![CDATA[${j.id}]]></id>
+    <title><![CDATA[${esc(j.title)}]]></title>
+    <company><![CDATA[ManageMyStaffing]]></company>
+    <city><![CDATA[${esc(j.city || '')}]]></city>
+    <state><![CDATA[${esc(j.state || '')}]]></state>
+    <country>US</country>
+    <postalcode><![CDATA[${esc(j.zip || '')}]]></postalcode>
+    <date>${(j.createdAt || '').slice(0, 10)}</date>
+    <reqid>${esc(j.id)}</reqid>
+    <jobtype><![CDATA[${esc(j.jobType || 'Full-time')}]]></jobtype>
+    <category><![CDATA[${esc(j.department || 'Healthcare')}]]></category>
+    <description><![CDATA[${esc(j.description || '')}]]></description>
+    <salary><![CDATA[${esc(j.salary || '')}]]></salary>
+    <url><![CDATA[${baseUrl}/#job-${j.id}]]></url>
+  </job>`).join('\n');
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<source>
+  <publisher>ManageMyStaffing</publisher>
+  <publisherurl>${baseUrl}</publisherurl>
+  <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>
+${items}
+</source>`;
+    res.setHeader('Content-Type', 'application/xml; charset=UTF-8');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.send(xml);
+  } catch (e) {
+    res.status(500).send('<?xml version="1.0"?><error>Feed generation failed</error>');
+  }
+});
+
+// ── GET /api/jobs — public job listing (for external embeds / sharing) ────────
+app.get('/api/jobs', (_req, res) => {
+  try {
+    const data = loadData();
+    const jobs = (data.jobPostings || []).filter(j => j.status === 'active')
+      .map(({ id, title, department, jobType, city, state, salary, description, createdAt }) =>
+        ({ id, title, department, jobType, city, state, salary, description, createdAt }));
+    res.json({ jobs });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to load jobs' });
   }
 });
 

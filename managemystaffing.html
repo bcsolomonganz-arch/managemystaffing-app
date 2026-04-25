@@ -136,6 +136,28 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .hr-tc-clock{background:#fff;border:1px solid var(--g200);border-radius:16px;padding:32px;text-align:center;box-shadow:var(--shadow-md);max-width:400px;margin:0 auto}
 .hr-tc-time{font-size:48px;font-weight:800;color:var(--g900);letter-spacing:-2px;margin:16px 0 8px}
 .hr-billing-plan{background:linear-gradient(135deg,var(--blue),var(--blue-d));border-radius:16px;padding:28px;color:#fff;margin-bottom:20px}
+/* ── SHARED FORM HELPERS (used in job modal) ───── */
+.form-lbl{display:block;font-size:12px;font-weight:700;color:var(--g700);margin-bottom:5px;letter-spacing:.01em}
+.form-inp{width:100%;padding:9px 12px;border:1.5px solid var(--g200);border-radius:8px;font-family:inherit;font-size:13px;color:var(--g900);background:#fff;transition:border-color .15s;resize:vertical}
+.form-inp:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(107,158,122,.15)}
+/* ── RECRUITING MODULE ─────────────────────────── */
+.job-card{background:#fff;border:1.5px solid var(--g200);border-radius:12px;padding:18px 20px;margin-bottom:12px;cursor:default;transition:border-color .15s,box-shadow .15s}
+.job-card:hover{border-color:var(--blue-m);box-shadow:var(--shadow-md)}
+.job-status-active{background:#ECFDF5;color:#065F46;border:1px solid #6EE7B7;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700}
+.job-status-draft{background:var(--g100);color:var(--g600);border:1px solid var(--g300);padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700}
+.job-status-paused{background:#FFF7ED;color:#C2410C;border:1px solid #FED7AA;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700}
+.job-status-closed{background:var(--red-l);color:var(--red);border:1px solid #FECACA;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700}
+.platform-btn{display:flex;align-items:center;gap:10px;padding:12px 16px;border:1.5px solid var(--g200);border-radius:10px;background:#fff;cursor:pointer;transition:all .15s;text-align:left;width:100%}
+.platform-btn:hover{border-color:var(--blue);background:var(--blue-l)}
+.platform-btn.posted{border-color:#6EE7B7;background:#ECFDF5}
+.pcc-status-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700}
+.pcc-connected{background:#ECFDF5;color:#065F46}
+.pcc-not-configured{background:var(--g100);color:var(--g600)}
+.pcc-sync-btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;border:1.5px solid var(--blue-m);background:var(--blue-l);color:var(--blue-d);font-size:12px;font-weight:700;cursor:pointer;transition:all .15s}
+.pcc-sync-btn:hover{background:var(--blue-m)}
+.pcc-sync-btn:disabled{opacity:.55;cursor:not-allowed}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spin{animation:spin .8s linear infinite;display:inline-block}
 @media(max-width:1100px){.hr-stat-grid{grid-template-columns:repeat(3,1fr)}}
 .emp-item{display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;cursor:pointer;transition:background .15s}
 .emp-item:hover{background:var(--g50)}
@@ -1142,6 +1164,15 @@ const App = {
     hrAccounts: [...SEED_HR_ACCOUNTS],
     hrTimeClock: null,
     hrAuditLog: null,
+    // Job postings (HR Recruiting)
+    jobPostings: [],
+    jobModal: null,      // { mode:'create'|'edit', job:{...} }
+    jobDistModal: null,  // job id being distributed
+    // PCC integration
+    pccStatus: null,     // { configured, facilityId }
+    pccLastSync: null,   // ISO timestamp of last census sync
+    pccLastCensus: null, // number — most recent synced census count
+    pccSyncing: false,
   },
 
   // ── TIMERS & INTERNAL STATE ───────────────────────────────
@@ -1813,6 +1844,9 @@ const App = {
       this.S.panelOpen = false;
       document.getElementById('right-panel').classList.remove('open');
       document.getElementById('main').classList.remove('panel-open');
+      // Lazy-load PCC status and job postings once per session
+      if (!this.S.pccStatus && IS_SERVER_MODE) this._fetchPCCStatus();
+      if (IS_SERVER_MODE && _authToken) this._loadJobPostings();
     }
     this.render();
   },
@@ -1854,6 +1888,7 @@ const App = {
       ['datacenter','Data Center','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12V4l6-3 6 3v8l-6 3z"/><path d="M8 1v14M2 7l6 3 6-3"/></svg>'],
       ['onboarding','Onboarding Flow','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1v14M1 8h6M12 5l3 3-3 3"/></svg>'],
       ['integrations','Integrations','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="3.5" cy="8" r="2"/><circle cx="12.5" cy="3.5" r="2"/><circle cx="12.5" cy="12.5" r="2"/><path d="M5.5 8h3l4-4.5M8.5 8h3l1 4"/></svg>'],
+      ['recruiting','Recruiting','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 6.5a6 6 0 1 1-12 0 6 6 0 0 1 12 0z"/><path d="M6.5 4v2.5l1.5 1.5"/><path d="M10 11l4 4"/></svg>'],
       ['pbj','PBJ Reports','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 14V2h12v12H2z"/><path d="M5 6h6M5 9h4"/></svg>'],
       ['accounts','Accounts','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>'],
       ['auditlog','Audit Log','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="1" width="12" height="14" rx="1.5"/><path d="M5 5h6M5 8h6M5 11h3"/><circle cx="12" cy="12" r="3" fill="var(--blue-l)" stroke="var(--blue)"/><path d="M11 12h2M12 11v2"/></svg>'],
@@ -1875,6 +1910,7 @@ const App = {
       datacenter: () => this.renderHRDataCenter(),
       onboarding: () => this.renderHROnboarding(),
       integrations: () => this.renderHRIntegrations(),
+      recruiting:   () => this.renderHRRecruiting(),
       pbj: () => this.renderHRPBJ(),
       accounts: () => this.renderHRAccounts(),
       auditlog: () => this.renderHRAuditLog(),
@@ -2258,24 +2294,435 @@ const App = {
       </div>`;
   },
 
-  renderHRIntegrations() {
-    const integrations = [
-      {name:'ADP Workforce Now', status:'Not Connected', desc:'Configure your ADP Workforce Now credentials', color:'var(--red)', btn:'Configure'},
-      {name:'PointClickCare', status:'Connected', desc:'EHR integration active · Last sync: today', color:'var(--green)', btn:'Manage'},
+  // ── PCC ─────────────────────────────────────────────────────
+  async _fetchPCCStatus() {
+    if (!IS_SERVER_MODE || !_authToken) return;
+    try {
+      const r = await fetch('/api/pcc/status', { headers: { 'Authorization': `Bearer ${_authToken}` } });
+      if (r.ok) { this.S.pccStatus = await r.json(); }
+    } catch(e) { /* silent */ }
+  },
+
+  async syncPCCCensus() {
+    if (this.S.pccSyncing) return;
+    const date = this.S.ppdDate || TODAY;
+    // Button state
+    this.S.pccSyncing = true;
+    const btn = document.getElementById('pcc-sync-btn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin">↻</span> Syncing…'; }
+
+    try {
+      const r = await fetch(`/api/pcc/census?date=${date}`, {
+        headers: { 'Authorization': `Bearer ${_authToken}` }
+      });
+      const data = await r.json();
+      if (!r.ok || data.error) {
+        this.showToast(data.error || 'PCC sync failed', 'warn');
+        return;
+      }
+      const census = data.census;
+      if (census == null) { this.showToast('PCC returned no census data for this date', 'warn'); return; }
+      // Update state + DOM
+      this.S.ppdCensus = census;
+      this.S.pccLastCensus = census;
+      this.S.pccLastSync   = new Date().toISOString();
+      const el = document.getElementById('ppd-census');
+      if (el) { el.value = census; this.recalcPPD(); }
+      // Update sync info label
+      const info = document.getElementById('pcc-sync-info');
+      if (info) info.innerHTML = `<span style="color:var(--green)">✓ Synced ${census} residents · ${new Date().toLocaleTimeString()}</span>${data.details?.medicareCount != null ? ` <span style="color:var(--g400);margin-left:8px">Medicare ${data.details.medicareCount} · Medicaid ${data.details.medicaidCount}</span>` : ''}`;
+      this.showToast(`Census updated: ${census} residents from PCC`);
+    } catch(e) {
+      this.showToast('PCC connection error: ' + e.message, 'warn');
+    } finally {
+      this.S.pccSyncing = false;
+      if (btn) { btn.disabled = false; btn.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 8A6 6 0 1 1 8 2"/><path d="M14 2v6h-6"/></svg> Sync PCC'; }
+    }
+  },
+
+  // ── JOB POSTINGS ────────────────────────────────────────────
+  async _loadJobPostings() {
+    if (!IS_SERVER_MODE || !_authToken) return;
+    try {
+      const r = await fetch('/api/data', { headers: { 'Authorization': `Bearer ${_authToken}` } });
+      if (r.ok) {
+        const d = await r.json();
+        if (Array.isArray(d.jobPostings)) {
+          this.S.jobPostings = d.jobPostings;
+          if (this.S.hrPage === 'recruiting') this.renderHRMain();
+        }
+      }
+    } catch(e) { /* silent */ }
+  },
+
+  openJobModal(id = null) {
+    const job = id ? this.S.jobPostings.find(j => j.id === id) : null;
+    this.S.jobModal = {
+      mode: id ? 'edit' : 'create',
+      job: job ? { ...job } : {
+        id: 'jp_' + Date.now(),
+        title: '', department: 'CNA', jobType: 'Full-time',
+        city: '', state: '', zip: '',
+        description: '', requirements: '', salary: '',
+        status: 'active', createdAt: new Date().toISOString(),
+        platforms: {},
+      }
+    };
+    document.getElementById('modal-job').classList.add('open');
+    this._renderJobModalContent();
+  },
+
+  _renderJobModalContent() {
+    const { mode, job } = this.S.jobModal;
+    const DEPTS = ['RN','LPN / Charge Nurse','CNA','CMA','Nurse Management','Housekeeping','Laundry','Dietary','Activities','Social Work','Administration','Therapy','Other'];
+    const TYPES = ['Full-time','Part-time','PRN / Per Diem','Contract','Temporary'];
+    const STATES = 'AL,AK,AZ,AR,CA,CO,CT,DE,FL,GA,HI,ID,IL,IN,IA,KS,KY,LA,ME,MD,MA,MI,MN,MS,MO,MT,NE,NV,NH,NJ,NM,NY,NC,ND,OH,OK,OR,PA,RI,SC,SD,TN,TX,UT,VT,VA,WA,WV,WI,WY'.split(',');
+    const deptOpts = DEPTS.map(d => `<option${job.department===d?' selected':''}>${d}</option>`).join('');
+    const typeOpts = TYPES.map(t => `<option${job.jobType===t?' selected':''}>${t}</option>`).join('');
+    const stateOpts = STATES.map(s => `<option${job.state===s?' selected':''}>${s}</option>`).join('');
+    document.getElementById('modal-job-body').innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+        <div style="grid-column:span 2">
+          <label class="form-lbl">Job Title *</label>
+          <input id="jm-title" class="form-inp" placeholder="e.g. CNA – Day Shift" value="${sanitize(job.title)}">
+        </div>
+        <div>
+          <label class="form-lbl">Department</label>
+          <select id="jm-dept" class="form-inp">${deptOpts}</select>
+        </div>
+        <div>
+          <label class="form-lbl">Job Type</label>
+          <select id="jm-type" class="form-inp">${typeOpts}</select>
+        </div>
+        <div>
+          <label class="form-lbl">City</label>
+          <input id="jm-city" class="form-inp" placeholder="City" value="${sanitize(job.city)}">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 80px;gap:8px">
+          <div>
+            <label class="form-lbl">State</label>
+            <select id="jm-state" class="form-inp">${stateOpts}</select>
+          </div>
+          <div>
+            <label class="form-lbl">ZIP</label>
+            <input id="jm-zip" class="form-inp" placeholder="ZIP" value="${sanitize(job.zip)}">
+          </div>
+        </div>
+        <div>
+          <label class="form-lbl">Salary / Wage</label>
+          <input id="jm-salary" class="form-inp" placeholder="e.g. $18–22/hr or $48,000/yr" value="${sanitize(job.salary)}">
+        </div>
+        <div>
+          <label class="form-lbl">Status</label>
+          <select id="jm-status" class="form-inp">
+            <option value="active"${job.status==='active'?' selected':''}>Active (visible to job seekers)</option>
+            <option value="draft"${job.status==='draft'?' selected':''}>Draft</option>
+            <option value="paused"${job.status==='paused'?' selected':''}>Paused</option>
+            <option value="closed"${job.status==='closed'?' selected':''}>Closed</option>
+          </select>
+        </div>
+        <div style="grid-column:span 2">
+          <label class="form-lbl">Job Description *</label>
+          <textarea id="jm-desc" class="form-inp" rows="5" placeholder="Describe responsibilities, work environment, team…">${sanitize(job.description)}</textarea>
+        </div>
+        <div style="grid-column:span 2">
+          <label class="form-lbl">Requirements</label>
+          <textarea id="jm-reqs" class="form-inp" rows="4" placeholder="Required certifications, experience, skills…">${sanitize(job.requirements)}</textarea>
+        </div>
+      </div>`;
+    document.getElementById('modal-job-title').textContent = mode === 'create' ? 'Post New Job' : 'Edit Job Posting';
+  },
+
+  saveJobPosting() {
+    const { mode, job } = this.S.jobModal;
+    const title = document.getElementById('jm-title')?.value.trim();
+    const desc  = document.getElementById('jm-desc')?.value.trim();
+    if (!title) { this.showToast('Job title is required', 'warn'); return; }
+    if (!desc)  { this.showToast('Job description is required', 'warn'); return; }
+    const updated = {
+      ...job,
+      title,
+      department:   document.getElementById('jm-dept')?.value   || job.department,
+      jobType:      document.getElementById('jm-type')?.value   || job.jobType,
+      city:         document.getElementById('jm-city')?.value.trim()   || '',
+      state:        document.getElementById('jm-state')?.value  || '',
+      zip:          document.getElementById('jm-zip')?.value.trim()    || '',
+      salary:       document.getElementById('jm-salary')?.value.trim() || '',
+      description:  desc,
+      requirements: document.getElementById('jm-reqs')?.value.trim()  || '',
+      status:       document.getElementById('jm-status')?.value || 'active',
+      updatedAt:    new Date().toISOString(),
+    };
+    if (mode === 'create') {
+      this.S.jobPostings.push(updated);
+    } else {
+      const idx = this.S.jobPostings.findIndex(j => j.id === updated.id);
+      if (idx >= 0) this.S.jobPostings[idx] = updated; else this.S.jobPostings.push(updated);
+    }
+    this.persistData();
+    this.closeModal('modal-job');
+    this.S.jobModal = null;
+    this.showToast(mode === 'create' ? 'Job posting created' : 'Job posting updated');
+    this.renderHRMain();
+  },
+
+  deleteJobPosting(id) {
+    const job = this.S.jobPostings.find(j => j.id === id);
+    if (!job) return;
+    if (!confirm(`Delete "${job.title}"? This cannot be undone.`)) return;
+    this.S.jobPostings = this.S.jobPostings.filter(j => j.id !== id);
+    this.persistData();
+    this.showToast('Job posting deleted');
+    this.renderHRMain();
+  },
+
+  openDistributeModal(id) {
+    this.S.jobDistModal = id;
+    const job = this.S.jobPostings.find(j => j.id === id);
+    if (!job) return;
+    const feedUrl = (IS_SERVER_MODE ? window.location.origin : 'https://managemystaffing.com') + '/jobs.xml';
+    const loc = [job.city, job.state].filter(Boolean).join(', ');
+    const fullText = `${job.title}\n${job.jobType} · ${job.department}${loc ? ' · ' + loc : ''}\n${job.salary || ''}\n\n${job.description}${job.requirements ? '\n\nRequirements:\n' + job.requirements : ''}`.trim();
+    const platforms = [
+      { key: 'indeed',      name: 'Indeed',        url: 'https://employers.indeed.com/p/post-job',            color: '#003A9B' },
+      { key: 'linkedin',    name: 'LinkedIn',       url: 'https://www.linkedin.com/talent/job-postings/new',   color: '#0A66C2' },
+      { key: 'ziprecruiter',name: 'ZipRecruiter',   url: 'https://www.ziprecruiter.com/employer/post-job',     color: '#4F2D7F' },
+      { key: 'glassdoor',   name: 'Glassdoor',      url: 'https://employer.glassdoor.com/jobs/add',            color: '#0CAA41' },
+      { key: 'careerbuilder',name:'CareerBuilder',  url: 'https://hiring.careerbuilder.com/post',              color: '#0056A2' },
+      { key: 'monster',     name: 'Monster',        url: 'https://hiring.monster.com/job-postings/create',     color: '#6E0000' },
     ];
+    const rows = platforms.map(p => {
+      const posted = job.platforms?.[p.key];
+      return `<div class="platform-btn${posted ? ' posted' : ''}" style="margin-bottom:8px">
+        <div style="width:10px;height:10px;border-radius:50%;background:${p.color};flex-shrink:0"></div>
+        <div style="flex:1">
+          <div style="font-weight:700;font-size:13px;color:var(--g900)">${p.name}</div>
+          <div style="font-size:11px;color:var(--g500)">${posted ? '✓ Marked as posted · ' + new Date(posted).toLocaleDateString() : 'Not yet posted'}</div>
+        </div>
+        <button class="btn btn-${posted?'secondary':'primary'} btn-sm" onclick="App.postToplatform('${id}','${p.key}','${p.url}')">
+          ${posted ? 'Re-post' : 'Post Now'}
+        </button>
+      </div>`;
+    }).join('');
+    document.getElementById('dist-modal-body').innerHTML = `
+      <div style="margin-bottom:16px;padding:14px;background:var(--blue-l);border:1px solid var(--blue-m);border-radius:10px">
+        <div style="font-weight:700;font-size:13px;color:var(--g900);margin-bottom:4px">${sanitize(job.title)}</div>
+        <div style="font-size:12px;color:var(--g600)">${sanitize(job.jobType)} · ${sanitize(job.department)}${loc ? ' · ' + sanitize(loc) : ''}${job.salary ? ' · ' + sanitize(job.salary) : ''}</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:16px">
+        <button class="btn btn-secondary btn-sm" onclick="App._copyJobText('${id}')">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="5" y="3" width="9" height="11" rx="1.5"/><path d="M3 11H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v1"/></svg>
+          Copy Job Text
+        </button>
+        <button class="btn btn-secondary btn-sm" onclick="App._copyText('${feedUrl}')">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 2h4v4"/><path d="M14 2L9 7"/><rect x="2" y="7" width="7" height="7" rx="1"/></svg>
+          Copy XML Feed URL
+        </button>
+      </div>
+      <div style="font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Post to Platforms</div>
+      <div style="font-size:12px;color:var(--g500);margin-bottom:12px">
+        Clicking "Post Now" copies the job text to clipboard and opens the platform's job creation page. Paste your job description there, then mark it posted below.
+      </div>
+      ${rows}
+      <div style="margin-top:16px;padding:12px;background:var(--g50);border:1px solid var(--g200);border-radius:8px;font-size:12px;color:var(--g600)">
+        <strong>XML Feed:</strong> Submit <code style="font-size:11px;background:var(--g100);padding:1px 5px;border-radius:4px">${feedUrl}</code> to Indeed's Employer Dashboard under "Post a Job → Free XML feed" to automatically sync active jobs.
+      </div>`;
+    document.getElementById('modal-dist').classList.add('open');
+  },
+
+  postToplatform(jobId, platformKey, url) {
+    this._copyJobText(jobId);
+    window.open(url, '_blank');
+    // Mark as posted
+    const job = this.S.jobPostings.find(j => j.id === jobId);
+    if (job) {
+      if (!job.platforms) job.platforms = {};
+      job.platforms[platformKey] = new Date().toISOString();
+      this.persistData();
+      this.openDistributeModal(jobId); // re-render modal to show updated state
+    }
+  },
+
+  _copyJobText(id) {
+    const job = this.S.jobPostings.find(j => j.id === id);
+    if (!job) return;
+    const loc = [job.city, job.state, job.zip].filter(Boolean).join(', ');
+    const text = [
+      job.title,
+      `${job.jobType} · ${job.department}${loc ? ' · ' + loc : ''}`,
+      job.salary ? `Pay: ${job.salary}` : '',
+      '',
+      job.description,
+      job.requirements ? `\nRequirements:\n${job.requirements}` : '',
+      '\nApply: ' + window.location.origin,
+    ].filter(l => l !== undefined).join('\n').trim();
+    this._copyText(text);
+  },
+
+  _copyText(text) {
+    navigator.clipboard?.writeText(text).then(() => this.showToast('Copied to clipboard'))
+      .catch(() => {
+        const ta = document.createElement('textarea');
+        ta.value = text; document.body.appendChild(ta);
+        ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+        this.showToast('Copied to clipboard');
+      });
+  },
+
+  // ── RENDER: RECRUITING PAGE ─────────────────────────────────
+  renderHRRecruiting() {
+    const jobs = this.S.jobPostings || [];
+    const active  = jobs.filter(j => j.status === 'active').length;
+    const draft   = jobs.filter(j => j.status === 'draft').length;
+    const closed  = jobs.filter(j => j.status === 'closed').length;
+    const platforms = jobs.reduce((n, j) => n + Object.keys(j.platforms || {}).length, 0);
+    const feedUrl = (IS_SERVER_MODE ? window.location.origin : 'https://managemystaffing.com') + '/jobs.xml';
+
+    const statusPill = s => `<span class="job-status-${s}">${s.charAt(0).toUpperCase()+s.slice(1)}</span>`;
+
+    const cards = jobs.length === 0
+      ? `<div style="text-align:center;padding:60px 20px;color:var(--g400)">
+          <svg viewBox="0 0 48 48" width="48" height="48" fill="none" stroke="var(--g300)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin:0 auto 16px;display:block"><circle cx="24" cy="16" r="10"/><path d="M4 44c0-11 9-20 20-20s20 9 20 20"/><path d="M32 32l8 8M36 32l4 8"/></svg>
+          <div style="font-weight:700;font-size:16px;color:var(--g600);margin-bottom:8px">No job postings yet</div>
+          <div style="font-size:13px;margin-bottom:20px">Create your first posting and distribute it to Indeed, LinkedIn, ZipRecruiter, and more.</div>
+          <button class="btn btn-primary" onclick="App.openJobModal()">Post Your First Job</button>
+        </div>`
+      : jobs.map(j => {
+          const loc = [j.city, j.state].filter(Boolean).join(', ');
+          const posted = Object.keys(j.platforms || {}).length;
+          const d = j.createdAt ? new Date(j.createdAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
+          return `<div class="job-card">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+              <div style="flex:1">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                  <div style="font-weight:700;font-size:15px;color:var(--g900)">${sanitize(j.title)}</div>
+                  ${statusPill(j.status)}
+                </div>
+                <div style="font-size:12px;color:var(--g500);margin-bottom:8px">
+                  ${sanitize(j.department)} · ${sanitize(j.jobType)}${loc ? ' · ' + sanitize(loc) : ''}${j.salary ? ' · ' + sanitize(j.salary) : ''}
+                </div>
+                <div style="font-size:11px;color:var(--g400)">
+                  Posted ${d} · <span style="color:${posted>0?'var(--green)':'var(--g400)'}">✓ ${posted} platform${posted!==1?'s':''}</span>
+                </div>
+              </div>
+              <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
+                <button class="btn btn-secondary btn-sm" onclick="App.openJobModal('${j.id}')">Edit</button>
+                <button class="btn btn-primary btn-sm" onclick="App.openDistributeModal('${j.id}')">
+                  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 2h4v4"/><path d="M14 2L6 10"/><path d="M7 4H3a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-4"/></svg>
+                  Distribute
+                </button>
+                <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="App.deleteJobPosting('${j.id}')">Delete</button>
+              </div>
+            </div>
+          </div>`;
+        }).join('');
+
     return `
       ${this.hrHipaaBar()}
-      <div style="margin-bottom:20px"><div class="hr-page-title">Integrations</div><div class="hr-page-sub">Connect external systems</div></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-        ${integrations.map(i=>`<div class="hr-section" style="padding:20px">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-            <div style="font-weight:700;font-size:15px;color:var(--g900)">${sanitize(i.name)}</div>
-            <span style="font-size:11px;font-weight:700;color:${i.color};background:${i.color==='var(--red)'?'var(--red-l)':'var(--green-l)'};padding:3px 8px;border-radius:6px">${sanitize(i.status)}</span>
-          </div>
-          <div style="font-size:12px;color:var(--g500);margin-bottom:14px">${sanitize(i.desc)}</div>
-          <button class="btn btn-${i.status==='Connected'?'secondary':'primary'} btn-sm" onclick="App.showToast('${i.name} configuration — coming soon','warn')">${i.btn}</button>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div>
+          <div class="hr-page-title">Recruiting</div>
+          <div class="hr-page-sub">Create job postings · distribute to Indeed, LinkedIn &amp; more</div>
+        </div>
+        <button class="btn btn-primary" onclick="App.openJobModal()">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/></svg>
+          Post New Job
+        </button>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px">
+        ${[
+          {n:active,  label:'Active Postings',  bg:'#ECFDF5', ic:'#059669'},
+          {n:draft,   label:'Drafts',           bg:'var(--g100)', ic:'var(--g500)'},
+          {n:closed,  label:'Closed',           bg:'var(--red-l)', ic:'var(--red)'},
+          {n:platforms,label:'Platform Posts',  bg:'var(--blue-l)', ic:'var(--blue-d)'},
+        ].map(c=>`<div class="hr-section" style="padding:16px">
+          <div style="font-size:24px;font-weight:800;color:var(--g900);margin-bottom:2px">${c.n}</div>
+          <div style="font-size:11px;font-weight:600;color:var(--g500)">${c.label}</div>
         </div>`).join('')}
-      </div>`;
+      </div>
+
+      <div style="background:#fff;border:1px solid var(--blue-m);border-radius:10px;padding:12px 16px;display:flex;align-items:center;gap:10px;margin-bottom:20px;font-size:12px;color:var(--g700)">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="var(--blue)" stroke-width="1.8" stroke-linecap="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 7v5M8 5.5v.5"/></svg>
+        <span><strong>Indeed XML Feed:</strong> Submit <code style="font-size:11px;background:var(--g100);padding:1px 6px;border-radius:4px">${feedUrl}</code> in your Indeed Employer Dashboard to auto-sync all active jobs.</span>
+        <button class="btn btn-ghost btn-sm" onclick="App._copyText('${feedUrl}')" style="flex-shrink:0">Copy</button>
+      </div>
+
+      ${cards}`;
+  },
+
+  renderHRIntegrations() {
+    const pcc = this.S.pccStatus;
+    const pccConfigured = pcc?.configured === true;
+    const lastSync = this.S.pccLastSync ? new Date(this.S.pccLastSync).toLocaleString() : null;
+    const lastCensus = this.S.pccLastCensus;
+
+    const pccCard = `<div class="hr-section" style="padding:20px;margin-bottom:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div>
+          <div style="font-weight:700;font-size:15px;color:var(--g900);margin-bottom:2px">PointClickCare</div>
+          <div style="font-size:12px;color:var(--g500)">EHR · Census &amp; resident data for PPD calculations</div>
+        </div>
+        <span class="pcc-status-pill ${pccConfigured ? 'pcc-connected' : 'pcc-not-configured'}">
+          ${pccConfigured ? '● Connected' : '○ Not Configured'}
+        </span>
+      </div>
+      ${pccConfigured ? `
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px">
+          <div style="background:var(--g50);border-radius:8px;padding:10px 12px">
+            <div style="font-size:11px;color:var(--g500);font-weight:600;margin-bottom:2px">Facility ID</div>
+            <div style="font-size:13px;font-weight:700;color:var(--g800)">${sanitize(pcc.facilityId||'—')}</div>
+          </div>
+          <div style="background:var(--g50);border-radius:8px;padding:10px 12px">
+            <div style="font-size:11px;color:var(--g500);font-weight:600;margin-bottom:2px">Last Census</div>
+            <div style="font-size:13px;font-weight:700;color:var(--g800)">${lastCensus != null ? lastCensus + ' residents' : '—'}</div>
+          </div>
+          <div style="background:var(--g50);border-radius:8px;padding:10px 12px">
+            <div style="font-size:11px;color:var(--g500);font-weight:600;margin-bottom:2px">Last Sync</div>
+            <div style="font-size:13px;font-weight:700;color:var(--g800)">${lastSync || 'Not yet synced'}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="App.syncPCCCensus()">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 8A6 6 0 1 1 8 2"/><path d="M14 2v6h-6"/></svg>
+            Sync Census Now
+          </button>
+          <button class="btn btn-secondary btn-sm" onclick="App.showToast('To update credentials, update PCC_CLIENT_ID / PCC_CLIENT_SECRET / PCC_FACILITY_ID in Azure App Settings → Configuration.','warn')">Manage Credentials</button>
+        </div>
+      ` : `
+        <div style="background:var(--amber-l);border:1px solid var(--amber-m);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:12px;color:#92400E">
+          <strong>Setup required:</strong> Add the following App Settings in your Azure portal → App Service → Configuration → Application Settings:
+          <ul style="margin:8px 0 0 16px;line-height:1.8">
+            <li><code>PCC_CLIENT_ID</code> — your PCC OAuth2 client ID</li>
+            <li><code>PCC_CLIENT_SECRET</code> — your PCC OAuth2 client secret</li>
+            <li><code>PCC_FACILITY_ID</code> — your PCC facility ID</li>
+            <li><code>PCC_ORG_UUID</code> — your PCC organization UUID (if required by your partnership tier)</li>
+          </ul>
+          <div style="margin-top:8px">Get credentials from PointClickCare at <strong>Admin → Marketplace → Manage API Access</strong> or contact your PCC account manager.</div>
+        </div>
+        <a href="https://portal.azure.com" target="_blank" class="btn btn-primary btn-sm">Open Azure Portal</a>
+      `}
+    </div>`;
+
+    const adpCard = `<div class="hr-section" style="padding:20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div>
+          <div style="font-weight:700;font-size:15px;color:var(--g900);margin-bottom:2px">ADP Workforce Now</div>
+          <div style="font-size:12px;color:var(--g500)">Payroll &amp; time/attendance · PBJ report generation</div>
+        </div>
+        <span class="pcc-status-pill pcc-not-configured">○ Not Configured</span>
+      </div>
+      <div style="background:var(--g50);border:1px solid var(--g200);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:12px;color:var(--g600)">
+        Add <code>ADP_CLIENT_ID</code> and <code>ADP_CLIENT_SECRET</code> in Azure App Settings to enable PBJ report generation from ADP time &amp; attendance data.
+      </div>
+      <a href="https://portal.azure.com" target="_blank" class="btn btn-secondary btn-sm">Configure in Azure</a>
+    </div>`;
+
+    return `
+      ${this.hrHipaaBar()}
+      <div style="margin-bottom:20px"><div class="hr-page-title">Integrations</div><div class="hr-page-sub">Connect PointClickCare, ADP, and other external systems</div></div>
+      ${pccCard}
+      ${adpCard}`;
   },
 
   renderHRPBJ() {
@@ -2473,6 +2920,8 @@ const App = {
     document.getElementById('main').classList.remove('panel-open');
     if (!this.S.ppdDate) this.S.ppdDate = TODAY;
     if (!this.S.ppdCensus) this.S.ppdCensus = this.S.buildings.find(b=>b.id===(this.S.user.buildingId||'b1'))?.beds || 80;
+    // Also fetch PCC status if not yet loaded
+    if (!this.S.pccStatus && IS_SERVER_MODE) this._fetchPCCStatus();
     this.renderMain();
   },
 
@@ -2797,7 +3246,7 @@ const App = {
         <button class="btn btn-secondary btn-sm" onclick="App.closePPDCalc()">← Back to Calendar</button>
       </div>
 
-      <div style="display:flex;align-items:flex-end;gap:16px;background:var(--g50);border:1.5px solid var(--g200);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="display:flex;align-items:flex-end;gap:16px;background:var(--g50);border:1.5px solid var(--g200);border-radius:12px;padding:16px;margin-bottom:20px;flex-wrap:wrap">
         <div>
           <label style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Census (Residents)</label>
           <input id="ppd-census" type="number" min="1" max="500" value="${census}" placeholder="e.g. 80"
@@ -2809,7 +3258,16 @@ const App = {
           <input id="ppd-date" type="date" value="${date}" onchange="App.loadPPDDate()"
             style="padding:9px 12px;border:1.5px solid var(--g300);border-radius:8px;font-size:13px;font-weight:600;color:var(--g800)">
         </div>
-        <div style="font-size:12px;color:var(--g400);padding-bottom:10px">Hours auto-filled from<br>scheduled shifts · editable</div>
+        <div style="display:flex;flex-direction:column;gap:6px;padding-bottom:2px">
+          <button id="pcc-sync-btn" class="pcc-sync-btn" onclick="App.syncPCCCensus()" ${!IS_SERVER_MODE ? 'disabled title="PCC sync requires server mode"' : ''}>
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 8A6 6 0 1 1 8 2"/><path d="M14 2v6h-6"/></svg>
+            Sync PCC Census
+          </button>
+          <div id="pcc-sync-info" style="font-size:11px;color:var(--g400)">
+            ${this.S.pccLastSync ? '<span style="color:var(--green)">✓ Last synced ' + new Date(this.S.pccLastSync).toLocaleTimeString() + '</span>' : IS_SERVER_MODE ? 'Click to pull live census from PointClickCare' : 'Requires server connection'}
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--g400);padding-bottom:10px;margin-left:auto">Hours auto-filled from<br>scheduled shifts · editable</div>
       </div>
 
       <!-- NURSING -->
@@ -3799,6 +4257,7 @@ Tap the link below to view and claim:\nhttps://managemystaffing.com/claim?token=
       schedulePatterns:this.S.schedulePatterns,
       hrEmployees:this.S.hrEmployees, hrOnboarding:this.S.hrOnboarding,
       hrAccounts:this.S.hrAccounts,
+      jobPostings:this.S.jobPostings,
     };
     if (IS_SERVER_MODE && _authToken) {
       fetch('/api/data',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},body:JSON.stringify(payload)})
@@ -3827,6 +4286,7 @@ Tap the link below to view and claim:\nhttps://managemystaffing.com/claim?token=
       if (Array.isArray(d.hrEmployees)  && d.hrEmployees.length)   this.S.hrEmployees   = d.hrEmployees;
       if (d.hrOnboarding && d.hrOnboarding.TX)                      this.S.hrOnboarding  = d.hrOnboarding;
       if (Array.isArray(d.hrAccounts)   && d.hrAccounts.length)    this.S.hrAccounts    = d.hrAccounts;
+      if (Array.isArray(d.jobPostings))                              this.S.jobPostings   = d.jobPostings;
       return true;
     } catch(e) { return false; }
   },
@@ -3838,6 +4298,7 @@ Tap the link below to view and claim:\nhttps://managemystaffing.com/claim?token=
     if (Array.isArray(data.employees)        && data.employees.length)        this.S.employees        = data.employees;
     if (Array.isArray(data.shifts)           && data.shifts.length)           this.S.shifts           = data.shifts;
     if (Array.isArray(data.schedulePatterns))                                  this.S.schedulePatterns = data.schedulePatterns;
+    if (Array.isArray(data.jobPostings))                                       this.S.jobPostings      = data.jobPostings;
   },
 
   // Super-admin only: wipe all persisted data and reload with seed data.
@@ -3943,6 +4404,39 @@ App.init().catch(e => {
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="App.logout()">Decline &amp; Sign Out</button>
       <button class="btn btn-primary" id="privacy-confirm-btn" disabled onclick="App.acceptPrivacyNotice()">Accept &amp; Continue</button>
+    </div>
+  </div>
+</div>
+
+<!-- JOB POSTING MODAL -->
+<div class="modal-overlay" id="modal-job" role="dialog" aria-modal="true" aria-label="Job Posting">
+  <div class="modal" style="max-width:680px;width:95vw">
+    <div class="modal-header">
+      <span class="modal-title" id="modal-job-title">Post New Job</span>
+      <button class="modal-close" onclick="App.closeModal('modal-job')">✕</button>
+    </div>
+    <div id="modal-job-body" style="padding:20px;max-height:70vh;overflow-y:auto">
+      <!-- filled by _renderJobModalContent() -->
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="App.closeModal('modal-job')">Cancel</button>
+      <button class="btn btn-primary" onclick="App.saveJobPosting()">Save Job Posting</button>
+    </div>
+  </div>
+</div>
+
+<!-- JOB DISTRIBUTE MODAL -->
+<div class="modal-overlay" id="modal-dist" role="dialog" aria-modal="true" aria-label="Distribute Job">
+  <div class="modal" style="max-width:540px;width:95vw">
+    <div class="modal-header">
+      <span class="modal-title">Distribute Job Posting</span>
+      <button class="modal-close" onclick="App.closeModal('modal-dist')">✕</button>
+    </div>
+    <div id="dist-modal-body" style="padding:20px;max-height:75vh;overflow-y:auto">
+      <!-- filled by openDistributeModal() -->
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="App.closeModal('modal-dist')">Done</button>
     </div>
   </div>
 </div>
