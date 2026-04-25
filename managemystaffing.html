@@ -1454,6 +1454,8 @@ const App = {
   // ── PRIVACY NOTICE (HIPAA §164.520) ──────────────────────
   _checkPrivacyNotice() {
     if (!this.S.user) return false;
+    // Demo account skips the HIPAA notice
+    if (this.S.user.id === 'sa-demo') return true;
     const k = SEC.PRIVACY_PFX + fnv32(this.S.user.email || this.S.user.id);
     if (!localStorage.getItem(k)) {
       document.getElementById('modal-privacy').classList.add('open');

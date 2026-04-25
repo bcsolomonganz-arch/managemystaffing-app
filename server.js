@@ -23,13 +23,13 @@ const SEED_SA = {
   ph: null   // ph:null = any password on first login becomes permanent
 };
 
-// ── DEMO ACCOUNT (any password accepted) ─────────────────────────────────────
+// ── DEMO ACCOUNT (any password, admin view of Harmony Hills) ─────────────────
 const SEED_DEMO = {
   id: 'sa-demo',
-  name: 'Demo User',
+  name: 'Demo Admin',
   email: 'demo@demo.com',
-  role: 'superadmin',
-  buildingId: null,
+  role: 'admin',
+  buildingId: 'b1',
   ph: null   // always accepts any password (demo mode)
 };
 
