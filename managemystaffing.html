@@ -99,7 +99,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 /* Mode toggle */
 .mode-toggle{display:flex;align-items:center;background:var(--g100);border-radius:10px;padding:3px;margin:12px 12px 4px;gap:2px}
 .mode-toggle-btn{flex:1;padding:6px 0;border:none;background:transparent;border-radius:8px;font-size:12px;font-weight:600;color:var(--g500);cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:center;gap:5px}
-.mode-toggle-btn.active{background:#fff;color:var(--blue);box-shadow:0 1px 4px rgba(0,0,0,.12)}
+.mode-toggle-btn.active{background:var(--blue);color:#fff;box-shadow:0 2px 6px rgba(107,158,122,.35)}
 .mode-toggle-btn:hover:not(.active){color:var(--g700)}
 /* HR Module */
 .hr-hipaa-bar{background:#FFFBEB;border:1px solid #FCD34D;border-radius:8px;padding:9px 14px;display:flex;align-items:center;gap:8px;font-size:12px;color:#92400E;font-weight:500;margin-bottom:20px}
@@ -1537,28 +1537,14 @@ const App = {
       ? '<span class="role-badge role-admin">Admin</span>'
       : `<span class="role-badge role-emp">${sanitize(u.group)}</span>`;
 
-    // Schedule / HR mode toggle — shown for admin + superadmin in header
-    const isHR = this.S.appMode === 'hr';
-    const modeToggleHdr = ['admin','superadmin'].includes(u.role) ? `
-      <div class="mode-toggle" style="margin:0 8px 0 0">
-        <button class="mode-toggle-btn${!isHR?' active':''}" onclick="App.switchMode('schedule')">
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 6h14"/><path d="M5 2v4"/><path d="M11 2v4"/></svg>
-          Schedule
-        </button>
-        <button class="mode-toggle-btn${isHR?' active':''}" onclick="App.switchMode('hr')">
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5"/><path d="M11 9v6M8 12h6"/></svg>
-          HR
-        </button>
-      </div>` : '';
-
     // Month nav only for non-superadmin
-    const monthNav = u.role === 'superadmin' ? '' : `
+    const nav = u.role === 'superadmin' ? '' : `
       <div class="month-nav">
         <button onclick="App.navMonth(-1)">&#8249;</button>
         <h2 id="month-label"></h2>
         <button onclick="App.navMonth(1)">&#8250;</button>
       </div>`;
-    document.getElementById('header-nav').innerHTML = modeToggleHdr + monthNav;
+    document.getElementById('header-nav').innerHTML = nav;
 
     let adminBtns = '';
     if (u.role === 'superadmin') {
@@ -1719,7 +1705,18 @@ const App = {
       // Open shifts available to claim
       const openCount = this.S.shifts.filter(s => s.status==='open' && s.group===u.group && s.buildingId===(u.buildingId||'b1')).length;
       const bname = building ? `<div style="padding:12px 16px 4px;font-size:12px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;display:flex;align-items:center;gap:5px"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="14" height="11" rx="1"/><path d="M5 15V9h6v6"/><path d="M1 8l7-6 7 6"/></svg>${sanitize(building.name)}</div>` : '';
+      const empModeToggle = `<div class="mode-toggle">
+        <button class="mode-toggle-btn active" onclick="App.switchMode('schedule')">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 6h14"/><path d="M5 2v4"/><path d="M11 2v4"/></svg>
+          Schedule
+        </button>
+        <button class="mode-toggle-btn" onclick="App.switchMode('hr')">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5"/><path d="M11 9v6M8 12h6"/></svg>
+          HR
+        </button>
+      </div>`;
       document.getElementById('sidebar').innerHTML = `
+        ${empModeToggle}
         ${bname}
         <div style="padding:16px">
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
@@ -1789,7 +1786,18 @@ const App = {
     }
 
     const bname = building ? `<div style="padding:12px 16px 4px;font-size:12px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;display:flex;align-items:center;gap:5px"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="14" height="11" rx="1"/><path d="M5 15V9h6v6"/><path d="M1 8l7-6 7 6"/></svg>${sanitize(building.name)}</div>` : '';
+    const modeToggle = `<div class="mode-toggle">
+      <button class="mode-toggle-btn active" onclick="App.switchMode('schedule')">
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 6h14"/><path d="M5 2v4"/><path d="M11 2v4"/></svg>
+        Schedule
+      </button>
+      <button class="mode-toggle-btn" onclick="App.switchMode('hr')">
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5"/><path d="M11 9v6M8 12h6"/></svg>
+        HR
+      </button>
+    </div>`;
     document.getElementById('sidebar').innerHTML = `
+      ${modeToggle}
       ${bname}
       <div class="sidebar-section-title">Staff Groups</div>
       ${groupItems}
