@@ -13,6 +13,13 @@ const JWT_SECRET= process.env.JWT_SECRET || (() => { throw new Error('JWT_SECRET
 const DATA_FILE = process.env.DATA_FILE  || path.join(process.env.HOME || os.homedir() || __dirname, 'mms-data.json');
 const HTML_FILE = path.join(__dirname, 'managemystaffing.html');
 
+// ── MESSAGING CONFIG (optional — set env vars to enable) ─────────────────────
+const SENDGRID_API_KEY  = process.env.SENDGRID_API_KEY  || null;
+const SENDGRID_FROM     = process.env.SENDGRID_FROM     || 'noreply@managemystaffing.com';
+const TWILIO_SID        = process.env.TWILIO_ACCOUNT_SID  || null;
+const TWILIO_TOKEN      = process.env.TWILIO_AUTH_TOKEN   || null;
+const TWILIO_FROM       = process.env.TWILIO_FROM_NUMBER  || null;
+
 // ── SUPER-ADMIN SEED ACCOUNT ─────────────────────────────────────────────────
 const SEED_SA = {
   id: 'sa0',
@@ -189,6 +196,92 @@ app.post('/api/data', requireAuth, requireAdmin, (req, res) => {
     console.error('[mms] Failed to save data:', e.message);
     res.status(500).json({ error: 'Failed to save data' });
   }
+});
+
+// ── POST /api/alert ───────────────────────────────────────────────────────────
+// Body: { groups, message, subject, viaSMS, viaEmail, buildingId }
+// Sends real emails via SendGrid and SMS via Twilio to matching employees.
+function toE164(raw) {
+  if (!raw) return null;
+  const d = String(raw).replace(/\D/g, '');
+  if (d.length === 10) return '+1' + d;
+  if (d.length === 11 && d[0] === '1') return '+' + d;
+  return null; // unrecognised format — skip
+}
+
+app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
+  const { groups, message, subject, viaSMS, viaEmail, buildingId } = req.body || {};
+  if (!Array.isArray(groups) || !groups.length) {
+    return res.status(400).json({ error: 'groups array is required' });
+  }
+  if (!message) return res.status(400).json({ error: 'message is required' });
+
+  const data = loadData();
+  const employees = (data.employees || []).filter(e =>
+    groups.includes(e.group) &&
+    (!buildingId || e.buildingId === buildingId) &&
+    !e.inactive
+  );
+
+  const emailList = viaEmail ? employees.filter(e => e.notifEmail && e.email) : [];
+  const smsList   = viaSMS   ? employees.filter(e => e.notifSMS  && e.phone)  : [];
+
+  let emailSent = 0, smsSent = 0;
+  const errors = [];
+
+  // ── Send emails via SendGrid ──────────────────────────────────────────────
+  if (emailList.length) {
+    if (!SENDGRID_API_KEY) {
+      errors.push('Email not configured (missing SENDGRID_API_KEY)');
+    } else {
+      const sgMail = require('@sendgrid/mail');
+      sgMail.setApiKey(SENDGRID_API_KEY);
+      for (const emp of emailList) {
+        try {
+          await sgMail.send({
+            to:      emp.email,
+            from:    SENDGRID_FROM,
+            subject: subject || 'Alert from ManageMyStaffing',
+            text:    message.replace(/\[Name\]/g, emp.name),
+            html:    `<pre style="font-family:sans-serif;white-space:pre-wrap">${
+                       message.replace(/\[Name\]/g, emp.name).replace(/</g,'&lt;')
+                     }</pre>`,
+          });
+          emailSent++;
+        } catch (e) {
+          console.error('[mms] SendGrid error for', emp.email, e.message);
+          errors.push(`Email to ${emp.name}: ${e.message}`);
+        }
+      }
+    }
+  }
+
+  // ── Send SMS via Twilio ───────────────────────────────────────────────────
+  if (smsList.length) {
+    if (!TWILIO_SID || !TWILIO_TOKEN || !TWILIO_FROM) {
+      errors.push('SMS not configured (missing TWILIO_ACCOUNT_SID / AUTH_TOKEN / FROM_NUMBER)');
+    } else {
+      const twilio = require('twilio')(TWILIO_SID, TWILIO_TOKEN);
+      for (const emp of smsList) {
+        const to = toE164(emp.phone);
+        if (!to) { errors.push(`SMS to ${emp.name}: invalid phone ${emp.phone}`); continue; }
+        try {
+          await twilio.messages.create({
+            body: message.replace(/\[Name\]/g, emp.name),
+            from: TWILIO_FROM,
+            to,
+          });
+          smsSent++;
+        } catch (e) {
+          console.error('[mms] Twilio error for', emp.phone, e.message);
+          errors.push(`SMS to ${emp.name}: ${e.message}`);
+        }
+      }
+    }
+  }
+
+  console.log(`[mms] Alert sent by ${req.user.email}: ${emailSent} emails, ${smsSent} SMS`);
+  res.json({ ok: true, emailSent, smsSent, errors });
 });
 
 // ── START ─────────────────────────────────────────────────────────────────────
