@@ -308,10 +308,41 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .notif-channel:has(input:checked){border-color:var(--blue);background:var(--blue-l);color:var(--blue-d)}
 
 /* SUPER ADMIN */
-.sa-page{padding:32px;margin-left:0}
+.sa-page{padding:32px}
 .sa-hero{margin-bottom:32px}
 .sa-hero h1{font-size:28px;font-weight:700;color:var(--g900);margin-bottom:4px}
 .sa-hero p{font-size:15px;color:var(--g500)}
+/* SA SIDEBAR */
+.sa-nav-section{font-size:11px;font-weight:700;color:var(--g400);letter-spacing:.08em;text-transform:uppercase;padding:16px 16px 8px}
+.sa-nav-item{display:flex;align-items:center;gap:10px;padding:9px 16px;cursor:pointer;border-radius:8px;margin:1px 8px;transition:all .15s;font-size:13px;font-weight:500;color:var(--g700)}
+.sa-nav-item:hover{background:var(--g50);color:var(--g900)}
+.sa-nav-item.active{background:var(--blue-l);color:var(--blue-d);font-weight:700}
+.sa-nav-item svg{flex-shrink:0}
+/* DEMO PORTAL */
+.demo-card{background:#fff;border:1.5px solid var(--g200);border-radius:12px;padding:18px 20px;margin-bottom:10px;transition:border-color .15s,box-shadow .15s}
+.demo-card:hover{border-color:var(--blue-m);box-shadow:var(--shadow-md)}
+.demo-status-scheduled{background:#EFF6FF;color:#1D4ED8;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700}
+.demo-status-confirmed{background:#ECFDF5;color:#065F46;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700}
+.demo-status-completed{background:var(--g100);color:var(--g600);padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700}
+.demo-status-converted{background:#FDF4FF;color:#7E22CE;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700}
+.demo-status-noshow{background:var(--red-l);color:var(--red);padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700}
+.demo-status-declined{background:var(--g100);color:var(--g400);padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700}
+.demo-cal-cell{background:#fff;border:1px solid var(--g200);border-radius:8px;padding:6px 8px;min-height:64px;cursor:pointer;transition:background .12s;position:relative}
+.demo-cal-cell:hover{background:var(--g50)}
+.demo-cal-cell.today{border-color:var(--blue);background:var(--blue-l)}
+.demo-cal-cell.has-demo::after{content:'';position:absolute;bottom:5px;left:50%;transform:translateX(-50%);width:6px;height:6px;border-radius:50%;background:var(--blue)}
+/* BILLING */
+.billing-stat-card{background:#fff;border:1px solid var(--g200);border-radius:12px;padding:18px 20px;box-shadow:var(--shadow)}
+.billing-plan-badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.04em}
+.billing-plan-basic{background:#F3F4F6;color:#374151}
+.billing-plan-professional{background:#EFF6FF;color:#1D4ED8}
+.billing-plan-enterprise{background:#FDF4FF;color:#7E22CE}
+.billing-status-current{background:#ECFDF5;color:#065F46;padding:3px 8px;border-radius:12px;font-size:11px;font-weight:700}
+.billing-status-overdue{background:var(--red-l);color:var(--red);padding:3px 8px;border-radius:12px;font-size:11px;font-weight:700}
+.billing-status-trial{background:#FFFBEB;color:#92400E;padding:3px 8px;border-radius:12px;font-size:11px;font-weight:700}
+/* PAYMENT FORM */
+.payment-method-tab{flex:1;padding:10px;border:1.5px solid var(--g200);border-radius:8px;background:#fff;cursor:pointer;text-align:center;font-size:13px;font-weight:600;color:var(--g600);transition:all .15s}
+.payment-method-tab.active{border-color:var(--blue);background:var(--blue-l);color:var(--blue-d)}
 .buildings-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px}
 .building-card{background:#fff;border:1px solid var(--g200);border-radius:var(--radius-lg);padding:24px;box-shadow:var(--shadow);transition:all .2s;position:relative;overflow:hidden}
 .building-card::before{content:'';position:absolute;top:0;left:0;right:0;height:4px;background:var(--blue)}
@@ -1168,6 +1199,14 @@ const App = {
     jobPostings: [],
     jobModal: null,      // { mode:'create'|'edit', job:{...} }
     jobDistModal: null,  // job id being distributed
+    // Super admin pages
+    saPage: 'overview',   // 'overview' | 'demos' | 'billing'
+    demoView: 'list',     // 'list' | 'calendar'
+    demoViewYear: new Date().getFullYear(),
+    demoViewMonth: new Date().getMonth(),
+    demos: [],            // product demo appointments
+    billingData: {},      // keyed by buildingId
+    demoModal: null,
     // PCC integration
     pccStatus: null,     // { configured, facilityId }
     pccLastSync: null,   // ISO timestamp of last census sync
@@ -1573,9 +1612,10 @@ const App = {
     this.renderHeader();
     const u = this.S.user;
     if (u.role === 'superadmin') {
-      document.getElementById('sidebar').style.display = 'none';
-      document.getElementById('main').className = 'main main-full';
-      this.renderSuperAdmin();
+      document.getElementById('sidebar').style.display = 'block';
+      document.getElementById('main').className = 'main';
+      this.renderSASidebar();
+      this.renderSAMain();
     } else if (this.S.appMode === 'hr') {
       document.getElementById('sidebar').style.display = 'block';
       document.getElementById('main').className = 'main';
@@ -1644,8 +1684,399 @@ const App = {
       </div>`;
   },
 
-  // ── SUPER ADMIN PAGE ────────────────────────────────────────
-  renderSuperAdmin() {
+  // ── SA NAVIGATION ────────────────────────────────────────────
+  renderSASidebar() {
+    const pg = this.S.saPage;
+    const nav = [
+      ['overview', 'Platform',      '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>'],
+      ['demos',    'Demo Portal',   '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 8.5a6 6 0 1 1-12 0V5"/><path d="M5 2h6l1 3H4z"/><path d="M8 8.5V14M5 14h6"/></svg>'],
+      ['billing',  'Billing',       '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 7h14"/><path d="M4 11h2M9 11h3"/></svg>'],
+    ];
+    const items = nav.map(([id, label, icon]) =>
+      `<div class="sa-nav-item${pg===id?' active':''}" onclick="App.navigateSA('${id}')">${icon}${label}</div>`
+    ).join('');
+    document.getElementById('sidebar').innerHTML = `
+      <div style="padding:16px 14px 8px;display:flex;align-items:center;gap:8px">
+        <div style="width:28px;height:28px;background:var(--blue);border-radius:7px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:13px;flex-shrink:0">M</div>
+        <span style="font-size:13px;font-weight:800;color:var(--g900)">Super Admin</span>
+      </div>
+      <div class="sidebar-divider"></div>
+      <div class="sa-nav-section">Navigation</div>
+      ${items}`;
+  },
+
+  navigateSA(page) {
+    this.S.saPage = page;
+    this.renderSASidebar();
+    this.renderSAMain();
+  },
+
+  renderSAMain() {
+    const pages = {
+      overview: () => this.renderSAOverview(),
+      demos:    () => this.renderSADemos(),
+      billing:  () => this.renderSABilling(),
+    };
+    (pages[this.S.saPage] || pages.overview)();
+  },
+
+  // ── SA DEMO PORTAL ───────────────────────────────────────────
+  renderSADemos() {
+    const demos = this.S.demos || [];
+    const view = this.S.demoView || 'list';
+    const stats = [
+      { n: demos.filter(d=>d.status==='scheduled'||d.status==='confirmed').length, label:'Upcoming',  color:'var(--blue-d)',   bg:'var(--blue-l)' },
+      { n: demos.filter(d=>d.status==='completed').length,  label:'Completed', color:'var(--g600)',   bg:'var(--g100)' },
+      { n: demos.filter(d=>d.status==='converted').length,  label:'Converted', color:'#7E22CE',       bg:'#FDF4FF' },
+      { n: demos.length,                                    label:'Total',      color:'var(--g900)',   bg:'var(--g50)' },
+    ];
+    const header = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div>
+          <div style="font-size:22px;font-weight:800;color:var(--g900)">Demo Portal</div>
+          <div style="font-size:13px;color:var(--g500)">Schedule, message, and track product demos</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <div style="display:flex;border:1.5px solid var(--g200);border-radius:8px;overflow:hidden">
+            <button class="btn btn-ghost btn-sm" style="${view==='list'?'background:var(--blue-l);color:var(--blue-d);':''}" onclick="App.S.demoView='list';App.renderSADemos()">List</button>
+            <button class="btn btn-ghost btn-sm" style="${view==='calendar'?'background:var(--blue-l);color:var(--blue-d);':''}" onclick="App.S.demoView='calendar';App.renderSADemos()">Calendar</button>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="App.openDemoModal()">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/></svg>
+            Schedule Demo
+          </button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px">
+        ${stats.map(s=>`<div class="billing-stat-card" style="border-left:4px solid ${s.color}">
+          <div style="font-size:26px;font-weight:800;color:${s.color}">${s.n}</div>
+          <div style="font-size:11px;font-weight:600;color:var(--g500)">${s.label}</div>
+        </div>`).join('')}
+      </div>`;
+
+    if (view === 'calendar') {
+      document.getElementById('main').innerHTML = `<div style="padding:28px">${header}${this._renderDemoCalendar()}</div>`;
+      return;
+    }
+
+    // List view
+    const statusPill = s => `<span class="demo-status-${s==='no-show'?'noshow':s}">${s.replace('-',' ').replace(/\b\w/g,c=>c.toUpperCase())}</span>`;
+    const cards = demos.length === 0
+      ? `<div style="text-align:center;padding:60px;color:var(--g400)">
+          <svg viewBox="0 0 48 48" width="48" height="48" fill="none" stroke="var(--g300)" stroke-width="1.5" stroke-linecap="round" style="margin:0 auto 16px;display:block"><rect x="4" y="8" width="40" height="32" rx="3"/><path d="M16 2v10M32 2v10M4 18h40"/></svg>
+          <div style="font-weight:700;font-size:16px;color:var(--g600);margin-bottom:8px">No demos scheduled</div>
+          <button class="btn btn-primary" onclick="App.openDemoModal()">Schedule Your First Demo</button>
+        </div>`
+      : [...demos].sort((a,b)=>(a.date||'').localeCompare(b.date||'')).map(d=>{
+          const dt = d.date ? new Date(d.date+'T'+( d.time||'12:00')).toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'}) : 'TBD';
+          const tm = d.time || '';
+          return `<div class="demo-card">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+              <div style="flex:1">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                  <div style="font-weight:700;font-size:15px;color:var(--g900)">${sanitize(d.prospectName)}</div>
+                  ${statusPill(d.status||'scheduled')}
+                </div>
+                <div style="font-size:12px;color:var(--g500);margin-bottom:4px">${sanitize(d.facilityName||'')}${d.facilityName&&d.email?' · ':''} ${sanitize(d.email||'')}</div>
+                <div style="font-size:12px;color:var(--g700);font-weight:600">${dt}${tm ? ' at ' + tm : ''} · ${sanitize(d.duration||'1 hour')}</div>
+                ${d.notes ? `<div style="font-size:12px;color:var(--g400);margin-top:4px;font-style:italic">${sanitize(d.notes)}</div>` : ''}
+              </div>
+              <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
+                <button class="btn btn-secondary btn-sm" onclick="App.sendDemoInvite('${d.id}')">
+                  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 1L1 6l5 3 2 5 2-5 4-8z"/></svg>
+                  Send Invite
+                </button>
+                <button class="btn btn-ghost btn-sm" onclick="App.openDemoMessageModal('${d.id}')">Message</button>
+                <button class="btn btn-ghost btn-sm" onclick="App.openDemoModal('${d.id}')">Edit</button>
+                <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="App.deleteDemoAppointment('${d.id}')">×</button>
+              </div>
+            </div>
+          </div>`;
+        }).join('');
+    document.getElementById('main').innerHTML = `<div style="padding:28px">${header}${cards}</div>`;
+  },
+
+  _renderDemoCalendar() {
+    const { demoViewYear: yr, demoViewMonth: mo, demos } = this.S;
+    const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const firstDay = new Date(yr, mo, 1).getDay();
+    const daysInMonth = new Date(yr, mo+1, 0).getDate();
+    const prevDays = new Date(yr, mo, 0).getDate();
+    const todayStr = new Date().toISOString().slice(0,10);
+    // Build day→demos map
+    const demosByDay = {};
+    (demos||[]).forEach(d => { if(d.date) { if(!demosByDay[d.date]) demosByDay[d.date]=[]; demosByDay[d.date].push(d); } });
+
+    let cells = '';
+    for (let i=firstDay-1; i>=0; i--) {
+      cells += `<div class="demo-cal-cell" style="background:var(--g50);opacity:.4"><div style="font-size:12px;color:var(--g400)">${prevDays-i}</div></div>`;
+    }
+    for (let d=1; d<=daysInMonth; d++) {
+      const ds = `${yr}-${String(mo+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const isToday = ds === todayStr;
+      const dayDemos = demosByDay[ds] || [];
+      const dots = dayDemos.slice(0,3).map(x=>`<div style="font-size:10px;background:var(--blue);color:#fff;border-radius:4px;padding:1px 5px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${sanitize(x.prospectName)}</div>`).join('');
+      cells += `<div class="demo-cal-cell${isToday?' today':''}${dayDemos.length?' has-demo':''}" onclick="App._showDayDemos('${ds}')">
+        <div style="font-size:12px;font-weight:${isToday?'800':'600'};color:${isToday?'var(--blue-d)':'var(--g700)'}">${d}</div>
+        ${dots}
+      </div>`;
+    }
+    const total = Math.ceil((firstDay+daysInMonth)/7)*7;
+    for (let i=1; i<=total-(firstDay+daysInMonth); i++) {
+      cells += `<div class="demo-cal-cell" style="background:var(--g50);opacity:.4"><div style="font-size:12px;color:var(--g400)">${i}</div></div>`;
+    }
+    return `<div style="background:#fff;border:1.5px solid var(--g200);border-radius:12px;overflow:hidden">
+      <div style="padding:14px 18px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--g100)">
+        <button class="btn btn-ghost btn-sm" onclick="App.S.demoViewMonth--;if(App.S.demoViewMonth<0){App.S.demoViewMonth=11;App.S.demoViewYear--;}App.renderSADemos()">‹</button>
+        <div style="font-weight:700;font-size:15px">${MONTHS[mo]} ${yr}</div>
+        <button class="btn btn-ghost btn-sm" onclick="App.S.demoViewMonth++;if(App.S.demoViewMonth>11){App.S.demoViewMonth=0;App.S.demoViewYear++;}App.renderSADemos()">›</button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:0">
+        ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div style="padding:8px;text-align:center;font-size:11px;font-weight:700;color:var(--g400);border-bottom:1px solid var(--g100)">${d}</div>`).join('')}
+        ${cells}
+      </div>
+    </div>`;
+  },
+
+  _showDayDemos(dateStr) {
+    const demos = (this.S.demos||[]).filter(d=>d.date===dateStr);
+    if (!demos.length) return this.showToast('No demos on this date');
+    const list = demos.map(d=>`<div style="padding:10px 0;border-bottom:1px solid var(--g100)"><strong>${sanitize(d.prospectName)}</strong> · ${sanitize(d.facilityName||'')} · ${d.time||''} · <span class="demo-status-${d.status||'scheduled'}">${d.status||'scheduled'}</span></div>`).join('');
+    document.getElementById('day-demo-body').innerHTML = `<div style="font-weight:700;margin-bottom:12px">${new Date(dateStr+'T12:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})}</div>${list}`;
+    document.getElementById('modal-day-demos').classList.add('open');
+  },
+
+  openDemoModal(id = null) {
+    const existing = id ? (this.S.demos||[]).find(d=>d.id===id) : null;
+    this.S.demoModal = existing ? {...existing} : {
+      id: 'demo_'+Date.now(), prospectName:'', facilityName:'', email:'', phone:'',
+      date:'', time:'10:00', duration:'1 hour', notes:'', status:'scheduled',
+    };
+    const d = this.S.demoModal;
+    const STATUSES = ['scheduled','confirmed','completed','converted','no-show','declined'];
+    const TIMES = ['8:00 AM','9:00 AM','10:00 AM','11:00 AM','12:00 PM','1:00 PM','2:00 PM','3:00 PM','4:00 PM','5:00 PM'];
+    const DURATIONS = ['30 minutes','45 minutes','1 hour','1.5 hours','2 hours'];
+    const timeVal = d.time||'10:00';
+    document.getElementById('demo-modal-body').innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+        <div style="grid-column:span 2"><label class="form-lbl">Prospect Name *</label><input id="dm-name" class="form-inp" value="${sanitize(d.prospectName)}" placeholder="Jane Smith"></div>
+        <div><label class="form-lbl">Facility / Company</label><input id="dm-facility" class="form-inp" value="${sanitize(d.facilityName)}" placeholder="Sunrise Skilled Nursing"></div>
+        <div><label class="form-lbl">Email</label><input id="dm-email" class="form-inp" type="email" value="${sanitize(d.email)}" placeholder="jane@facility.com"></div>
+        <div><label class="form-lbl">Phone</label><input id="dm-phone" class="form-inp" value="${sanitize(d.phone)}" placeholder="(555) 000-0000"></div>
+        <div><label class="form-lbl">Status</label><select id="dm-status" class="form-inp">${STATUSES.map(s=>`<option value="${s}"${d.status===s?' selected':''}>${s.replace('-',' ').replace(/\b\w/g,c=>c.toUpperCase())}</option>`).join('')}</select></div>
+        <div><label class="form-lbl">Date</label><input id="dm-date" class="form-inp" type="date" value="${sanitize(d.date)}"></div>
+        <div><label class="form-lbl">Time</label><select id="dm-time" class="form-inp">${TIMES.map(t=>{const v=t.replace(' AM','').replace(' PM','').replace(/^(\d):/, '0$1:');return `<option value="${v}"${timeVal===v?' selected':''}>${t}</option>`}).join('')}</select></div>
+        <div><label class="form-lbl">Duration</label><select id="dm-duration" class="form-inp">${DURATIONS.map(t=>`<option${d.duration===t?' selected':''}>${t}</option>`).join('')}</select></div>
+        <div style="grid-column:span 2"><label class="form-lbl">Notes</label><textarea id="dm-notes" class="form-inp" rows="3" placeholder="Topics to cover, special requests…">${sanitize(d.notes)}</textarea></div>
+      </div>`;
+    document.getElementById('demo-modal-title').textContent = id ? 'Edit Demo' : 'Schedule Demo';
+    document.getElementById('modal-demo').classList.add('open');
+  },
+
+  saveDemoAppointment() {
+    const d = this.S.demoModal;
+    const name = document.getElementById('dm-name')?.value.trim();
+    if (!name) { this.showToast('Prospect name is required', 'warn'); return; }
+    const updated = {
+      ...d,
+      prospectName: name,
+      facilityName: document.getElementById('dm-facility')?.value.trim()||'',
+      email:        document.getElementById('dm-email')?.value.trim()||'',
+      phone:        document.getElementById('dm-phone')?.value.trim()||'',
+      status:       document.getElementById('dm-status')?.value||'scheduled',
+      date:         document.getElementById('dm-date')?.value||'',
+      time:         document.getElementById('dm-time')?.value||'',
+      duration:     document.getElementById('dm-duration')?.value||'1 hour',
+      notes:        document.getElementById('dm-notes')?.value.trim()||'',
+      updatedAt:    new Date().toISOString(),
+    };
+    const idx = (this.S.demos||[]).findIndex(x=>x.id===updated.id);
+    if (idx>=0) this.S.demos[idx]=updated; else { if(!this.S.demos)this.S.demos=[]; this.S.demos.push(updated); }
+    this.persistData();
+    this.closeModal('modal-demo');
+    this.showToast(idx>=0 ? 'Demo updated' : 'Demo scheduled');
+    this.renderSADemos();
+  },
+
+  deleteDemoAppointment(id) {
+    const d = (this.S.demos||[]).find(x=>x.id===id);
+    if (!d || !confirm(`Delete demo with ${d.prospectName}?`)) return;
+    this.S.demos = this.S.demos.filter(x=>x.id!==id);
+    this.persistData();
+    this.showToast('Demo deleted');
+    this.renderSADemos();
+  },
+
+  async sendDemoInvite(id) {
+    const d = (this.S.demos||[]).find(x=>x.id===id);
+    if (!d?.email) { this.showToast('No email on file for this prospect', 'warn'); return; }
+    const dateStr = d.date ? new Date(d.date+'T12:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'}) : 'TBD';
+    const body = `Hi ${d.prospectName},\n\nYou've been scheduled for a ManageMyStaffing product demo!\n\nDate: ${dateStr}\nTime: ${d.time||'TBD'}\nDuration: ${d.duration||'1 hour'}\n\n${d.notes ? 'Notes: '+d.notes+'\n\n' : ''}To learn more about ManageMyStaffing, visit https://managemystaffing.com.\n\nIf you have any questions or need to reschedule, please reply to this email.\n\n— The ManageMyStaffing Team`;
+    try {
+      const r = await fetch('/api/alert', {
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},
+        body: JSON.stringify({
+          groups: [], message: body,
+          subject: `Your ManageMyStaffing Demo — ${dateStr}`,
+          viaEmail: true, viaSMS: false,
+          _directEmail: { to: d.email, name: d.prospectName },
+        }),
+      });
+      // If /api/alert doesn't support direct email, use a dedicated endpoint
+      if (!r.ok) throw new Error('alert API error');
+      this.showToast(`Demo invite sent to ${d.email}`);
+      d.inviteSentAt = new Date().toISOString();
+      this.persistData();
+    } catch(e) {
+      // Fallback: open email client
+      const subject = encodeURIComponent(`Your ManageMyStaffing Demo — ${dateStr}`);
+      const bodyEnc = encodeURIComponent(body);
+      window.open(`mailto:${d.email}?subject=${subject}&body=${bodyEnc}`, '_blank');
+      this.showToast('Opened in your email client');
+    }
+  },
+
+  openDemoMessageModal(id) {
+    const d = (this.S.demos||[]).find(x=>x.id===id);
+    if (!d) return;
+    document.getElementById('msg-demo-to').textContent = d.email || d.phone || 'unknown';
+    document.getElementById('msg-demo-id').value = id;
+    document.getElementById('msg-demo-subject').value = `Following up on your ManageMyStaffing demo`;
+    document.getElementById('msg-demo-body').value = `Hi ${d.prospectName},\n\nJust following up on your upcoming demo. Please let me know if you have any questions!\n\n— ManageMyStaffing Team`;
+    document.getElementById('modal-demo-msg').classList.add('open');
+  },
+
+  async sendDemoMessage() {
+    const id      = document.getElementById('msg-demo-id')?.value;
+    const subject = document.getElementById('msg-demo-subject')?.value.trim();
+    const body    = document.getElementById('msg-demo-body')?.value.trim();
+    const d = (this.S.demos||[]).find(x=>x.id===id);
+    if (!d || !body) return;
+    const btn = document.getElementById('msg-demo-send-btn');
+    if (btn) { btn.disabled=true; btn.textContent='Sending…'; }
+    try {
+      const r = await fetch('/api/demo/message', {
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},
+        body: JSON.stringify({ to: d.email, name: d.prospectName, subject, message: body }),
+      });
+      if (r.ok) {
+        this.closeModal('modal-demo-msg');
+        this.showToast(`Message sent to ${d.prospectName}`);
+      } else {
+        // Fallback to mailto
+        window.open(`mailto:${d.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank');
+        this.closeModal('modal-demo-msg');
+        this.showToast('Opened in your email client');
+      }
+    } catch(e) {
+      window.open(`mailto:${d.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank');
+      this.closeModal('modal-demo-msg');
+    } finally { if(btn){btn.disabled=false;btn.textContent='Send Message';} }
+  },
+
+  // ── SA BILLING ───────────────────────────────────────────────
+  renderSABilling() {
+    const buildings = this.S.buildings;
+    const bd = this.S.billingData || {};
+    const plans = { Basic:99, Professional:299, Enterprise:599 };
+    let mrr = 0, arr = 0;
+    buildings.forEach(b => { const fee = bd[b.id]?.monthlyFee || 0; mrr += fee; });
+    arr = mrr * 12;
+
+    const rows = buildings.map(b => {
+      const cfg = bd[b.id] || { plan:'Trial', monthlyFee:0, contractStart:'', contractEnd:'', payStatus:'trial' };
+      const daysLeft = cfg.contractEnd ? Math.max(0, Math.ceil((new Date(cfg.contractEnd)-Date.now())/(1000*60*60*24))) : null;
+      const admin = this.S.accounts.find(a=>a.buildingId===b.id&&a.role==='admin');
+      return `<tr style="border-bottom:1px solid var(--g100)">
+        <td style="padding:13px 16px">
+          <div style="font-weight:700;font-size:13px;color:var(--g900)">${sanitize(b.name)}</div>
+          <div style="font-size:11px;color:var(--g500)">${admin?sanitize(admin.email):'No admin'}</div>
+        </td>
+        <td style="padding:13px 16px"><span class="billing-plan-badge billing-plan-${(cfg.plan||'trial').toLowerCase()}">${sanitize(cfg.plan||'Trial')}</span></td>
+        <td style="padding:13px 16px;font-weight:700;color:var(--g900)">${cfg.monthlyFee ? '$'+cfg.monthlyFee+'/mo' : '—'}</td>
+        <td style="padding:13px 16px;font-size:12px;color:var(--g600)">${cfg.contractStart||'—'}</td>
+        <td style="padding:13px 16px;font-size:12px;color:var(--g600)">${cfg.contractEnd||'—'}</td>
+        <td style="padding:13px 16px">
+          ${daysLeft !== null ? `<span style="font-size:12px;font-weight:600;color:${daysLeft<30?'var(--red)':daysLeft<90?'var(--amber)':'var(--green)'}">${daysLeft} days</span>` : '—'}
+        </td>
+        <td style="padding:13px 16px"><span class="billing-status-${cfg.payStatus||'trial'}">${(cfg.payStatus||'Trial').replace(/\b\w/g,c=>c.toUpperCase())}</span></td>
+        <td style="padding:13px 16px">
+          <button class="btn btn-secondary btn-sm" onclick="App.openBillingConfigModal('${b.id}')">Edit</button>
+        </td>
+      </tr>`;
+    }).join('');
+
+    document.getElementById('main').innerHTML = `<div style="padding:28px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div>
+          <div style="font-size:22px;font-weight:800;color:var(--g900)">Billing</div>
+          <div style="font-size:13px;color:var(--g500)">Client subscriptions, contracts, and revenue</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px">
+        <div class="billing-stat-card" style="border-left:4px solid var(--blue-d)">
+          <div style="font-size:26px;font-weight:800;color:var(--g900)">$${mrr.toLocaleString()}</div>
+          <div style="font-size:11px;font-weight:600;color:var(--g500)">Monthly Recurring Revenue</div>
+        </div>
+        <div class="billing-stat-card" style="border-left:4px solid var(--green)">
+          <div style="font-size:26px;font-weight:800;color:var(--g900)">$${arr.toLocaleString()}</div>
+          <div style="font-size:11px;font-weight:600;color:var(--g500)">Annual Recurring Revenue</div>
+        </div>
+        <div class="billing-stat-card" style="border-left:4px solid #7E22CE">
+          <div style="font-size:26px;font-weight:800;color:var(--g900)">${buildings.filter(b=>(bd[b.id]?.payStatus||'trial')!=='trial').length}</div>
+          <div style="font-size:11px;font-weight:600;color:var(--g500)">Paying Clients</div>
+        </div>
+        <div class="billing-stat-card" style="border-left:4px solid var(--amber)">
+          <div style="font-size:26px;font-weight:800;color:var(--g900)">${buildings.filter(b=>bd[b.id]?.payStatus==='overdue').length}</div>
+          <div style="font-size:11px;font-weight:600;color:var(--g500)">Overdue Accounts</div>
+        </div>
+      </div>
+      <div style="background:#fff;border:1px solid var(--g200);border-radius:12px;overflow:hidden;box-shadow:var(--shadow)">
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr style="border-bottom:2px solid var(--g100)">
+            ${['Facility','Plan','Monthly Fee','Contract Start','Contract End','Remaining','Status',''].map(h=>`<th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">${h}</th>`).join('')}
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+  },
+
+  openBillingConfigModal(buildingId) {
+    const b = this.S.buildings.find(x=>x.id===buildingId);
+    const cfg = (this.S.billingData||{})[buildingId] || {};
+    document.getElementById('bcfg-building-name').textContent = b?.name || '';
+    document.getElementById('bcfg-building-id').value = buildingId;
+    document.getElementById('bcfg-plan').value = cfg.plan||'Trial';
+    document.getElementById('bcfg-fee').value = cfg.monthlyFee||'';
+    document.getElementById('bcfg-start').value = cfg.contractStart||'';
+    document.getElementById('bcfg-end').value = cfg.contractEnd||'';
+    document.getElementById('bcfg-status').value = cfg.payStatus||'trial';
+    this.openModal('modal-billing-config');
+  },
+
+  saveBillingConfig() {
+    const bId = document.getElementById('bcfg-building-id')?.value;
+    if (!bId) return;
+    if (!this.S.billingData) this.S.billingData = {};
+    this.S.billingData[bId] = {
+      plan:          document.getElementById('bcfg-plan')?.value||'Trial',
+      monthlyFee:    parseFloat(document.getElementById('bcfg-fee')?.value)||0,
+      contractStart: document.getElementById('bcfg-start')?.value||'',
+      contractEnd:   document.getElementById('bcfg-end')?.value||'',
+      payStatus:     document.getElementById('bcfg-status')?.value||'trial',
+      updatedAt:     new Date().toISOString(),
+    };
+    this.persistData();
+    this.closeModal('modal-billing-config');
+    this.showToast('Billing configuration saved');
+    this.renderSABilling();
+  },
+
+  renderSuperAdmin() { this.renderSAOverview(); }, // legacy alias
+  renderSAOverview() {
     const buildings = this.S.buildings;
     const totalStaff = this.S.employees.length;
     const totalAdmins = this.S.accounts.filter(a => a.role === 'admin').length;
@@ -3011,45 +3442,281 @@ const App = {
   },
 
   renderHRBilling() {
-    const invoices = [
-      {id:'INV-2026-02', date:'Feb 1, 2026', amount:'$299.00', status:'Paid'},
-      {id:'INV-2026-01', date:'Jan 1, 2026', amount:'$299.00', status:'Paid'},
-      {id:'INV-2025-12', date:'Dec 1, 2025', amount:'$299.00', status:'Paid'},
+    const bId = this.S.user?.buildingId || 'b1';
+    const b = this.S.buildings.find(x => x.id === bId);
+    const bd = (this.S.billingData || {})[bId] || {};
+    const plan = (bd.plan||'professional').toLowerCase();
+    const planNames = {basic:'Basic',professional:'Professional',enterprise:'Enterprise',trial:'Trial'};
+    const planPrices = {basic:'$149',professional:'$299',enterprise:'$599',trial:'$0'};
+    const planFeatures = {
+      basic: ['Up to 25 employees','Scheduling','HIPAA Compliant'],
+      professional: ['Up to 100 employees','Scheduling + HR','SmartLinx Integration','HIPAA Compliant'],
+      enterprise: ['Unlimited employees','Full Platform','Priority Support','Custom Integrations','HIPAA Compliant'],
+      trial: ['Full feature access during trial','Up to 25 employees','HIPAA Compliant'],
+    };
+    const status = bd.payStatus || 'trial';
+    const statusColor = status==='current'?'var(--green)':status==='overdue'?'var(--red)':'var(--amber)';
+    const statusBg = status==='current'?'var(--green-l)':status==='overdue'?'var(--red-l)':'var(--amber-l)';
+    const pm = bd.paymentMethod || null;
+    const contractEnd = bd.contractEnd || '';
+    const daysLeft = contractEnd ? Math.ceil((new Date(contractEnd) - new Date()) / 86400000) : null;
+    const invoices = bd.invoices || [
+      {id:'INV-2026-02', date:'Feb 1, 2026', due:'Feb 1, 2026', amount:(planPrices[plan]||'$299')+'.00', status:'Paid'},
+      {id:'INV-2026-01', date:'Jan 1, 2026', due:'Jan 1, 2026', amount:(planPrices[plan]||'$299')+'.00', status:'Paid'},
+      {id:'INV-2025-12', date:'Dec 1, 2025', due:'Dec 1, 2025', amount:(planPrices[plan]||'$299')+'.00', status:'Paid'},
     ];
     return `
       ${this.hrHipaaBar()}
-      <div style="margin-bottom:20px"><div class="hr-page-title">Billing</div></div>
-      <div class="hr-billing-plan" style="margin-bottom:20px">
-        <div style="font-size:20px;font-weight:800;margin-bottom:4px">Manage my Staffing Pro</div>
-        <div style="font-size:14px;opacity:.85;margin-bottom:16px">Up to 100 employees · <strong>$299/mo</strong></div>
-        <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;opacity:.9">
-          ${['SmartLinx Integration','Unlimited Onboarding','Shift Management','HIPAA Compliant'].map(f=>`<span>✓ ${f}</span>`).join('')}
+      <div style="margin-bottom:20px">
+        <div class="hr-page-title">Billing &amp; Subscription</div>
+        <div style="font-size:13px;color:var(--g500)">Manage your plan, payment method, and view invoices for ${sanitize(b?.name||'your facility')}</div>
+      </div>
+
+      <!-- Current Plan Banner -->
+      <div class="hr-section" style="margin-bottom:20px;padding:24px;background:linear-gradient(135deg,#EEF6F1 0%,#F4FAF6 100%);border:1px solid var(--blue-m)">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:20px">
+          <div>
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+              <div style="font-size:20px;font-weight:800;color:var(--g900)">ManageMyStaffing ${planNames[plan]||'Professional'}</div>
+              <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:var(--blue);color:#fff">${planNames[plan]||'Professional'}</span>
+              <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:${statusBg};color:${statusColor}">${status.replace(/\b\w/g,c=>c.toUpperCase())}</span>
+            </div>
+            <div style="font-size:30px;font-weight:800;color:var(--blue);line-height:1">${planPrices[plan]||'$299'}<span style="font-size:14px;font-weight:500;color:var(--g500)">/month</span></div>
+            ${contractEnd ? `<div style="font-size:13px;color:var(--g500);margin-top:6px">Contract ends ${new Date(contractEnd+'T12:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}${daysLeft!==null?` · <strong style="color:${daysLeft<30?'var(--red)':daysLeft<90?'var(--amber)':'var(--g700)'}">${daysLeft} days remaining</strong>`:''}` : `<div style="font-size:13px;color:var(--g500);margin-top:6px">Month-to-month`}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:7px">
+            ${(planFeatures[plan]||planFeatures.professional).map(f=>`<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--g700)"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="var(--green)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3,8 6,11 13,5"/></svg>${sanitize(f)}</div>`).join('')}
+          </div>
         </div>
       </div>
+
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
-        <div class="hr-section" style="padding:20px">
-          <div style="font-size:12px;font-weight:700;color:var(--g500);margin-bottom:10px">Payment Method</div>
-          <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
-            <div style="background:var(--g800);color:#fff;border-radius:6px;padding:6px 12px;font-size:12px;font-family:'JetBrains Mono',monospace">•••• 4242</div>
-            <div style="font-size:12px;color:var(--g500)">Exp 12/27 · Default</div>
+        <!-- Payment Method -->
+        <div class="hr-section">
+          <div class="hr-section-hdr" style="margin-bottom:16px">
+            <span class="hr-section-title">Payment Method</span>
+            ${pm ? `<span style="font-size:11px;color:var(--green);font-weight:700">✓ Autopay Active</span>` : `<span style="font-size:11px;color:var(--amber);font-weight:700">⚠ No card on file</span>`}
           </div>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-primary btn-sm" onclick="App.showToast('Payment processing — coming soon','warn')">Make Payment</button>
-            <button class="btn btn-secondary btn-sm" onclick="App.showToast('Update payment method — coming soon','warn')">Update Method</button>
+          <div id="billing-pm-view">
+          ${pm ? `
+            <div style="display:flex;align-items:center;gap:12px;padding:14px;background:var(--g50);border:1px solid var(--g200);border-radius:var(--radius);margin-bottom:14px">
+              <div style="background:var(--g800);color:#fff;border-radius:6px;padding:6px 14px;font-size:12px;font-family:'JetBrains Mono',monospace">${sanitize(pm.brand||'CARD')} ···· ${sanitize(pm.last4||'????')}</div>
+              <div>
+                <div style="font-size:13px;font-weight:600;color:var(--g800)">${sanitize(pm.name||'')}</div>
+                <div style="font-size:11px;color:var(--g500)">Exp ${sanitize(pm.expiry||'')} · ${pm.autopay!==false?'Autopay on':'Autopay off'}</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+              <span style="font-size:13px;font-weight:600;color:var(--g700)">Autopay</span>
+              <label style="position:relative;display:inline-block;width:40px;height:22px;flex-shrink:0">
+                <input type="checkbox" id="billing-autopay-cb" ${pm.autopay!==false?'checked':''} onchange="App.toggleAutopay(this.checked)" style="opacity:0;width:0;height:0;position:absolute">
+                <span onclick="var cb=document.getElementById('billing-autopay-cb');cb.checked=!cb.checked;App.toggleAutopay(cb.checked)" style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:${pm.autopay!==false?'var(--blue)':'var(--g300)'};border-radius:22px;transition:.2s"><span style="position:absolute;content:'';height:16px;width:16px;left:${pm.autopay!==false?'21px':'3px'};bottom:3px;background:#fff;border-radius:50%;transition:.2s">&nbsp;</span></span>
+              </label>
+              <span style="font-size:12px;color:var(--g500)">${pm.autopay!==false?'Billed automatically each month':'Manual payment required'}</span>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="App.openPaymentMethodForm()">Update Card</button>
+          ` : `
+            <div style="padding:16px;background:var(--amber-l);border:1px solid var(--amber-m);border-radius:var(--radius);margin-bottom:14px">
+              <div style="font-size:13px;font-weight:600;color:var(--amber);margin-bottom:4px">No payment method on file</div>
+              <div style="font-size:12px;color:var(--g700)">Add a card now to enable autopay and avoid service interruption.</div>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="App.openPaymentMethodForm()">Add Payment Method</button>
+          `}
+          </div>
+          <!-- Payment form (inline, hidden by default) -->
+          <div id="billing-pm-form" style="display:none;margin-top:16px">
+            <div style="background:var(--g50);border:1px solid var(--g200);border-radius:var(--radius);padding:16px;margin-bottom:12px">
+              <div style="display:grid;gap:12px">
+                <div><label class="form-lbl">Cardholder Name</label><input id="pm-name" class="form-inp" type="text" placeholder="Name on card" autocomplete="cc-name"></div>
+                <div><label class="form-lbl">Card Number</label><input id="pm-number" class="form-inp" type="text" placeholder="•••• •••• •••• ••••" maxlength="19" oninput="App._formatCardNumber(this)"></div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+                  <div><label class="form-lbl">Expiry</label><input id="pm-expiry" class="form-inp" type="text" placeholder="MM/YY" maxlength="5" oninput="App._formatExpiry(this)"></div>
+                  <div><label class="form-lbl">CVV</label><input id="pm-cvv" class="form-inp" type="text" placeholder="•••" maxlength="4"></div>
+                  <div><label class="form-lbl">ZIP</label><input id="pm-zip" class="form-inp" type="text" placeholder="12345" maxlength="10"></div>
+                </div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+              <input type="checkbox" id="pm-autopay-cb" checked style="width:16px;height:16px;accent-color:var(--blue)">
+              <label for="pm-autopay-cb" style="font-size:13px;cursor:pointer">Enable autopay — charge this card on each billing date</label>
+            </div>
+            <div style="font-size:11px;color:var(--g500);margin-bottom:14px;display:flex;gap:6px;align-items:center">
+              <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1L2 4v5c0 3.5 2.7 6.7 6 7.4 3.3-.7 6-3.9 6-7.4V4z"/></svg>
+              Transmitted over TLS. Only the last 4 digits are retained — full card number is never stored.
+            </div>
+            <div style="display:flex;gap:10px">
+              <button class="btn btn-primary btn-sm" onclick="App.savePaymentMethod()">Save Card</button>
+              <button class="btn btn-ghost btn-sm" onclick="App.closePaymentMethodForm()">Cancel</button>
+            </div>
           </div>
         </div>
+
+        <!-- Billing Contact -->
         <div class="hr-section">
-          <div class="hr-section-hdr"><span class="hr-section-title">Invoices</span></div>
-          ${invoices.map(inv=>`<div class="hr-row" style="cursor:default">
-            <div style="flex:1">
-              <div style="font-weight:600;font-size:13px;color:var(--g900)">${inv.id}</div>
-              <div style="font-size:11px;color:var(--g500)">${inv.date}</div>
+          <div class="hr-section-hdr" style="margin-bottom:16px"><span class="hr-section-title">Billing Contact</span></div>
+          <div id="billing-contact-view">
+          ${bd.billingContact ? `
+            <div style="margin-bottom:14px">
+              <div style="font-weight:600;font-size:14px;color:var(--g900)">${sanitize(bd.billingContact.name||'')}</div>
+              ${bd.billingContact.title?`<div style="font-size:12px;color:var(--g500)">${sanitize(bd.billingContact.title)}</div>`:''}
+              <div style="font-size:12px;color:var(--g600);margin-top:4px">${sanitize(bd.billingContact.email||'')}</div>
+              ${bd.billingContact.phone?`<div style="font-size:12px;color:var(--g600)">${sanitize(bd.billingContact.phone)}</div>`:''}
             </div>
-            <div style="font-weight:700;font-size:13px;color:var(--g900)">${inv.amount}</div>
-            <span style="font-size:11px;font-weight:700;color:var(--green);background:var(--green-l);padding:2px 8px;border-radius:6px">${inv.status}</span>
-          </div>`).join('')}
+            <button class="btn btn-secondary btn-sm" onclick="App.openBillingContactForm()">Edit Contact</button>
+          ` : `
+            <div style="padding:16px;background:var(--g50);border:1px dashed var(--g300);border-radius:var(--radius);margin-bottom:14px;text-align:center">
+              <div style="font-size:13px;color:var(--g600)">No billing contact set</div>
+              <div style="font-size:11px;color:var(--g400);margin-top:4px">Invoices will be sent here</div>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="App.openBillingContactForm()">Add Billing Contact</button>
+          `}
+          </div>
+          <!-- Contact form (inline, hidden by default) -->
+          <div id="billing-contact-form" style="display:none;margin-top:16px">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+              <div><label class="form-lbl">Full Name</label><input id="bc-name" class="form-inp" type="text" value="${sanitize(bd.billingContact?.name||'')}" placeholder="Contact name"></div>
+              <div><label class="form-lbl">Title</label><input id="bc-title" class="form-inp" type="text" value="${sanitize(bd.billingContact?.title||'')}" placeholder="CFO, Office Manager..."></div>
+              <div><label class="form-lbl">Email</label><input id="bc-email" class="form-inp" type="email" value="${sanitize(bd.billingContact?.email||'')}" placeholder="billing@facility.com"></div>
+              <div><label class="form-lbl">Phone</label><input id="bc-phone" class="form-inp" type="tel" value="${sanitize(bd.billingContact?.phone||'')}" placeholder="(555) 000-0000"></div>
+            </div>
+            <div style="display:flex;gap:10px">
+              <button class="btn btn-primary btn-sm" onclick="App.saveBillingContact()">Save Contact</button>
+              <button class="btn btn-ghost btn-sm" onclick="App.closeBillingContactForm()">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Invoice History -->
+      <div class="hr-section">
+        <div class="hr-section-hdr">
+          <span class="hr-section-title">Invoice History</span>
+          <button class="btn btn-secondary btn-sm" onclick="App.exportBillingCSV()">⬇ Export CSV</button>
+        </div>
+        <div style="overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse;font-size:13px">
+            <thead>
+              <tr style="border-bottom:2px solid var(--g200)">
+                <th style="text-align:left;padding:10px 14px;font-weight:600;color:var(--g600);white-space:nowrap">Invoice</th>
+                <th style="text-align:left;padding:10px 14px;font-weight:600;color:var(--g600)">Date</th>
+                <th style="text-align:left;padding:10px 14px;font-weight:600;color:var(--g600)">Due</th>
+                <th style="text-align:right;padding:10px 14px;font-weight:600;color:var(--g600)">Amount</th>
+                <th style="text-align:center;padding:10px 14px;font-weight:600;color:var(--g600)">Status</th>
+                <th style="text-align:center;padding:10px 14px;font-weight:600;color:var(--g600)">PDF</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${invoices.map(inv=>{
+                const sc=inv.status==='Paid'?'var(--green)':inv.status==='Overdue'?'var(--red)':'var(--amber)';
+                const sb=inv.status==='Paid'?'var(--green-l)':inv.status==='Overdue'?'var(--red-l)':'var(--amber-l)';
+                return `<tr style="border-bottom:1px solid var(--g100)">
+                  <td style="padding:11px 14px;font-weight:600;font-family:'JetBrains Mono',monospace;font-size:12px">${sanitize(inv.id)}</td>
+                  <td style="padding:11px 14px;color:var(--g600)">${sanitize(inv.date)}</td>
+                  <td style="padding:11px 14px;color:var(--g600)">${sanitize(inv.due||inv.date)}</td>
+                  <td style="padding:11px 14px;text-align:right;font-weight:700">${sanitize(inv.amount)}</td>
+                  <td style="padding:11px 14px;text-align:center"><span style="font-size:11px;font-weight:700;padding:3px 9px;border-radius:6px;background:${sb};color:${sc}">${sanitize(inv.status)}</span></td>
+                  <td style="padding:11px 14px;text-align:center"><button class="btn btn-ghost btn-sm" onclick="App.downloadInvoice('${sanitize(inv.id)}')">⬇ PDF</button></td>
+                </tr>`;
+              }).join('')}
+              ${invoices.length===0?`<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--g500)">No invoices yet</td></tr>`:''}
+            </tbody>
+          </table>
         </div>
       </div>`;
+  },
+
+  openPaymentMethodForm() {
+    const form = document.getElementById('billing-pm-form');
+    const view = document.getElementById('billing-pm-view');
+    if (form) form.style.display = 'block';
+    if (view) view.style.display = 'none';
+  },
+  closePaymentMethodForm() {
+    const form = document.getElementById('billing-pm-form');
+    const view = document.getElementById('billing-pm-view');
+    if (form) form.style.display = 'none';
+    if (view) view.style.display = 'block';
+  },
+  savePaymentMethod() {
+    const name   = document.getElementById('pm-name')?.value.trim();
+    const number = document.getElementById('pm-number')?.value.replace(/\s/g,'');
+    const expiry = document.getElementById('pm-expiry')?.value.trim();
+    const zip    = document.getElementById('pm-zip')?.value.trim();
+    const autopay = document.getElementById('pm-autopay-cb')?.checked !== false;
+    if (!name || number.length < 13 || !expiry.match(/^\d\d\/\d\d$/)) {
+      this.showToast('Please fill in cardholder name, card number, and expiry (MM/YY)', 'warn'); return;
+    }
+    const last4 = number.slice(-4);
+    const first = number[0];
+    const brand = first==='4'?'VISA':first==='5'?'MC':first==='3'?'AMEX':first==='6'?'DISC':'CARD';
+    const bId = this.S.user?.buildingId || 'b1';
+    if (!this.S.billingData) this.S.billingData = {};
+    if (!this.S.billingData[bId]) this.S.billingData[bId] = {};
+    this.S.billingData[bId].paymentMethod = { brand, last4, name, expiry, autopay, savedAt: new Date().toISOString() };
+    this.S.billingData[bId].payStatus = 'current';
+    this.persistData();
+    this.showToast(`${brand} ···· ${last4} saved — autopay ${autopay?'enabled':'disabled'}`);
+    this.navigateHR('billing');
+  },
+  openBillingContactForm() {
+    const form = document.getElementById('billing-contact-form');
+    const view = document.getElementById('billing-contact-view');
+    if (form) form.style.display = 'block';
+    if (view) view.style.display = 'none';
+  },
+  closeBillingContactForm() {
+    const form = document.getElementById('billing-contact-form');
+    const view = document.getElementById('billing-contact-view');
+    if (form) form.style.display = 'none';
+    if (view) view.style.display = 'block';
+  },
+  saveBillingContact() {
+    const name  = document.getElementById('bc-name')?.value.trim();
+    const email = document.getElementById('bc-email')?.value.trim();
+    const phone = document.getElementById('bc-phone')?.value.trim();
+    const title = document.getElementById('bc-title')?.value.trim();
+    if (!name || !email) { this.showToast('Name and email are required', 'warn'); return; }
+    const bId = this.S.user?.buildingId || 'b1';
+    if (!this.S.billingData) this.S.billingData = {};
+    if (!this.S.billingData[bId]) this.S.billingData[bId] = {};
+    this.S.billingData[bId].billingContact = { name, email, phone, title };
+    this.persistData();
+    this.showToast('Billing contact saved');
+    this.navigateHR('billing');
+  },
+  toggleAutopay(val) {
+    const bId = this.S.user?.buildingId || 'b1';
+    if (!this.S.billingData?.[bId]?.paymentMethod) return;
+    this.S.billingData[bId].paymentMethod.autopay = val;
+    this.persistData();
+    const el = document.querySelector('#billing-pm-view span:last-of-type');
+    // Update status label without full re-render
+    const statusSpan = document.querySelector('#billing-pm-view [id^=""]');
+    this.showToast(val ? 'Autopay enabled' : 'Autopay disabled');
+  },
+  exportBillingCSV() {
+    const bId = this.S.user?.buildingId || 'b1';
+    const bd = (this.S.billingData||{})[bId] || {};
+    const invoices = bd.invoices || [];
+    const rows = [['Invoice','Date','Due','Amount','Status'],...invoices.map(i=>[i.id,i.date,i.due||i.date,i.amount,i.status])];
+    const csv = rows.map(r=>r.join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+    a.download = 'invoices.csv';
+    a.click();
+  },
+  downloadInvoice(id) {
+    // Generate a simple text-based invoice PDF placeholder
+    this.showToast(`Invoice ${id} — contact billing@managemystaffing.com for a PDF copy`, 'warn');
+  },
+  _formatCardNumber(input) {
+    let v = input.value.replace(/\D/g,'').slice(0,16);
+    input.value = v.match(/.{1,4}/g)?.join(' ') || v;
+  },
+  _formatExpiry(input) {
+    let v = input.value.replace(/\D/g,'');
+    if (v.length > 2) v = v.slice(0,2) + '/' + v.slice(2,4);
+    input.value = v;
   },
 
   // HR helper actions
@@ -4369,7 +5036,7 @@ const App = {
     this.showToast(`${sanitize(name)} created — invite sent to ${sanitize(adminEmail)}`);
     ['b-name','b-addr','b-phone','b-beds','b-admin-name','b-admin-email'].forEach(id=>document.getElementById(id).value='');
     document.getElementById('b-admin-pass').value=genTempPw();
-    this.renderSuperAdmin();
+    this.renderSAMain();
   },
 
   // ── SEND ALERT ───────────────────────────────────────────────
@@ -4467,6 +5134,8 @@ Tap the link below to view and claim:\nhttps://managemystaffing.com/claim?token=
       hrEmployees:this.S.hrEmployees, hrOnboarding:this.S.hrOnboarding,
       hrAccounts:this.S.hrAccounts,
       jobPostings:this.S.jobPostings,
+      demos:this.S.demos,
+      billingData:this.S.billingData,
     };
     if (IS_SERVER_MODE && _authToken && !this.S.user?.demo) {
       fetch('/api/data',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},body:JSON.stringify(payload)})
@@ -4496,6 +5165,8 @@ Tap the link below to view and claim:\nhttps://managemystaffing.com/claim?token=
       if (d.hrOnboarding && d.hrOnboarding.TX)                      this.S.hrOnboarding  = d.hrOnboarding;
       if (Array.isArray(d.hrAccounts)   && d.hrAccounts.length)    this.S.hrAccounts    = d.hrAccounts;
       if (Array.isArray(d.jobPostings))                              this.S.jobPostings   = d.jobPostings;
+      if (Array.isArray(d.demos))                                    this.S.demos         = d.demos;
+      if (d.billingData && typeof d.billingData === 'object')        this.S.billingData   = d.billingData;
       return true;
     } catch(e) { return false; }
   },
@@ -4508,6 +5179,8 @@ Tap the link below to view and claim:\nhttps://managemystaffing.com/claim?token=
     if (Array.isArray(data.shifts)           && data.shifts.length)           this.S.shifts           = data.shifts;
     if (Array.isArray(data.schedulePatterns))                                  this.S.schedulePatterns = data.schedulePatterns;
     if (Array.isArray(data.jobPostings))                                       this.S.jobPostings      = data.jobPostings;
+    if (Array.isArray(data.demos))                                             this.S.demos            = data.demos;
+    if (data.billingData && typeof data.billingData === 'object')              this.S.billingData      = data.billingData;
   },
 
   // Super-admin only: wipe all persisted data and reload with seed data.
@@ -4673,6 +5346,113 @@ App.init().catch(e => {
     </div>
     <div class="modal-footer">
       <button class="btn btn-primary" onclick="App.closeModal('modal-dist')">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- DEMO APPOINTMENT MODAL -->
+<div class="modal-overlay" id="modal-demo" role="dialog" aria-modal="true" aria-label="Demo Appointment">
+  <div class="modal" style="max-width:560px;width:95vw">
+    <div class="modal-header">
+      <span class="modal-title" id="demo-modal-title">Schedule Demo</span>
+      <button class="modal-close" onclick="App.closeModal('modal-demo')" aria-label="Close">✕</button>
+    </div>
+    <div id="demo-modal-body" style="padding:20px;max-height:75vh;overflow-y:auto">
+      <!-- filled by openDemoModal() -->
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="App.closeModal('modal-demo')">Cancel</button>
+      <button class="btn btn-primary" onclick="App.saveDemoAppointment()">Save Demo</button>
+    </div>
+  </div>
+</div>
+
+<!-- DEMO DAY VIEW MODAL -->
+<div class="modal-overlay" id="modal-day-demos" role="dialog" aria-modal="true" aria-label="Demos for day">
+  <div class="modal" style="max-width:480px;width:95vw">
+    <div class="modal-header">
+      <span class="modal-title" id="day-demos-title">Demos</span>
+      <button class="modal-close" onclick="App.closeModal('modal-day-demos')" aria-label="Close">✕</button>
+    </div>
+    <div id="day-demo-body" style="padding:20px;max-height:65vh;overflow-y:auto">
+      <!-- filled by _showDayDemos() -->
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="App.closeModal('modal-day-demos')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- DEMO MESSAGE MODAL -->
+<div class="modal-overlay" id="modal-demo-msg" role="dialog" aria-modal="true" aria-label="Send Message to Prospect">
+  <div class="modal" style="max-width:500px;width:95vw">
+    <div class="modal-header">
+      <span class="modal-title">Message Prospect</span>
+      <button class="modal-close" onclick="App.closeModal('modal-demo-msg')" aria-label="Close">✕</button>
+    </div>
+    <div style="padding:20px">
+      <div style="font-size:12px;color:var(--g500);margin-bottom:14px">To: <strong id="msg-demo-to"></strong></div>
+      <input type="hidden" id="msg-demo-id">
+      <div class="form-group" style="margin-bottom:12px">
+        <label class="form-lbl">Subject</label>
+        <input id="msg-demo-subject" class="form-inp" type="text" placeholder="Email subject">
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-lbl">Message</label>
+        <textarea id="msg-demo-body" class="form-inp" rows="7" placeholder="Your message…" style="resize:vertical"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="App.closeModal('modal-demo-msg')">Cancel</button>
+      <button class="btn btn-primary" id="msg-demo-send-btn" onclick="App.sendDemoMessage()">Send Message</button>
+    </div>
+  </div>
+</div>
+
+<!-- SA BILLING CONFIG MODAL -->
+<div class="modal-overlay" id="modal-billing-config" role="dialog" aria-modal="true" aria-label="Billing Configuration">
+  <div class="modal" style="max-width:440px;width:95vw">
+    <div class="modal-header">
+      <span class="modal-title">Billing Config — <span id="bcfg-building-name"></span></span>
+      <button class="modal-close" onclick="App.closeModal('modal-billing-config')" aria-label="Close">✕</button>
+    </div>
+    <div style="padding:20px;display:grid;gap:14px">
+      <input type="hidden" id="bcfg-building-id">
+      <div>
+        <label class="form-lbl">Plan</label>
+        <select id="bcfg-plan" class="form-inp">
+          <option value="Trial">Trial</option>
+          <option value="Basic">Basic — $149/mo</option>
+          <option value="Professional">Professional — $299/mo</option>
+          <option value="Enterprise">Enterprise — $599/mo</option>
+        </select>
+      </div>
+      <div>
+        <label class="form-lbl">Monthly Fee ($)</label>
+        <input id="bcfg-fee" class="form-inp" type="number" min="0" step="1" placeholder="e.g. 299">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div>
+          <label class="form-lbl">Contract Start</label>
+          <input id="bcfg-start" class="form-inp" type="date">
+        </div>
+        <div>
+          <label class="form-lbl">Contract End</label>
+          <input id="bcfg-end" class="form-inp" type="date">
+        </div>
+      </div>
+      <div>
+        <label class="form-lbl">Payment Status</label>
+        <select id="bcfg-status" class="form-inp">
+          <option value="trial">Trial</option>
+          <option value="current">Current</option>
+          <option value="overdue">Overdue</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="App.closeModal('modal-billing-config')">Cancel</button>
+      <button class="btn btn-primary" onclick="App.saveBillingConfig()">Save</button>
     </div>
   </div>
 </div>

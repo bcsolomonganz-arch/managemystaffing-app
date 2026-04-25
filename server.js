@@ -564,6 +564,48 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
   res.json({ ok: true, emailSent, smsSent, errors });
 });
 
+// ── POST /api/demo/message ────────────────────────────────────────────────────
+// Sends a direct email message to a demo prospect. Super admin only.
+// Body: { to, name, subject, message }
+app.post('/api/demo/message', requireAuth, (req, res) => {
+  if (req.user.role !== 'superadmin') return res.status(403).json({ error: 'superadmin only' });
+  const { to, name, subject, message } = req.body || {};
+  if (!to || !message) return res.status(400).json({ error: 'to and message are required' });
+
+  if (!ACS_CONNECTION_STRING || !ACS_FROM_EMAIL) {
+    return res.status(503).json({ error: 'Email not configured — set ACS_CONNECTION_STRING and ACS_FROM_EMAIL' });
+  }
+
+  const { EmailClient } = require('@azure/communication-email');
+  const emailClient = new EmailClient(ACS_CONNECTION_STRING);
+
+  const htmlBody = message
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>');
+
+  const sendPromise = emailClient.beginSend({
+    senderAddress: ACS_FROM_EMAIL,
+    recipients: { to: [{ address: to, displayName: name || to }] },
+    content: {
+      subject: subject || 'Message from ManageMyStaffing',
+      plainText: message,
+      html: `<div style="font-family:sans-serif;font-size:14px;color:#111">${htmlBody}</div>`,
+    },
+  }).then(p => p.pollUntilDone());
+
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 30000));
+
+  Promise.race([sendPromise, timeout])
+    .then(() => {
+      console.log(`[mms] Demo message sent to ${to}`);
+      res.json({ ok: true });
+    })
+    .catch(err => {
+      console.error('[mms] Demo message error:', err.message);
+      res.status(500).json({ error: 'Failed to send message', detail: err.message });
+    });
+});
+
 // ── START ─────────────────────────────────────────────────────────────────────
 // Ensure data file exists on startup
 try { loadData(); } catch (e) { process.exit(1); }
