@@ -428,6 +428,34 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
 /* HIPAA privacy notice */
 .hipaa-banner{display:flex;align-items:center;gap:8px;background:#ECFDF5;border:1px solid #6EE7B7;border-radius:6px;padding:8px 12px;margin-bottom:16px;font-size:12px;color:#065F46;font-weight:500}
 .hipaa-badge-sm{display:inline-flex;align-items:center;gap:4px;background:#ECFDF5;border:1px solid #6EE7B7;color:#065F46;font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px;letter-spacing:.3px}
+/* CMS Star Rating */
+.cms-star-section{background:#fff;border:1.5px solid var(--g200);border-radius:12px;overflow:hidden;margin-bottom:16px}
+.cms-star-header{padding:14px 16px;background:linear-gradient(135deg,#1A3C34 0%,#2D6A4F 100%);display:flex;align-items:center;justify-content:space-between}
+.cms-star-header-title{font-size:13px;font-weight:800;color:#fff;text-transform:uppercase;letter-spacing:.07em;display:flex;align-items:center;gap:8px}
+.cms-star-body{padding:20px}
+.cms-star-tabs{display:flex;gap:0;margin-bottom:20px;border:1.5px solid var(--g200);border-radius:8px;overflow:hidden}
+.cms-star-tab{flex:1;padding:8px 12px;font-size:12px;font-weight:600;text-align:center;cursor:pointer;background:var(--g50);color:var(--g600);transition:all .15s;border:none}
+.cms-star-tab.active{background:var(--blue);color:#fff}
+.cms-star-display{display:flex;align-items:center;justify-content:center;gap:6px;margin:16px 0 8px}
+.cms-star-icon{font-size:32px;line-height:1;transition:all .2s}
+.cms-star-icon.filled{color:#F59E0B}
+.cms-star-icon.empty{color:var(--g200)}
+.cms-star-badge{display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:20px;font-size:22px;font-weight:900;margin:0 auto}
+.cms-star-badge.s1{background:#FEF2F2;color:#DC2626;border:2px solid #FCA5A5}
+.cms-star-badge.s2{background:#FFF7ED;color:#D97706;border:2px solid #FCD34D}
+.cms-star-badge.s3{background:#FFFBEB;color:#B45309;border:2px solid #FDE68A}
+.cms-star-badge.s4{background:#EFF6FF;color:#2563EB;border:2px solid #93C5FD}
+.cms-star-badge.s5{background:#ECFDF5;color:#059669;border:2px solid #6EE7B7}
+.cms-star-badge.sna{background:var(--g100);color:var(--g500);border:2px solid var(--g200)}
+.cms-component-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--g100)}
+.cms-component-row:last-child{border-bottom:none}
+.cms-component-stars{display:flex;gap:2px}
+.cms-component-star{font-size:14px}
+.cms-component-star.filled{color:#F59E0B}
+.cms-component-star.empty{color:var(--g200)}
+.cms-monthly-input{width:80px;padding:5px 8px;border:1.5px solid var(--g200);border-radius:6px;font-size:13px;font-weight:600;text-align:center;color:var(--g800)}
+.cms-threshold-bar{height:8px;border-radius:4px;background:var(--g100);position:relative;overflow:hidden;margin-top:6px}
+.cms-threshold-fill{height:100%;border-radius:4px;transition:width .4s ease}
 /* Audit log */
 .audit-row{display:flex;gap:10px;align-items:flex-start;padding:9px 16px;border-bottom:1px solid var(--g100);font-size:12px}
 .audit-row:hover{background:var(--g50)}
@@ -4100,6 +4128,169 @@ const App = {
     if (totalEl) { totalEl.style.fontSize='22px'; totalEl.style.fontWeight='800'; }
     const nursingEl = document.getElementById('ppd-nursing-total');
     if (nursingEl) { nursingEl.style.fontSize='16px'; nursingEl.style.fontWeight='800'; }
+    // Drive CMS star rating from current PPD values
+    if (census > 0) {
+      const rnPPD      = rnHrs      / census;
+      const nursingPPD = nursingTotal / census;
+      this._renderCMSStarResult('cms-daily-result', rnPPD, nursingPPD, null);
+    }
+  },
+
+  // ── CMS FIVE-STAR STAFFING CALCULATOR ───────────────────────
+  // Thresholds from CMS Five-Star Quality Rating System Technical Users' Guide (2024).
+  // RN PPD and Total Nursing PPD use unadjusted values as a directional estimate.
+  // Actual CMS rating uses case-mix adjusted PBJ quarterly averages.
+
+  _cmsRNStars(rnPPD) {
+    if (rnPPD >= 1.00) return 5;
+    if (rnPPD >= 0.75) return 4;
+    if (rnPPD >= 0.50) return 3;
+    if (rnPPD >= 0.25) return 2;
+    return 1;
+  },
+
+  _cmsTotalStars(nursingPPD) {
+    if (nursingPPD >= 4.10) return 5;
+    if (nursingPPD >= 3.50) return 4;
+    if (nursingPPD >= 3.00) return 3;
+    if (nursingPPD >= 2.50) return 2;
+    return 1;
+  },
+
+  _cmsRN24Stars(rn24Days, daysInPeriod) {
+    if (!daysInPeriod) return null;
+    const pct = rn24Days / daysInPeriod;
+    if (pct >= 1.00) return 5;
+    if (pct >= 0.90) return 4;
+    if (pct >= 0.75) return 3;
+    if (pct >= 0.50) return 2;
+    return 1;
+  },
+
+  _starHtml(filled, total = 5) {
+    let h = '';
+    for (let i = 1; i <= total; i++) {
+      h += `<span class="cms-component-star ${i <= filled ? 'filled' : 'empty'}">★</span>`;
+    }
+    return `<span class="cms-component-stars">${h}</span>`;
+  },
+
+  _thresholdBar(value, max, color) {
+    const pct = Math.min(100, Math.round((value / max) * 100));
+    return `<div class="cms-threshold-bar"><div class="cms-threshold-fill" style="width:${pct}%;background:${color}"></div></div>`;
+  },
+
+  _renderCMSStarResult(containerId, rnPPD, nursingPPD, rn24Stars) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+
+    const rnStars      = this._cmsRNStars(rnPPD);
+    const totalStars   = this._cmsTotalStars(nursingPPD);
+    const overallStars = rn24Stars !== null
+      ? Math.min(rnStars, totalStars, rn24Stars)
+      : Math.min(rnStars, totalStars);
+
+    const cls  = ['sna','s1','s2','s3','s4','s5'][overallStars] || 's1';
+    const label = ['—','Below Average','Below Average','Average','Above Average','Much Above Average'][overallStars];
+
+    // Color for progress bars
+    const barColor = (s) => s >= 5 ? 'var(--green)' : s >= 4 ? 'var(--blue)' : s >= 3 ? 'var(--amber)' : 'var(--red)';
+
+    // RN PPD threshold bands: 1★ <0.25, 2★ 0.25–0.50, 3★ 0.50–0.75, 4★ 0.75–1.00, 5★ ≥1.00
+    const rnPct  = Math.min(100, (rnPPD / 1.25) * 100);
+    const nurPct = Math.min(100, (nursingPPD / 5.00) * 100);
+
+    const componentRows = `
+      <div class="cms-component-row">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:var(--g800)">RN Hours per Resident Day</div>
+          <div style="font-size:12px;color:var(--g500);margin-top:1px">${rnPPD.toFixed(3)} PPD · threshold ≥1.00 for 5★</div>
+          ${this._thresholdBar(rnPPD, 1.25, barColor(rnStars))}
+        </div>
+        <div style="text-align:right;flex-shrink:0;padding-left:12px">
+          ${this._starHtml(rnStars)}
+          <div style="font-size:12px;font-weight:700;color:${['','var(--red)','var(--amber)','var(--amber)','var(--blue)','var(--green)'][rnStars]};margin-top:3px">${rnStars}★</div>
+        </div>
+      </div>
+      <div class="cms-component-row">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:var(--g800)">Total Nurse Hours per Resident Day</div>
+          <div style="font-size:12px;color:var(--g500);margin-top:1px">${nursingPPD.toFixed(3)} PPD · threshold ≥4.10 for 5★</div>
+          ${this._thresholdBar(nursingPPD, 5.00, barColor(totalStars))}
+        </div>
+        <div style="text-align:right;flex-shrink:0;padding-left:12px">
+          ${this._starHtml(totalStars)}
+          <div style="font-size:12px;font-weight:700;color:${['','var(--red)','var(--amber)','var(--amber)','var(--blue)','var(--green)'][totalStars]};margin-top:3px">${totalStars}★</div>
+        </div>
+      </div>
+      ${rn24Stars !== null ? `
+      <div class="cms-component-row">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:var(--g800)">RN on Duty 24 Hours per Day</div>
+          <div style="font-size:12px;color:var(--g500);margin-top:1px">Days with RN present full 24 hrs</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;padding-left:12px">
+          ${this._starHtml(rn24Stars)}
+          <div style="font-size:12px;font-weight:700;color:${['','var(--red)','var(--amber)','var(--amber)','var(--blue)','var(--green)'][rn24Stars]};margin-top:3px">${rn24Stars}★</div>
+        </div>
+      </div>` : ''}`;
+
+    el.innerHTML = `
+      <div style="text-align:center;margin-bottom:20px">
+        <div class="cms-star-display">
+          ${[1,2,3,4,5].map(i=>`<span class="cms-star-icon ${i<=overallStars?'filled':'empty'}">★</span>`).join('')}
+        </div>
+        <div style="display:flex;justify-content:center;margin-bottom:6px">
+          <span class="cms-star-badge ${cls}">${overallStars} out of 5 Stars</span>
+        </div>
+        <div style="font-size:13px;font-weight:600;color:var(--g600)">${label}</div>
+        <div style="font-size:11px;color:var(--g400);margin-top:4px">Overall = lowest of component scores</div>
+      </div>
+      <div style="border:1.5px solid var(--g200);border-radius:8px;overflow:hidden;padding:0 14px">
+        ${componentRows}
+      </div>
+      <div style="margin-top:14px;display:grid;grid-template-columns:repeat(5,1fr);gap:6px;font-size:11px;text-align:center">
+        ${[
+          {s:'1★',rnMin:'<0.25',nurMin:'<2.50',col:'var(--red)',bg:'var(--red-l)'},
+          {s:'2★',rnMin:'0.25–0.49',nurMin:'2.50–2.99',col:'#D97706',bg:'#FFF7ED'},
+          {s:'3★',rnMin:'0.50–0.74',nurMin:'3.00–3.49',col:'#B45309',bg:'#FFFBEB'},
+          {s:'4★',rnMin:'0.75–0.99',nurMin:'3.50–4.09',col:'#2563EB',bg:'#EFF6FF'},
+          {s:'5★',rnMin:'≥1.00',nurMin:'≥4.10',col:'#059669',bg:'#ECFDF5'},
+        ].map(t=>`
+          <div style="padding:8px 4px;background:${t.bg};border-radius:6px;border:1px solid ${t.col}33">
+            <div style="font-size:14px;color:${t.col};font-weight:800">${t.s}</div>
+            <div style="color:var(--g600);margin-top:2px">RN: ${t.rnMin}</div>
+            <div style="color:var(--g600)">Tot: ${t.nurMin}</div>
+          </div>`).join('')}
+      </div>`;
+  },
+
+  setCMSTab(tab) {
+    document.getElementById('cms-tab-daily').classList.toggle('active', tab === 'daily');
+    document.getElementById('cms-tab-monthly').classList.toggle('active', tab === 'monthly');
+    document.getElementById('cms-daily-view').style.display   = tab === 'daily'   ? '' : 'none';
+    document.getElementById('cms-monthly-view').style.display = tab === 'monthly' ? '' : 'none';
+    if (tab === 'monthly') {
+      // Pre-fill census from current PPD census field
+      const census = document.getElementById('ppd-census')?.value;
+      const moCensus = document.getElementById('cms-mo-census');
+      if (census && moCensus && !moCensus.value) moCensus.value = census;
+    }
+  },
+
+  recalcCMSMonthly() {
+    const rnHrs      = parseFloat(document.getElementById('cms-mo-rn')?.value)      || 0;
+    const census     = parseFloat(document.getElementById('cms-mo-census')?.value)  || 0;
+    const nursingHrs = parseFloat(document.getElementById('cms-mo-nursing')?.value) || 0;
+    const rn24Days   = parseFloat(document.getElementById('cms-mo-rn24')?.value);
+    const daysInPeriod = 30;
+    const res = document.getElementById('cms-monthly-result');
+    if (!res) return;
+    if (!census || census <= 0) { res.innerHTML = '<div style="color:var(--g400);font-size:13px;padding:12px">Enter average daily census to calculate</div>'; return; }
+    const rnPPD      = rnHrs      / census;
+    const nursingPPD = nursingHrs / census;
+    const rn24Stars  = !isNaN(rn24Days) && rn24Days >= 0 ? this._cmsRN24Stars(rn24Days, daysInPeriod) : null;
+    this._renderCMSStarResult('cms-monthly-result', rnPPD, nursingPPD, rn24Stars);
   },
 
   loadPPDDate() {
@@ -4291,12 +4482,70 @@ const App = {
       </div>
 
       <!-- COMBINED TOTAL -->
-      <div style="background:var(--blue-l);border:2px solid var(--blue-m);border-radius:12px;padding:20px;display:flex;align-items:center;justify-content:space-between">
+      <div style="background:var(--blue-l);border:2px solid var(--blue-m);border-radius:12px;padding:20px;display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
         <div>
           <div style="font-size:13px;font-weight:700;color:var(--blue-d);text-transform:uppercase;letter-spacing:.06em">Total Combined Staffing PPD</div>
           <div style="font-size:12px;color:var(--g500);margin-top:3px">All nursing + all support departments</div>
         </div>
         <div id="ppd-combined-total" style="font-size:28px;font-weight:800;color:var(--blue-d)">—</div>
+      </div>
+
+      <!-- CMS STAR RATING -->
+      <div class="cms-star-section">
+        <div class="cms-star-header">
+          <div class="cms-star-header-title">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="#F59E0B" stroke="#F59E0B" stroke-width="1"><polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/></svg>
+            CMS Five-Star Staffing Rating
+          </div>
+          <div style="font-size:11px;color:rgba(255,255,255,.7)">Based on CMS Care Compare methodology</div>
+        </div>
+        <div class="cms-star-body">
+          <div class="cms-star-tabs">
+            <div class="cms-star-tab active" id="cms-tab-daily" onclick="App.setCMSTab('daily')">Daily (Today)</div>
+            <div class="cms-star-tab" id="cms-tab-monthly" onclick="App.setCMSTab('monthly')">Monthly Average</div>
+          </div>
+
+          <!-- Daily view (driven by PPD table above) -->
+          <div id="cms-daily-view">
+            <div style="font-size:12px;color:var(--g500);margin-bottom:16px;padding:10px 12px;background:var(--amber-l);border:1px solid var(--amber-m);border-radius:8px;display:flex;gap:8px;align-items:flex-start">
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="var(--amber)" stroke-width="1.8" stroke-linecap="round" style="flex-shrink:0;margin-top:1px"><path d="M8 1L2 14h12z"/><path d="M8 6v4M8 11v1"/></svg>
+              <span>CMS ratings are based on case-mix adjusted quarterly PBJ averages. This daily estimate uses your entered hours and unadjusted thresholds — use as a directional guide.</span>
+            </div>
+            <div id="cms-daily-result"></div>
+          </div>
+
+          <!-- Monthly view (manual inputs) -->
+          <div id="cms-monthly-view" style="display:none">
+            <div style="font-size:13px;color:var(--g600);margin-bottom:16px">Enter your facility's 30-day average daily hours to estimate the monthly staffing star rating.</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px">
+              <div>
+                <label style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Avg Daily RN Hours</label>
+                <input id="cms-mo-rn" class="cms-monthly-input" type="number" min="0" step="0.1" placeholder="e.g. 48" oninput="App.recalcCMSMonthly()" style="width:100%">
+                <div style="font-size:11px;color:var(--g400);margin-top:4px">Total RN hours per day averaged over month</div>
+              </div>
+              <div>
+                <label style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Avg Daily Census</label>
+                <input id="cms-mo-census" class="cms-monthly-input" type="number" min="1" placeholder="e.g. 80" oninput="App.recalcCMSMonthly()" style="width:100%">
+              </div>
+              <div>
+                <label style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Avg Daily Total Nursing Hours</label>
+                <input id="cms-mo-nursing" class="cms-monthly-input" type="number" min="0" step="0.1" placeholder="e.g. 320" oninput="App.recalcCMSMonthly()" style="width:100%">
+                <div style="font-size:11px;color:var(--g400);margin-top:4px">RN + LPN + CNA + CMA + NM</div>
+              </div>
+              <div>
+                <label style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Days RN on Duty 24hrs</label>
+                <input id="cms-mo-rn24" class="cms-monthly-input" type="number" min="0" max="31" placeholder="e.g. 28" oninput="App.recalcCMSMonthly()" style="width:100%">
+                <div style="font-size:11px;color:var(--g400);margin-top:4px">Days in month RN present full 24 hours</div>
+              </div>
+            </div>
+            <div id="cms-monthly-result"></div>
+          </div>
+
+          <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--g100);font-size:11px;color:var(--g400)">
+            Thresholds based on CMS Five-Star Staffing methodology (2024). Actual rating uses PBJ data submitted to CMS and is case-mix adjusted.
+            <a href="https://www.cms.gov/medicare/provider-enrollment-and-certification/certificationandcomplianc/downloads/usersguide.pdf" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none;margin-left:4px">CMS methodology ↗</a>
+          </div>
+        </div>
       </div>
     </div>`;
   },
