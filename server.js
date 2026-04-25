@@ -110,7 +110,15 @@ app.use(express.json({ limit: '50mb' }));
 
 // ── HEALTH ────────────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, mode: 'production' });
+  res.json({
+    ok: true,
+    mode: 'production',
+    messaging: {
+      acsConfigured:  !!ACS_CONNECTION_STRING,
+      emailConfigured: !!ACS_FROM_EMAIL,
+      smsConfigured:  !!ACS_FROM_PHONE,
+    },
+  });
 });
 
 // ── SERVE HTML ────────────────────────────────────────────────────────────────
@@ -234,6 +242,7 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
     if (emailList.length) {
       const { EmailClient } = require('@azure/communication-email');
       const emailClient = new EmailClient(ACS_CONNECTION_STRING);
+      const EMAIL_TIMEOUT_MS = 30000; // 30-second per-email timeout
       for (const emp of emailList) {
         try {
           const body = message.replace(/\[Name\]/g, emp.name);
@@ -246,7 +255,13 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
               html: `<pre style="font-family:sans-serif;white-space:pre-wrap">${body.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre>`,
             },
           });
-          await poller.pollUntilDone();
+          // Race the poller against a hard timeout so Express route never hangs
+          await Promise.race([
+            poller.pollUntilDone(),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('Email send timed out after 30s')), EMAIL_TIMEOUT_MS)
+            ),
+          ]);
           emailSent++;
         } catch (e) {
           console.error('[mms] ACS email error for', emp.email, e.message);
@@ -266,6 +281,7 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
           const to = toE164(emp.phone);
           if (!to) { errors.push(`SMS to ${emp.name}: invalid phone ${emp.phone}`); continue; }
           try {
+            // to field is string[] per @azure/communication-sms v1.x API
             const results = await smsClient.send({
               from: ACS_FROM_PHONE,
               to: [to],
@@ -290,7 +306,12 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
 // Ensure data file exists on startup
 try { loadData(); } catch (e) { process.exit(1); }
 
+// Warn about missing messaging configuration at startup
+if (!ACS_CONNECTION_STRING) console.warn('[mms] WARN: ACS_CONNECTION_STRING not set — email/SMS alerts disabled');
+if (!ACS_FROM_PHONE)        console.warn('[mms] WARN: ACS_FROM_PHONE not set — SMS alerts disabled');
+
 app.listen(PORT, () => {
   console.log(`[mms] ManageMyStaffing running on http://localhost:${PORT}`);
   console.log(`[mms] Data file: ${DATA_FILE}`);
+  console.log(`[mms] Messaging: ACS=${!!ACS_CONNECTION_STRING} Email=${!!ACS_FROM_EMAIL} SMS=${!!ACS_FROM_PHONE}`);
 });
