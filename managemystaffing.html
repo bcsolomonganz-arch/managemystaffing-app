@@ -481,12 +481,13 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
       </div>
     </div>
     <div class="demo-bar">
-      <strong>Demo — click to sign in:</strong>
+      <strong>See it in action</strong>
       <div class="demo-links">
-        <div class="demo-link" onclick="App.demoLogin('superadmin')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 0 20M12 2a15.3 15.3 0 0 0 0 20"/></svg> Super Admin <span class="demo-link-role">All Buildings</span></div>
-        <div class="demo-link" onclick="App.demoLogin('admin')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M3 21h18M3 7l9-4 9 4M5 21V7M19 21V7"/><path d="M9 21v-4h6v4"/></svg> Building Admin <span class="demo-link-role">Harmony Hills</span></div>
-        <div class="demo-link" onclick="App.demoLogin('CNA')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="7" r="4"/><path d="M5.5 21v-2a6.5 6.5 0 0 1 13 0v2"/><path d="M12 12v5M9.5 14.5h5"/></svg> CNA Employee <span class="demo-link-role">CNA Shifts Only</span></div>
-        <div class="demo-link" onclick="App.demoLogin('Charge Nurse')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M5 3v7a7 7 0 0 0 14 0V3"/><path d="M5 3h3M16 3h3"/><path d="M12 17v2"/><circle cx="12" cy="21" r="1.5" fill="currentColor" stroke="none"/></svg> Charge Nurse <span class="demo-link-role">CN Shifts Only</span></div>
+        <div class="demo-link" onclick="App.tryDemo()">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M3 21h18M3 7l9-4 9 4M5 21V7M19 21V7"/><path d="M9 21v-4h6v4"/></svg>
+          Try Demo
+          <span class="demo-link-role">Admin View</span>
+        </div>
       </div>
     </div>
     <div class="hipaa-banner"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> HIPAA Compliant — All access is logged and monitored</div>
@@ -1322,20 +1323,35 @@ const App = {
     this._initLoginPage();
   },
 
-  // ── DEMO LOGIN ────────────────────────────────────────────
+  // ── TRY DEMO ──────────────────────────────────────────────
+  // In server mode: auto-submits demo@demo.com (admin role, any password accepted).
+  // In local file mode: directly sets a demo admin session from seed data.
+  tryDemo() {
+    if (IS_SERVER_MODE) {
+      document.getElementById('login-email').value = 'demo@demo.com';
+      document.getElementById('login-pass').value  = 'demo';
+      this.loginForm();
+    } else {
+      this.demoLogin('admin');
+    }
+  },
+
+  // ── DEMO LOGIN (local file / offline mode only) ────────────
   demoLogin(role) {
     try {
-      if (role === 'superadmin') {
-        this.S.user = {...this.S.accounts.find(a => a.role === 'superadmin'), _demo:true};
-      } else if (role === 'admin') {
-        this.S.user = {...this.S.accounts.find(a => a.id === 'a1'), _demo:true};
+      // Load seed data so local demo has something to show
+      this.S.buildings = [...SEED_BUILDINGS];
+      this.S.accounts  = [...SEED_ACCOUNTS];
+      this.S.employees = [...SEED_EMPLOYEES];
+      this.S.shifts    = generateShifts(this.S.employees);
+      if (role === 'admin') {
+        this.S.user = {...(this.S.accounts.find(a => a.id === 'a1') || this.S.accounts.find(a => a.role === 'admin') || {id:'demo-admin',name:'Demo Admin',role:'admin',buildingId:'b1'}), _demo:true};
       } else {
         const emp = this.S.employees.find(e => e.group === role) || this.S.employees[0];
         this.S.user = {id:emp.id,name:emp.name,role:'employee',group:emp.group,email:emp.email,buildingId:emp.buildingId,_demo:true};
       }
-      // DEMO sessions: use sessionStorage only (no persistent localStorage token)
       try { sessionStorage.setItem(SEC.SESSION_KEY+'_demo', obf({uid:this.S.user.id,role:this.S.user.role,ts:Date.now(),demo:true})); } catch(e2) {}
-      localStorage.removeItem(SEC.SESSION_KEY); // ensure no real session persists
+      localStorage.removeItem(SEC.SESSION_KEY);
       Audit.log('DEMO_LOGIN', 'Demo login as '+sanitize(role), this.S.user?.id, 'medium');
       this.showApp();
     } catch(err) {
