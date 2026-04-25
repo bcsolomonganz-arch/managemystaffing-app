@@ -120,6 +120,15 @@ function loadData() {
     dirty = true;
   }
 
+  // ── Password reset: if RESET_SA_PASSWORD=1 env var is set, clear the SA
+  //    password hash so the next login accepts any password as the new permanent one.
+  //    Remove the env var after triggering to prevent repeated resets.
+  if (process.env.RESET_SA_PASSWORD === '1') {
+    const sa = data.accounts.find(a => a.id === SEED_SA.id);
+    if (sa) { sa.ph = null; dirty = true; }
+    console.log(`[mms] SA password reset to null — next login sets new permanent password.`);
+  }
+
   // Ensure seed accounts always exist and are up-to-date
   for (const seed of [SEED_SA, SEED_DEMO]) {
     const existing = data.accounts.find(a => a.id === seed.id);
