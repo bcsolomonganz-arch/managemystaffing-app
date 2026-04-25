@@ -1537,14 +1537,28 @@ const App = {
       ? '<span class="role-badge role-admin">Admin</span>'
       : `<span class="role-badge role-emp">${sanitize(u.group)}</span>`;
 
+    // Schedule / HR mode toggle — shown for admin + superadmin in header
+    const isHR = this.S.appMode === 'hr';
+    const modeToggleHdr = ['admin','superadmin'].includes(u.role) ? `
+      <div class="mode-toggle" style="margin:0 8px 0 0">
+        <button class="mode-toggle-btn${!isHR?' active':''}" onclick="App.switchMode('schedule')">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 6h14"/><path d="M5 2v4"/><path d="M11 2v4"/></svg>
+          Schedule
+        </button>
+        <button class="mode-toggle-btn${isHR?' active':''}" onclick="App.switchMode('hr')">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5"/><path d="M11 9v6M8 12h6"/></svg>
+          HR
+        </button>
+      </div>` : '';
+
     // Month nav only for non-superadmin
-    const nav = u.role === 'superadmin' ? '' : `
+    const monthNav = u.role === 'superadmin' ? '' : `
       <div class="month-nav">
         <button onclick="App.navMonth(-1)">&#8249;</button>
         <h2 id="month-label"></h2>
         <button onclick="App.navMonth(1)">&#8250;</button>
       </div>`;
-    document.getElementById('header-nav').innerHTML = nav;
+    document.getElementById('header-nav').innerHTML = modeToggleHdr + monthNav;
 
     let adminBtns = '';
     if (u.role === 'superadmin') {
@@ -1705,19 +1719,7 @@ const App = {
       // Open shifts available to claim
       const openCount = this.S.shifts.filter(s => s.status==='open' && s.group===u.group && s.buildingId===(u.buildingId||'b1')).length;
       const bname = building ? `<div style="padding:12px 16px 4px;font-size:12px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;display:flex;align-items:center;gap:5px"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="14" height="11" rx="1"/><path d="M5 15V9h6v6"/><path d="M1 8l7-6 7 6"/></svg>${sanitize(building.name)}</div>` : '';
-      const isHREmp = this.S.appMode === 'hr';
-      const empModeToggle = `<div class="mode-toggle">
-        <button class="mode-toggle-btn${!isHREmp?' active':''}" onclick="App.switchMode('schedule')">
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 6h14"/><path d="M5 2v4"/><path d="M11 2v4"/></svg>
-          Schedule
-        </button>
-        <button class="mode-toggle-btn${isHREmp?' active':''}" onclick="App.switchMode('hr')">
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5"/><path d="M11 9v6M8 12h6"/></svg>
-          HR
-        </button>
-      </div>`;
       document.getElementById('sidebar').innerHTML = `
-        ${empModeToggle}
         ${bname}
         <div style="padding:16px">
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
@@ -1787,19 +1789,7 @@ const App = {
     }
 
     const bname = building ? `<div style="padding:12px 16px 4px;font-size:12px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;display:flex;align-items:center;gap:5px"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="14" height="11" rx="1"/><path d="M5 15V9h6v6"/><path d="M1 8l7-6 7 6"/></svg>${sanitize(building.name)}</div>` : '';
-    const isHR = this.S.appMode === 'hr';
-    const modeToggle = `<div class="mode-toggle">
-      <button class="mode-toggle-btn${!isHR?' active':''}" onclick="App.switchMode('schedule')">
-        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 6h14"/><path d="M5 2v4"/><path d="M11 2v4"/></svg>
-        Schedule
-      </button>
-      <button class="mode-toggle-btn${isHR?' active':''}" onclick="App.switchMode('hr')">
-        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5"/><path d="M11 9v6M8 12h6"/></svg>
-        HR
-      </button>
-    </div>`;
     document.getElementById('sidebar').innerHTML = `
-      ${modeToggle}
       ${bname}
       <div class="sidebar-section-title">Staff Groups</div>
       ${groupItems}
