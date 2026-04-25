@@ -101,13 +101,42 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .mode-toggle-btn{flex:1;padding:6px 0;border:none;background:transparent;border-radius:8px;font-size:12px;font-weight:600;color:var(--g500);cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:center;gap:5px}
 .mode-toggle-btn.active{background:#fff;color:var(--blue);box-shadow:0 1px 4px rgba(0,0,0,.12)}
 .mode-toggle-btn:hover:not(.active){color:var(--g700)}
-/* HR iframe view */
-#hr-view{display:none;position:fixed;top:var(--header);left:var(--sidebar);right:0;bottom:0;z-index:50;background:#f5f5f5;flex-direction:column;align-items:stretch}
-#hr-view.visible{display:flex}
-#hr-view iframe{flex:1;border:none;width:100%;height:100%}
-#hr-view-banner{height:36px;background:var(--blue-l);border-bottom:1px solid var(--blue-m);display:flex;align-items:center;padding:0 16px;gap:10px;font-size:12px;color:var(--blue-d);font-weight:600;flex-shrink:0}
-#hr-view-banner a{color:var(--blue);text-decoration:none;margin-left:auto;font-size:11px;display:flex;align-items:center;gap:4px}
-#hr-view-banner a:hover{text-decoration:underline}
+/* HR Module */
+.hr-hipaa-bar{background:#FFFBEB;border:1px solid #FCD34D;border-radius:8px;padding:9px 14px;display:flex;align-items:center;gap:8px;font-size:12px;color:#92400E;font-weight:500;margin-bottom:20px}
+.hr-stat-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:24px}
+.hr-stat-card{background:#fff;border:1px solid var(--g200);border-radius:12px;padding:18px 16px;box-shadow:var(--shadow)}
+.hr-stat-icon{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;margin-bottom:10px}
+.hr-stat-num{font-size:26px;font-weight:800;color:var(--g900);line-height:1;margin-bottom:2px}
+.hr-stat-lbl{font-size:11px;font-weight:600;color:var(--g500)}
+.hr-section{background:#fff;border:1px solid var(--g200);border-radius:12px;overflow:hidden;box-shadow:var(--shadow)}
+.hr-section-hdr{padding:14px 18px;border-bottom:1px solid var(--g100);display:flex;align-items:center;justify-content:space-between}
+.hr-section-title{font-size:11px;font-weight:700;color:var(--g400);letter-spacing:.08em;text-transform:uppercase}
+.hr-row{display:flex;align-items:center;gap:12px;padding:13px 18px;border-bottom:1px solid var(--g100);transition:background .12s;cursor:pointer}
+.hr-row:hover{background:var(--g50)}
+.hr-row:last-child{border-bottom:none}
+.hr-badge{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.04em;white-space:nowrap}
+.hr-badge-onboarding{background:#FFF7ED;color:#C2410C}
+.hr-badge-invited{background:#EFF6FF;color:#1D4ED8}
+.hr-badge-review{background:#FEF2F2;color:#B91C1C}
+.hr-badge-active{background:var(--blue-l);color:var(--blue-d)}
+.hr-badge-approved{background:#ECFDF5;color:#065F46}
+.hr-badge-synced{background:#F5F3FF;color:#6D28D9}
+.hr-qa-item{display:flex;align-items:center;gap:14px;padding:14px 18px;border-bottom:1px solid var(--g100);cursor:pointer;transition:background .12s}
+.hr-qa-item:hover{background:var(--g50)}
+.hr-qa-item:last-child{border-bottom:none}
+.hr-qa-icon{width:34px;height:34px;border-radius:9px;background:var(--blue-l);display:flex;align-items:center;justify-content:center;color:var(--blue);flex-shrink:0}
+.hr-nav-item{display:flex;align-items:center;gap:10px;padding:9px 16px;cursor:pointer;border-radius:8px;margin:1px 8px;transition:all .15s;font-size:14px;font-weight:500;color:var(--g700)}
+.hr-nav-item:hover{background:var(--g50);color:var(--g900)}
+.hr-nav-item.active{background:var(--blue-l);color:var(--blue);font-weight:600}
+.hr-page-title{font-size:22px;font-weight:800;color:var(--g900);margin-bottom:2px}
+.hr-page-sub{font-size:13px;color:var(--g500);margin-bottom:20px}
+.hr-doc-row{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--g100)}
+.hr-doc-row:last-child{border-bottom:none}
+.hr-doc-chip{padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600}
+.hr-tc-clock{background:#fff;border:1px solid var(--g200);border-radius:16px;padding:32px;text-align:center;box-shadow:var(--shadow-md);max-width:400px;margin:0 auto}
+.hr-tc-time{font-size:48px;font-weight:800;color:var(--g900);letter-spacing:-2px;margin:16px 0 8px}
+.hr-billing-plan{background:linear-gradient(135deg,var(--blue),var(--blue-d));border-radius:16px;padding:28px;color:#fff;margin-bottom:20px}
+@media(max-width:1100px){.hr-stat-grid{grid-template-columns:repeat(3,1fr)}}
 .emp-item{display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;cursor:pointer;transition:background .15s}
 .emp-item:hover{background:var(--g50)}
 .emp-avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0}
@@ -434,18 +463,6 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
     <aside class="sidebar" id="sidebar" style="display:none"></aside>
     <main class="main" id="main"></main>
     <div class="right-panel" id="right-panel"><div id="rp-content"></div></div>
-    <!-- HR Platform View -->
-    <div id="hr-view">
-      <div id="hr-view-banner">
-        <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="16" height="14" rx="2"/><path d="M7 3v14M2 8h5M2 12h5"/></svg>
-        Manage Census — Referral &amp; Census Platform
-        <a href="https://managecensus.azurewebsites.net" target="_blank">
-          <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V9"/><path d="M10 2h4v4"/><path d="M14 2L8 8"/></svg>
-          Open in new tab
-        </a>
-      </div>
-      <iframe id="hr-iframe" src="" title="Manage Census HR Platform" allow="same-origin"></iframe>
-    </div>
   </div>
   <footer class="hipaa-footer no-print">
     <span><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:3px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> HIPAA Compliant</span>
@@ -651,6 +668,78 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
   </div>
 </div>
 
+<!-- HR: Send Invite Modal -->
+<div class="modal-overlay" id="modal-hr-invite">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header">
+      <span class="modal-title">
+        <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px;color:var(--blue)"><rect x="2" y="4" width="16" height="12" rx="1.5"/><path d="M2 7l8 5 8-5"/></svg>
+        Send Onboarding Invite
+      </span>
+      <button class="modal-close" onclick="App.closeModal('modal-hr-invite')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--g500);margin-bottom:16px">New hire receives the full package — application + all paperwork. They can save &amp; resume across sessions.</p>
+      <div style="margin-bottom:16px">
+        <label style="font-size:12px;font-weight:700;color:var(--g600);display:block;margin-bottom:8px">Invite Type</label>
+        <div style="display:flex;gap:8px">
+          <label style="flex:1;border:1.5px solid var(--g200);border-radius:8px;padding:10px 12px;cursor:pointer;transition:border-color .15s" id="invite-type-full">
+            <input type="radio" name="hr-invite-type" value="full" checked style="margin-right:6px">
+            <span style="font-weight:600;font-size:13px">Full Bundle</span>
+            <div style="font-size:11px;color:var(--g500);margin-top:2px;margin-left:18px">Application + all paperwork</div>
+          </label>
+          <label style="flex:1;border:1.5px solid var(--g200);border-radius:8px;padding:10px 12px;cursor:pointer;transition:border-color .15s" id="invite-type-app">
+            <input type="radio" name="hr-invite-type" value="application" style="margin-right:6px">
+            <span style="font-weight:600;font-size:13px">Application Only</span>
+            <div style="font-size:11px;color:var(--g500);margin-top:2px;margin-left:18px">Screen before hiring</div>
+          </label>
+        </div>
+        <div style="margin-top:8px">
+          <label style="width:100%;border:1.5px solid var(--g200);border-radius:8px;padding:10px 12px;cursor:pointer;display:block">
+            <input type="radio" name="hr-invite-type" value="paperwork" style="margin-right:6px">
+            <span style="font-weight:600;font-size:13px">New Hire Paperwork</span>
+            <span style="font-size:11px;color:var(--g500);margin-left:4px">Already-approved applicant</span>
+          </label>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <label class="form-label">Full Name</label>
+          <input type="text" class="form-input" id="hr-invite-name" placeholder="Jane Smith">
+        </div>
+        <div>
+          <label class="form-label">Email</label>
+          <input type="email" class="form-input" id="hr-invite-email" placeholder="jane@email.com">
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+        <div>
+          <label class="form-label">Role</label>
+          <select class="form-input" id="hr-invite-role">
+            ${HR_ROLES.map(r=>`<option>${r}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="form-label">Facility</label>
+          <select class="form-input" id="hr-invite-facility" onchange="App.updateInvitePackageLabel()">
+            ${HR_FACILITIES.map(f=>`<option value="${f.id}">${f.name} (${f.state})</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--blue-d);margin-bottom:4px" id="hr-invite-pkg-label">
+        Full Package: Application + Texas (DPS CCH Verification)
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="App.closeModal('modal-hr-invite')">Cancel</button>
+      <button class="btn btn-primary" onclick="App.sendHRInvite()">
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 6l7 4 7-4"/></svg>
+        Send Invite
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- Toast -->
 <div class="toast" id="toast"><span id="toast-icon"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,8 6,12 14,4"/></svg></span><span id="toast-msg"></span></div>
 
@@ -804,6 +893,100 @@ const SEED_EMPLOYEES = [
   {id:'e23',name:'Nicole Wilson',group:'Dietary Aid',email:'nicole@example.com',phone:'555-0123',buildingId:'b1',notifEmail:false,notifSMS:true,notifPrefs:['immediate'],initials:'NW'},
 ];
 
+// ── HR MODULE SEED DATA ───────────────────────────────────────
+const HR_ROLES = ['CNA','CMA','LPN','RN','Dietary','Housekeeping','Maintenance'];
+const HR_FACILITIES = [
+  {id:'hf1',name:'Tulia Health and Rehabilitation',state:'TX'},
+  {id:'hf2',name:'Oklahoma Care Center',state:'OK'},
+  {id:'hf3',name:'Sunrise Senior Living',state:'TX'},
+  {id:'hf4',name:'Heritage Oaks Nursing',state:'OK'},
+  {id:'hf5',name:'Pine Valley Care Center',state:'TX'},
+  {id:'hf6',name:'Lakewood Health & Rehab',state:'TX'},
+  {id:'hf7',name:'Prairie Wind Care Home',state:'OK'},
+  {id:'hf8',name:'Pecan Grove Nursing',state:'TX'},
+  {id:'hf9',name:'Red River Rehabilitation',state:'TX'},
+  {id:'hf10',name:'Sooner State Care Center',state:'OK'},
+];
+const SEED_HR_EMPLOYEES = [
+  {id:'hre1',initials:'MS',name:'Maria Santos',email:'maria.s@email.com',role:'CNA',facilityId:'hf1',status:'active',progress:'Complete',slxId:'SLX-440122',hourlyRate:22},
+  {id:'hre2',initials:'JW',name:'James Wilson',email:'james.w@email.com',role:'RN',facilityId:'hf1',status:'active',progress:'Complete',slxId:'SLX-440233',hourlyRate:38},
+  {id:'hre3',initials:'AJ',name:'Aisha Johnson',email:'aisha.j@email.com',role:'LPN',facilityId:'hf2',status:'onboarding',progress:'Filling forms',slxId:null,hourlyRate:28},
+  {id:'hre4',initials:'DC',name:'David Chen',email:'david.c@email.com',role:'CNA',facilityId:'hf1',status:'active',progress:'Complete',slxId:'SLX-440344',hourlyRate:22},
+  {id:'hre5',initials:'SK',name:'Sarah Kim',email:'sarah.k@email.com',role:'RN',facilityId:'hf2',status:'invited',progress:'Invite sent',slxId:null,hourlyRate:null},
+  {id:'hre6',initials:'TR',name:'Tom Rivera',email:'tom.r@email.com',role:'CMA',facilityId:'hf1',status:'active',progress:'Complete',slxId:'SLX-440455',hourlyRate:25},
+  {id:'hre7',initials:'PP',name:'Priya Patel',email:'priya.p@email.com',role:'CMA',facilityId:'hf1',status:'review',progress:'Awaiting review',slxId:null,hourlyRate:null},
+];
+const SEED_HR_ONBOARDING = {
+  TX:{name:'Tulia Health and Rehabilitation — Texas document package',steps:[
+    {id:'tx1',type:'form',title:'Employment Application',desc:'Personal info, education, employment history, references'},
+    {id:'tx2',type:'form',title:'ID Verification',desc:'Upload valid government-issued photo ID or driver\'s license'},
+    {id:'tx3',type:'form',title:'New Hire Info',desc:'Demographics, job details, schedule'},
+    {id:'tx4',type:'form',title:'Emergency Contacts',desc:'Primary & secondary emergency contacts, physician'},
+    {id:'tx5',type:'form',title:'Federal W-4',desc:'IRS employee withholding certificate (2026)'},
+    {id:'tx6',type:'form',title:'Form I-9',desc:'USCIS employment eligibility verification'},
+    {id:'tx7',type:'form',title:'TX DPS Background Check',desc:'Texas DPS criminal conviction history verification'},
+    {id:'tx8',type:'form',title:'Direct Deposit',desc:'Bank routing & account for payroll'},
+    {id:'tx9',type:'video',title:'Training Videos',desc:'Orientation, safety, HIPAA compliance'},
+    {id:'tx10',type:'form',title:'Policy Acknowledgment',desc:'Employee handbook, HIPAA confidentiality'},
+  ]},
+  OK:{name:'Oklahoma Care Center — Oklahoma document package',steps:[
+    {id:'ok1',type:'form',title:'Employment Application',desc:'Personal info, education, employment history, references'},
+    {id:'ok2',type:'form',title:'ID Verification',desc:'Upload valid government-issued photo ID or driver\'s license'},
+    {id:'ok3',type:'form',title:'New Hire Info',desc:'Demographics, job details, schedule'},
+    {id:'ok4',type:'form',title:'Emergency Contacts',desc:'Primary & secondary emergency contacts, physician'},
+    {id:'ok5',type:'form',title:'Federal W-4',desc:'IRS employee withholding certificate (2026)'},
+    {id:'ok6',type:'form',title:'OK State W-4',desc:'Oklahoma employee withholding allowance certificate'},
+    {id:'ok7',type:'form',title:'Form I-9',desc:'USCIS employment eligibility verification'},
+    {id:'ok8',type:'form',title:'OK Background Check',desc:'OK Long Term Care Security Act — consent & fingerprint'},
+    {id:'ok9',type:'form',title:'Direct Deposit',desc:'Bank routing & account for payroll'},
+    {id:'ok10',type:'video',title:'Training Videos',desc:'Orientation, safety, HIPAA compliance'},
+    {id:'ok11',type:'form',title:'Policy Acknowledgment',desc:'Employee handbook, HIPAA confidentiality'},
+  ]},
+};
+const SEED_HR_ACCOUNTS = [
+  {id:'ha0',initials:'SA',name:'Super Admin',email:'solomong@managemycensus.com',role:'Owner',status:'active'},
+  {id:'ha1',initials:'RT',name:'Rebecca Torres',email:'rebecca.t@facility.com',role:'Admin',status:'active'},
+  {id:'ha2',initials:'MP',name:'Michael Park',email:'michael.p@facility.com',role:'Admin',status:'active'},
+];
+function generateHRTimeClock() {
+  const recs=[]; const names=['Maria Santos','James Wilson','David Chen','Tom Rivera'];
+  const roles=['CNA','RN','CNA','CMA'];
+  const now=new Date(); let id=1;
+  for(let d=0;d<14;d++){
+    const dt=new Date(now); dt.setDate(dt.getDate()-d);
+    const ds=dt.toISOString().slice(0,10);
+    names.forEach((nm,i)=>{
+      const missed=Math.random()<0.08;
+      const late=Math.random()<0.07;
+      const inH=missed?8:(late?8:7+Math.round(Math.random()));
+      const inM=late?Math.floor(Math.random()*30)+1:0;
+      const outH=missed?null:inH+8+Math.round(Math.random()*1.5);
+      const outM=missed?null:Math.floor(Math.random()*60);
+      const hrs=missed?null:((outH-inH)+(outM-inM)/60).toFixed(1);
+      const status=missed?'missed':(late?'late':'normal');
+      recs.push({id:id++,name:nm,role:roles[i],date:ds,
+        in:missed?'08:00':`${String(inH).padStart(2,'0')}:${String(inM).padStart(2,'0')}`,
+        out:missed?null:`${String(Math.min(outH,23)).padStart(2,'0')}:${String(outM).padStart(2,'0')}`,
+        hours:hrs,status});
+    });
+  }
+  return recs.sort((a,b)=>b.date.localeCompare(a.date)||a.name.localeCompare(b.name));
+}
+function generateHRAuditLog() {
+  const actions=['edit_punch','approve_doc','export_data','view_phi','add_employee','sync_adp','edit_schedule','approve_timeoff','generate_pbj','login'];
+  const users=['Super Admin','Rebecca Torres','Michael Park'];
+  const details={edit_punch:'Corrected punch for E00',approve_doc:'Approved documents for E00',export_data:'Exported SmartLinx CSV',view_phi:'Viewed employee E00',add_employee:'Added new employee',sync_adp:'Synced ADP workers for F001',edit_schedule:'Modified schedule for E00',approve_timeoff:'Approved time-off request',generate_pbj:'Generated PBJ report for F001',login:'Logged in from 192.168.1.'};
+  const log=[]; const now=new Date();
+  for(let i=0;i<50;i++){
+    const a=actions[Math.floor(Math.random()*actions.length)];
+    const u=users[Math.floor(Math.random()*users.length)];
+    const d=new Date(now.getTime()-Math.random()*172800000);
+    const detail=details[a]+(a.includes('E00')?Math.floor(Math.random()*7+1):''+(a==='login'?Math.floor(Math.random()*200):''));
+    log.push({ts:d.toLocaleString(),user:u,action:a,detail});
+  }
+  return log.sort((a,b)=>new Date(b.ts)-new Date(a.ts));
+}
+
 function generateShifts(employees) {
   const shifts = [];
   let sid = 1;
@@ -950,6 +1133,15 @@ const App = {
     patPreset: null,
     // app mode toggle
     appMode: 'schedule',
+    // HR module state
+    hrPage: 'dashboard',
+    hrFilter: 'all',
+    hrOnboardingState: 'TX',
+    hrEmployees: [...SEED_HR_EMPLOYEES],
+    hrOnboarding: JSON.parse(JSON.stringify(SEED_HR_ONBOARDING)),
+    hrAccounts: [...SEED_HR_ACCOUNTS],
+    hrTimeClock: null,
+    hrAuditLog: null,
   },
 
   // ── TIMERS & INTERNAL STATE ───────────────────────────────
@@ -1151,9 +1343,7 @@ const App = {
     sessionStorage.removeItem(SEC.SESSION_KEY+'_demo');
     sessionStorage.removeItem('mms_lock_hash');
     this.S.user = null; this.S.panelOpen = false; this._sessionLocked = false;
-    this.S.appMode = 'schedule';
-    const hrViewEl = document.getElementById('hr-view');
-    if (hrViewEl) { hrViewEl.classList.remove('visible'); document.getElementById('hr-iframe').src = ''; }
+    this.S.appMode = 'schedule'; this.S.hrPage = 'dashboard';
     document.getElementById('lock-screen').classList.remove('active');
     document.getElementById('session-warning').style.display = 'none';
     const demoBanner = document.getElementById('demo-mode-banner');
@@ -1323,6 +1513,11 @@ const App = {
       document.getElementById('sidebar').style.display = 'none';
       document.getElementById('main').className = 'main main-full';
       this.renderSuperAdmin();
+    } else if (this.S.appMode === 'hr') {
+      document.getElementById('sidebar').style.display = 'block';
+      document.getElementById('main').className = 'main';
+      this.renderHRSidebar();
+      this.renderHRMain();
     } else {
       document.getElementById('sidebar').style.display = 'block';
       document.getElementById('main').className = 'main' + (this.S.panelOpen ? ' panel-open' : '');
@@ -1613,29 +1808,662 @@ const App = {
 
   switchMode(mode) {
     this.S.appMode = mode;
-    const hrView = document.getElementById('hr-view');
-    const mainEl = document.getElementById('main');
-    const rpEl   = document.getElementById('right-panel');
     if (mode === 'hr') {
-      const iframe = document.getElementById('hr-iframe');
-      if (!iframe.src || iframe.src === window.location.href) {
-        iframe.src = 'https://managecensus.azurewebsites.net';
-      }
-      hrView.classList.add('visible');
-      mainEl.style.display = 'none';
-      rpEl.style.display   = 'none';
-    } else {
-      hrView.classList.remove('visible');
-      mainEl.style.display = '';
-      rpEl.style.display   = '';
+      // close right panel when switching to HR
+      this.S.panelOpen = false;
+      document.getElementById('right-panel').classList.remove('open');
+      document.getElementById('main').classList.remove('panel-open');
     }
-    this.renderSidebar();
+    this.render();
+  },
+
+  navigateHR(page) {
+    this.S.hrPage = page;
+    this.renderHRSidebar();
+    this.renderHRMain();
   },
 
   setEmpView(view) {
     this.S.empView = view;
     this.renderMain();
     this.renderSidebar();
+  },
+
+  // ── HR MODULE ─────────────────────────────────────────────────
+
+  renderHRSidebar() {
+    const pg = this.S.hrPage;
+    const isHR = true;
+    const modeToggle = `<div class="mode-toggle">
+      <button class="mode-toggle-btn" onclick="App.switchMode('schedule')">
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 6h14"/><path d="M5 2v4"/><path d="M11 2v4"/></svg>
+        Schedule
+      </button>
+      <button class="mode-toggle-btn active" onclick="App.switchMode('hr')">
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5"/><path d="M11 9v6M8 12h6"/></svg>
+        HR
+      </button>
+    </div>`;
+    const nav = [
+      ['dashboard','Dashboard','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>'],
+      ['employees','Employees','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5h0c2.8 0 5 2.2 5 5"/><circle cx="12.5" cy="5" r="2"/><path d="M16 13.5c0-2.2-1.6-4-3.5-4"/></svg>'],
+      ['docreview','Doc Review','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="1" width="12" height="14" rx="1.5"/><path d="M5 5h6M5 8h6M5 11h4"/></svg>'],
+      ['schedule','Schedule','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="13" rx="1.5"/><path d="M1 6h14M5 1v3M11 1v3"/></svg>'],
+      ['shiftboard','Shift Board','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.5V8l2.5 2"/></svg>'],
+      ['timeclock','Time Clock','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v3.5l2 2"/></svg>'],
+      ['datacenter','Data Center','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12V4l6-3 6 3v8l-6 3z"/><path d="M8 1v14M2 7l6 3 6-3"/></svg>'],
+      ['onboarding','Onboarding Flow','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1v14M1 8h6M12 5l3 3-3 3"/></svg>'],
+      ['integrations','Integrations','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="3.5" cy="8" r="2"/><circle cx="12.5" cy="3.5" r="2"/><circle cx="12.5" cy="12.5" r="2"/><path d="M5.5 8h3l4-4.5M8.5 8h3l1 4"/></svg>'],
+      ['pbj','PBJ Reports','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 14V2h12v12H2z"/><path d="M5 6h6M5 9h4"/></svg>'],
+      ['accounts','Accounts','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>'],
+      ['auditlog','Audit Log','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="1" width="12" height="14" rx="1.5"/><path d="M5 5h6M5 8h6M5 11h3"/><circle cx="12" cy="12" r="3" fill="var(--blue-l)" stroke="var(--blue)"/><path d="M11 12h2M12 11v2"/></svg>'],
+      ['billing','Billing','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 7h14"/><path d="M4 11h2M9 11h3"/></svg>'],
+    ];
+    const items = nav.map(([id,label,icon])=>`<div class="hr-nav-item${pg===id?' active':''}" onclick="App.navigateHR('${id}')">${icon}${label}</div>`).join('');
+    document.getElementById('sidebar').innerHTML = `${modeToggle}<div class="sidebar-section-title" style="margin-top:4px">HR Platform</div>${items}`;
+  },
+
+  renderHRMain() {
+    const pg = this.S.hrPage;
+    const pages = {
+      dashboard: () => this.renderHRDashboard(),
+      employees: () => this.renderHREmployees(),
+      docreview: () => this.renderHRDocReview(),
+      schedule: () => this.renderHRSchedule(),
+      shiftboard: () => this.renderHRShiftBoard(),
+      timeclock: () => this.renderHRTimeClock(),
+      datacenter: () => this.renderHRDataCenter(),
+      onboarding: () => this.renderHROnboarding(),
+      integrations: () => this.renderHRIntegrations(),
+      pbj: () => this.renderHRPBJ(),
+      accounts: () => this.renderHRAccounts(),
+      auditlog: () => this.renderHRAuditLog(),
+      billing: () => this.renderHRBilling(),
+    };
+    document.getElementById('main').innerHTML = (pages[pg] || pages.dashboard)();
+  },
+
+  hrBadge(status) {
+    const map = {active:'active',onboarding:'onboarding',invited:'invited',review:'review',approved:'approved',synced:'synced'};
+    const cls = map[status] || 'active';
+    return `<span class="hr-badge hr-badge-${cls}">${status.toUpperCase()}</span>`;
+  },
+
+  hrAvatar(initials, status) {
+    const colors = {active:'#6B9E7A',onboarding:'#EA580C',invited:'#2563EB',review:'#DC2626',approved:'#059669',default:'#9CA3AF'};
+    const bg = colors[status] || colors.default;
+    return `<div class="emp-avatar" style="background:${bg};width:34px;height:34px;font-size:12px;flex-shrink:0">${sanitize(initials)}</div>`;
+  },
+
+  hrHipaaBar() {
+    return `<div class="hr-hipaa-bar"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M8 1L2 4v5c0 3.5 2.7 6.7 6 7.4 3.3-.7 6-3.9 6-7.4V4z"/></svg><strong>HIPAA Protected</strong> — Encrypted in transit &amp; at rest · Auto-lock 15 min</div>`;
+  },
+
+  renderHRDashboard() {
+    const emps = this.S.hrEmployees;
+    const active = emps.filter(e=>e.status==='active').length;
+    const onboarding = emps.filter(e=>e.status==='onboarding').length;
+    const review = emps.filter(e=>e.status==='review').length;
+    const approved = emps.filter(e=>e.status==='approved').length;
+    const invited = emps.filter(e=>e.status==='invited').length;
+    const synced = emps.filter(e=>e.slxId).length;
+    const pipeline = emps.filter(e=>['onboarding','invited','review'].includes(e.status));
+    const statCards = [
+      {n:active, label:'Active', bg:'#ECFDF5', ic:'#059669', svg:'<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="6" r="3"/><path d="M1 18c0-3.3 2.7-6 6-6"/><circle cx="14" cy="8" r="2.5"/><path d="M10 18c0-2.8 1.8-5 4-5h0c2.2 0 4 2.2 4 5"/></svg>'},
+      {n:onboarding, label:'Onboarding', bg:'#FFF7ED', ic:'#EA580C', svg:'<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="12" height="16" rx="1.5"/><path d="M8 2v4h4V2"/><path d="M7 10h6M7 13h4"/></svg>'},
+      {n:review, label:'Review', bg:'#FEF2F2', ic:'#DC2626', svg:'<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="16" height="14" rx="1.5"/><path d="M6 2v4M14 2v4M2 10h16"/><circle cx="10" cy="14" r="1.5" fill="currentColor" stroke="none"/></svg>'},
+      {n:approved, label:'App Approved', bg:'#F0FDF4', ic:'#16A34A', svg:'<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="4,10 8,14 16,6"/></svg>'},
+      {n:invited, label:'Invited', bg:'#EFF6FF', ic:'#2563EB', svg:'<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="16" height="12" rx="1.5"/><path d="M2 8l8 5 8-5"/></svg>'},
+      {n:synced, label:'Synced', bg:'#F5F3FF', ic:'#7C3AED', svg:'<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10a6 6 0 1 1 12 0"/><path d="M16 10a6 6 0 1 1-12 0"/><path d="M2 10l2-2 2 2M14 10l2 2 2-2"/></svg>'},
+    ];
+    const pipelineRows = pipeline.map(e=>`
+      <div class="hr-row" onclick="App.navigateHR('employees')">
+        ${this.hrAvatar(e.initials, e.status)}
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;font-size:13px;color:var(--g900)">${sanitize(e.name)}</div>
+          <div style="font-size:11px;color:var(--g500)">${sanitize(e.role)}</div>
+        </div>
+        ${this.hrBadge(e.status)}
+      </div>`).join('');
+    const qaItems = [
+      {label:'Send Invite', sub:'Invite a new hire', ic:'<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 6l7 4 7-4"/></svg>', fn:"App.openModal('modal-hr-invite')"},
+      {label:'Review Docs', sub:'Pending document review', ic:'<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="1" width="12" height="14" rx="1.5"/><path d="M5 5h6M5 8h6M5 11h4"/></svg>', fn:"App.navigateHR('docreview')"},
+      {label:'Shift Board', sub:'Open shifts & staffing', ic:'<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.5V8l2.5 2"/></svg>', fn:"App.navigateHR('shiftboard')"},
+    ];
+    return `
+      ${this.hrHipaaBar()}
+      <div style="margin-bottom:20px">
+        <div class="hr-page-title">Dashboard</div>
+        <div class="hr-page-sub">${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})}</div>
+      </div>
+      <div class="hr-stat-grid">
+        ${statCards.map(c=>`<div class="hr-stat-card">
+          <div class="hr-stat-icon" style="background:${c.bg};color:${c.ic}">${c.svg}</div>
+          <div class="hr-stat-num">${c.n}</div>
+          <div class="hr-stat-lbl">${c.label}</div>
+        </div>`).join('')}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 280px;gap:20px">
+        <div class="hr-section">
+          <div class="hr-section-hdr"><span class="hr-section-title">Pipeline</span></div>
+          ${pipeline.length ? pipelineRows : '<div style="padding:24px;text-align:center;color:var(--g400);font-size:13px">No active pipeline</div>'}
+        </div>
+        <div class="hr-section">
+          <div class="hr-section-hdr"><span class="hr-section-title">Quick Actions</span></div>
+          ${qaItems.map(q=>`<div class="hr-qa-item" onclick="${q.fn}">
+            <div class="hr-qa-icon">${q.ic}</div>
+            <div><div style="font-weight:600;font-size:13px;color:var(--g900)">${q.label}</div>
+            <div style="font-size:11px;color:var(--g500);margin-top:1px">${q.sub}</div></div>
+          </div>`).join('')}
+        </div>
+      </div>`;
+  },
+
+  renderHREmployees() {
+    const emps = this.S.hrEmployees;
+    const f = this.S.hrFilter || 'all';
+    const filters = [{k:'all',label:`All (${emps.length})`},{k:'invited',label:`Invited (${emps.filter(e=>e.status==='invited').length})`},{k:'onboarding',label:`Filling (${emps.filter(e=>e.status==='onboarding').length})`},{k:'review',label:`Review (${emps.filter(e=>e.status==='review').length})`},{k:'approved',label:`App Approved (${emps.filter(e=>e.status==='approved').length})`},{k:'active',label:`Active (${emps.filter(e=>e.status==='active').length})`}];
+    const filtered = f==='all' ? emps : emps.filter(e=>e.status===f);
+    const rows = filtered.map(e=>{
+      const fac = HR_FACILITIES.find(x=>x.id===e.facilityId);
+      return `<tr style="border-bottom:1px solid var(--g100)">
+        <td style="padding:12px 16px">
+          <div style="display:flex;align-items:center;gap:10px">
+            ${this.hrAvatar(e.initials,e.status)}
+            <div>
+              <div style="font-weight:600;font-size:13px;color:var(--g900)">${sanitize(e.name)}</div>
+              <div style="font-size:11px;color:var(--g500)">${sanitize(e.email)}</div>
+            </div>
+          </div>
+        </td>
+        <td style="padding:12px 16px;font-size:13px;font-weight:500;color:var(--g700)">${sanitize(e.role)}</td>
+        <td style="padding:12px 16px;font-size:12px;color:var(--g500)">${fac?sanitize(fac.name):''}</td>
+        <td style="padding:12px 16px">${this.hrBadge(e.status)}</td>
+        <td style="padding:12px 16px;font-size:12px;color:var(--g500)">${sanitize(e.progress)}</td>
+        <td style="padding:12px 16px;font-size:12px;font-weight:600;color:${e.slxId?'var(--purple)':'var(--g300)'}">${e.slxId?sanitize(e.slxId):'—'}</td>
+      </tr>`;
+    }).join('');
+    return `
+      ${this.hrHipaaBar()}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div><div class="hr-page-title">Employees</div><div class="hr-page-sub">Invite, track, manage</div></div>
+        <button class="btn btn-primary btn-sm" onclick="App.openModal('modal-hr-invite')">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 6l7 4 7-4"/></svg>
+          Send Invite
+        </button>
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap">
+        ${filters.map(x=>`<button class="btn btn-${f===x.k?'primary':'secondary'} btn-sm" onclick="App.S.hrFilter='${x.k}';App.renderHRMain()">${x.label}</button>`).join('')}
+      </div>
+      <div class="hr-section">
+        <table style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr style="border-bottom:2px solid var(--g100)">
+              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">Employee</th>
+              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">Role</th>
+              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">Facility</th>
+              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">Status</th>
+              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">Progress</th>
+              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">SmartLinx</th>
+            </tr>
+          </thead>
+          <tbody>${rows || '<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--g400);font-size:13px">No employees in this filter</td></tr>'}</tbody>
+        </table>
+      </div>`;
+  },
+
+  renderHRDocReview() {
+    const pending = this.S.hrEmployees.filter(e=>e.status==='review');
+    const rows = pending.length ? pending.map(e=>`
+      <div style="padding:18px 20px;border-bottom:1px solid var(--g100)">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px">
+          <div style="display:flex;align-items:center;gap:12px">
+            ${this.hrAvatar(e.initials,e.status)}
+            <div>
+              <div style="font-weight:700;font-size:14px;color:var(--g900)">${sanitize(e.name)} Full Bundle</div>
+              <div style="font-size:12px;color:var(--g500);margin-top:2px">${sanitize(e.role)} · Submitted ${e.hireDate||'recently'}</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+            <div>
+              <label style="font-size:11px;font-weight:700;color:var(--g500);display:block;margin-bottom:3px">Rate $/hr</label>
+              <input type="number" placeholder="0.00" value="${e.hourlyRate||''}" style="width:80px;padding:5px 8px;border:1.5px solid var(--g200);border-radius:6px;font-size:13px;font-family:inherit"
+                onchange="App.setHREmployeeRate('${e.id}',this.value)">
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <button class="btn btn-primary btn-sm" onclick="App.approveHRDoc('${e.id}')">Review</button>
+              <button class="btn btn-secondary btn-sm" onclick="App.exportHRSmartLinx('${e.id}')">Export to SmartLinx</button>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:10px;font-size:11px;color:var(--g400);background:var(--blue-l);padding:6px 10px;border-radius:6px">Downloads CSV for SmartLinx import · Enter hourly rate before exporting to SmartLinx</div>
+      </div>`).join('') : '<div style="padding:40px;text-align:center;color:var(--g400);font-size:13px">No documents pending review</div>';
+    return `
+      ${this.hrHipaaBar()}
+      <div style="margin-bottom:20px"><div class="hr-page-title">Document Review</div><div class="hr-page-sub">Review submitted docs → export to SmartLinx</div></div>
+      <div class="hr-section">${rows}</div>`;
+  },
+
+  renderHRSchedule() {
+    const active = this.S.hrEmployees.filter(e=>e.status==='active');
+    const weeks = []; const now = new Date();
+    for(let d=0;d<14;d++){
+      const dt=new Date(now); dt.setDate(dt.getDate()+d);
+      weeks.push({dt,label:dt.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}),isToday:dt.toISOString().slice(0,10)===TODAY});
+    }
+    const shiftTypes = ['Day 7a–3p','Eve 3p–11p','Night 11p–7a'];
+    const rows = active.map(e=>`
+      <tr style="border-bottom:1px solid var(--g100)">
+        <td style="padding:10px 16px;white-space:nowrap;position:sticky;left:0;background:#fff;z-index:1;border-right:1px solid var(--g100)">
+          <div style="display:flex;align-items:center;gap:8px">
+            ${this.hrAvatar(e.initials,'active')}
+            <div><div style="font-weight:600;font-size:12px;color:var(--g900)">${sanitize(e.name)}</div><div style="font-size:11px;color:var(--g500)">${sanitize(e.role)}</div></div>
+          </div>
+        </td>
+        ${weeks.map((w,i)=>{
+          const type=shiftTypes[Math.abs(e.id.charCodeAt(3)+i)%4];
+          const isOff=type===shiftTypes[3]||Math.random()<0.25;
+          return `<td style="padding:6px;text-align:center;background:${w.isToday?'var(--blue-l)':''}">
+            ${isOff?'<span style="font-size:10px;color:var(--g300)">Off</span>':`<div style="background:var(--blue);color:#fff;border-radius:5px;padding:3px 5px;font-size:10px;font-weight:600">${shiftTypes[Math.abs(e.id.charCodeAt(3)+i)%3].split(' ')[0]}</div>`}
+          </td>`;
+        }).join('')}
+      </tr>`).join('');
+    return `
+      ${this.hrHipaaBar()}
+      <div style="margin-bottom:20px"><div class="hr-page-title">Schedule</div><div class="hr-page-sub">2-week view · SmartLinx sync</div></div>
+      <div class="hr-section" style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;min-width:800px">
+          <thead>
+            <tr style="border-bottom:2px solid var(--g100)">
+              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;position:sticky;left:0;background:#fff;z-index:1;border-right:1px solid var(--g100);white-space:nowrap">Employee</th>
+              ${weeks.map(w=>`<th style="padding:8px 4px;font-size:10px;font-weight:700;color:${w.isToday?'var(--blue)':'var(--g400)'};text-align:center;white-space:nowrap;min-width:50px">${w.label.split(', ')[0]}<br><span style="font-weight:500">${w.label.split(', ')[1]||''}</span></th>`).join('')}
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  },
+
+  renderHRShiftBoard() {
+    const openShifts = [
+      {date:'Sun, Apr 26',shift:'Day',needs:1,time:'7a–3p',floor:'Fl 2A',role:'CNA'},
+      {date:'Tue, Apr 28',shift:'Eve',needs:1,time:'3p–11p',floor:'Fl Main',role:'RN'},
+      {date:'Thu, Apr 30',shift:'Night',needs:1,time:'11p–7a',floor:'Fl 3B',role:'CNA'},
+      {date:'Tue, May 5',shift:'Day',needs:2,time:'7a–7p',floor:'Fl MC',role:'CMA'},
+      {date:'Sat, May 9',shift:'Eve',needs:1,time:'3p–11p',floor:'Fl 2A',role:'CNA'},
+      {date:'Fri, May 15',shift:'Day',needs:1,time:'7a–3p',floor:'Fl Main',role:'LPN'},
+    ];
+    const active = this.S.hrEmployees.filter(e=>e.status==='active');
+    const todayGrid = active.map(e=>`
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--g100)">
+        ${this.hrAvatar(e.initials,'active')}
+        <div style="flex:1"><div style="font-weight:600;font-size:13px">${sanitize(e.name)}</div><div style="font-size:11px;color:var(--g500)">${sanitize(e.role)}</div></div>
+        <span style="font-size:11px;font-weight:700;color:var(--green);background:var(--green-l);padding:3px 8px;border-radius:6px">REG</span>
+      </div>`).join('');
+    const openRows = openShifts.map(s=>`
+      <div style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--g100)">
+        <div style="text-align:center;min-width:36px">
+          <div style="font-size:10px;font-weight:700;color:var(--g400)">${s.date.split(', ')[0]}</div>
+          <div style="font-size:16px;font-weight:800;color:var(--g900)">${s.date.split(', ')[1]?.split(' ')[1]||''}</div>
+        </div>
+        <div style="flex:1">
+          <div style="font-weight:600;font-size:13px;color:var(--g900)">${s.shift} · open · ${s.needs} need</div>
+          <div style="font-size:11px;color:var(--g500)">${s.time} · ${s.floor} · ${s.role}</div>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="App.showToast('Notifications sent to eligible staff')">Notify</button>
+        <button class="btn btn-ghost btn-sm" style="color:var(--red)">Cancel</button>
+      </div>`).join('');
+    return `
+      ${this.hrHipaaBar()}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div><div class="hr-page-title">Shift Board</div><div class="hr-page-sub">Staffing grid · open shifts · notifications</div></div>
+        <button class="btn btn-primary btn-sm" onclick="App.showToast('Create shift — coming soon','warn')">Create Open Shift</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+        <div class="hr-section">
+          <div class="hr-section-hdr"><span class="hr-section-title">Today — ${new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</span></div>
+          <div style="padding:0 18px">${todayGrid}</div>
+        </div>
+        <div class="hr-section">
+          <div class="hr-section-hdr"><span class="hr-section-title">Open Shifts</span></div>
+          ${openRows}
+        </div>
+      </div>`;
+  },
+
+  renderHRTimeClock() {
+    if (!this.S.hrTimeClock) this.S.hrTimeClock = generateHRTimeClock();
+    const recs = this.S.hrTimeClock;
+    const statusColor = {normal:'var(--green)',late:'var(--amber)',missed:'var(--red)'};
+    const rows = recs.slice(0,50).map(r=>`
+      <tr style="border-bottom:1px solid var(--g100)">
+        <td style="padding:9px 14px;font-size:13px;font-weight:600;color:var(--g900)">${sanitize(r.name)}</td>
+        <td style="padding:9px 14px;font-size:12px;color:var(--g500)">${sanitize(r.role)}</td>
+        <td style="padding:9px 14px;font-size:12px;color:var(--g600)">${r.date}</td>
+        <td style="padding:9px 14px;font-size:12px;font-family:'JetBrains Mono',monospace">${r.in}</td>
+        <td style="padding:9px 14px;font-size:12px;font-family:'JetBrains Mono',monospace">${r.out||'—'}</td>
+        <td style="padding:9px 14px;font-size:12px;font-weight:600;color:var(--g700)">${r.hours?r.hours+'h':'—'}</td>
+        <td style="padding:9px 14px"><span style="font-size:11px;font-weight:700;color:${statusColor[r.status]};background:${r.status==='normal'?'var(--green-l)':r.status==='late'?'var(--amber-l)':'var(--red-l)'};padding:2px 8px;border-radius:6px">${r.status}</span></td>
+        <td style="padding:9px 14px"><button class="btn btn-ghost btn-sm" onclick="App.showToast('Punch edit — coming soon','warn')">Edit</button></td>
+      </tr>`).join('');
+    return `
+      ${this.hrHipaaBar()}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div><div class="hr-page-title">Time Clock</div><div class="hr-page-sub">Punch records, imports, hours summary</div></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-secondary btn-sm">Import CSV</button>
+          <button class="btn btn-secondary btn-sm">Hours Summary</button>
+          <button class="btn btn-secondary btn-sm" style="color:var(--red)">Corrections ${recs.filter(r=>r.status!=='normal').length}</button>
+        </div>
+      </div>
+      <div class="hr-section" style="overflow:auto;max-height:60vh">
+        <table style="width:100%;border-collapse:collapse">
+          <thead style="position:sticky;top:0;background:#fff;z-index:1">
+            <tr style="border-bottom:2px solid var(--g100)">
+              ${['Employee','Role','Date','Clock In','Clock Out','Hours','Status',''].map(h=>`<th style="padding:9px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap">${h}</th>`).join('')}
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div style="padding:12px 16px;font-size:12px;color:var(--g400);text-align:center">Showing 50 of ${recs.length} records</div>
+      </div>`;
+  },
+
+  renderHRDataCenter() {
+    const statCards = [
+      {label:'Total Payroll', val:'$26k', color:'var(--blue)', bg:'var(--blue-l)'},
+      {label:'Avg Hourly Rate', val:'$18', color:'var(--green)', bg:'var(--green-l)'},
+      {label:'OT Cost', val:'$2k', color:'var(--amber)', bg:'var(--amber-l)'},
+      {label:'Cost/Patient/Day', val:'$16', color:'var(--purple)', bg:'var(--purpleL,#F5F3FF)'},
+    ];
+    const periods = ['Current','Quarter','YTD'];
+    return `
+      ${this.hrHipaaBar()}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div><div class="hr-page-title">Data Center</div><div class="hr-page-sub">Analytics &amp; insights</div></div>
+        <div style="display:flex;background:var(--g100);border-radius:8px;padding:3px;gap:2px">
+          ${periods.map((p,i)=>`<button class="btn btn-${i===0?'primary':'secondary'} btn-sm" style="border-radius:6px">${p}</button>`).join('')}
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
+        ${statCards.map(c=>`<div class="hr-stat-card" style="display:flex;align-items:center;gap:12px">
+          <div style="width:40px;height:40px;border-radius:10px;background:${c.bg};display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <span style="font-size:14px;font-weight:800;color:${c.color}">${c.val[0]}</span>
+          </div>
+          <div>
+            <div style="font-size:20px;font-weight:800;color:var(--g900)">${c.val}</div>
+            <div style="font-size:11px;color:var(--g500);font-weight:600">${c.label}</div>
+          </div>
+        </div>`).join('')}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+        <div class="hr-section">
+          <div class="hr-section-hdr"><span class="hr-section-title">Payroll Trend</span></div>
+          <div style="padding:20px;display:flex;align-items:flex-end;gap:8px;height:120px">
+            ${[65,72,58,80,70,75,68,82].map((h,i)=>`<div style="flex:1;background:var(--blue);border-radius:4px 4px 0 0;height:${h}%;opacity:${0.5+i*0.07}" title="${h}%"></div>`).join('')}
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:0 20px 12px;font-size:10px;color:var(--g400)">
+            <span>04-04</span><span>04-11</span><span>04-18</span><span>04-25</span>
+          </div>
+        </div>
+        <div class="hr-section">
+          <div class="hr-section-hdr"><span class="hr-section-title">Labor Cost by Role</span></div>
+          <div style="padding:16px 20px">
+            ${[['CNA','40%'],['RN','28%'],['LPN','15%'],['CMA','10%'],['Dietary','5%'],['Housekeeping','2%']].map(([role,pct])=>`
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+                <div style="font-size:12px;font-weight:600;color:var(--g700);width:90px">${role}</div>
+                <div style="flex:1;background:var(--g100);border-radius:4px;height:8px;overflow:hidden">
+                  <div style="width:${pct};height:100%;background:var(--blue);border-radius:4px"></div>
+                </div>
+                <div style="font-size:11px;color:var(--g500);width:32px;text-align:right">${pct}</div>
+              </div>`).join('')}
+          </div>
+        </div>
+      </div>`;
+  },
+
+  renderHROnboarding() {
+    const st = this.S.hrOnboardingState || 'TX';
+    const pkg = this.S.hrOnboarding[st];
+    const tabs = Object.keys(this.S.hrOnboarding).map(k=>{
+      const p=this.S.hrOnboarding[k];
+      return `<button class="btn btn-${k===st?'primary':'secondary'} btn-sm" onclick="App.S.hrOnboardingState='${k}';App.renderHRMain()">${k==='TX'?'Texas (TX)':'Oklahoma (OK)'} — ${p.steps.length} steps</button>`;
+    }).join('');
+    const steps = pkg.steps.map((s,i)=>`
+      <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 18px;border-bottom:1px solid var(--g100)">
+        <div style="width:22px;height:22px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;margin-top:1px">${i+1}</div>
+        <div style="flex:1">
+          <div style="font-weight:600;font-size:13px;color:var(--g900)">${sanitize(s.title)}</div>
+          <div style="font-size:11px;color:var(--g500);margin-top:2px">${sanitize(s.desc)}</div>
+        </div>
+        <span style="font-size:10px;font-weight:700;background:${s.type==='video'?'var(--purple)':'var(--blue)'};color:#fff;padding:2px 8px;border-radius:6px;margin-top:2px">${s.type}</span>
+        <div style="display:flex;gap:4px">
+          <button class="btn btn-ghost btn-sm" style="padding:3px 6px;color:var(--g400)" onclick="App.moveHRStep('${st}',${i},-1)" ${i===0?'disabled':''}>↑</button>
+          <button class="btn btn-ghost btn-sm" style="padding:3px 6px;color:var(--g400)" onclick="App.moveHRStep('${st}',${i},1)" ${i===pkg.steps.length-1?'disabled':''}>↓</button>
+          <button class="btn btn-ghost btn-sm" style="padding:3px 6px;color:var(--red)" onclick="App.removeHRStep('${st}',${i})">✕</button>
+        </div>
+      </div>`).join('');
+    return `
+      ${this.hrHipaaBar()}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div><div class="hr-page-title">Onboarding Flow</div><div class="hr-page-sub">State-specific document packages · drag to reorder</div></div>
+        <button class="btn btn-primary btn-sm" onclick="App.addHRStep('${st}')">Add Step</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:16px">${tabs}</div>
+      <div class="hr-section">
+        <div style="padding:14px 18px;border-bottom:1px solid var(--g100);background:var(--g50)">
+          <div style="font-size:12px;font-weight:700;color:var(--g600)">${sanitize(pkg.name)}</div>
+        </div>
+        ${steps}
+      </div>`;
+  },
+
+  renderHRIntegrations() {
+    const integrations = [
+      {name:'ADP Workforce Now', status:'Not Connected', desc:'Configure your ADP Workforce Now credentials', color:'var(--red)', btn:'Configure'},
+      {name:'PointClickCare', status:'Connected', desc:'EHR integration active · Last sync: today', color:'var(--green)', btn:'Manage'},
+    ];
+    return `
+      ${this.hrHipaaBar()}
+      <div style="margin-bottom:20px"><div class="hr-page-title">Integrations</div><div class="hr-page-sub">Connect external systems</div></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        ${integrations.map(i=>`<div class="hr-section" style="padding:20px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div style="font-weight:700;font-size:15px;color:var(--g900)">${sanitize(i.name)}</div>
+            <span style="font-size:11px;font-weight:700;color:${i.color};background:${i.color==='var(--red)'?'var(--red-l)':'var(--green-l)'};padding:3px 8px;border-radius:6px">${sanitize(i.status)}</span>
+          </div>
+          <div style="font-size:12px;color:var(--g500);margin-bottom:14px">${sanitize(i.desc)}</div>
+          <button class="btn btn-${i.status==='Connected'?'secondary':'primary'} btn-sm" onclick="App.showToast('${i.name} configuration — coming soon','warn')">${i.btn}</button>
+        </div>`).join('')}
+      </div>`;
+  },
+
+  renderHRPBJ() {
+    return `
+      ${this.hrHipaaBar()}
+      <div style="margin-bottom:20px"><div class="hr-page-title">PBJ Reports</div><div class="hr-page-sub">CMS Payroll-Based Journal — staffing data for submission</div></div>
+      <div class="hr-section" style="padding:48px;text-align:center">
+        <svg viewBox="0 0 48 48" width="48" height="48" fill="none" stroke="var(--g300)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin:0 auto 16px"><rect x="4" y="6" width="40" height="36" rx="3"/><path d="M12 18h24M12 26h16"/></svg>
+        <div style="font-weight:700;font-size:16px;color:var(--g700);margin-bottom:8px">ADP Connection Required</div>
+        <div style="font-size:13px;color:var(--g500);max-width:360px;margin:0 auto 20px">Connect ADP Workforce Now in Integrations to generate PBJ reports from time &amp; attendance data.</div>
+        <button class="btn btn-primary" onclick="App.navigateHR('integrations')">Configure ADP</button>
+      </div>`;
+  },
+
+  renderHRAccounts() {
+    const accts = this.S.hrAccounts;
+    const rows = accts.map(a=>`
+      <tr style="border-bottom:1px solid var(--g100)">
+        <td style="padding:12px 16px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="emp-avatar" style="background:var(--blue);width:34px;height:34px;font-size:12px;flex-shrink:0">${sanitize(a.initials)}</div>
+            <div>
+              <div style="font-weight:600;font-size:13px;color:var(--g900)">${sanitize(a.name)}</div>
+              <div style="font-size:11px;color:var(--g500)">${sanitize(a.email)}</div>
+            </div>
+          </div>
+        </td>
+        <td style="padding:12px 16px;font-size:12px;color:var(--g600);font-weight:500">${sanitize(a.role)}</td>
+        <td style="padding:12px 16px"><span style="font-size:11px;font-weight:700;color:var(--green);background:var(--green-l);padding:2px 8px;border-radius:6px">${sanitize(a.status)}</span></td>
+        <td style="padding:12px 16px">
+          ${a.role==='Owner'?'<span style="font-size:12px;font-weight:600;color:var(--g400)">Owner</span>':`<button class="btn btn-secondary btn-sm" onclick="App.showToast('Account suspended','warn')">Suspend</button>`}
+        </td>
+      </tr>`).join('');
+    return `
+      ${this.hrHipaaBar()}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div><div class="hr-page-title">Manage Accounts</div></div>
+        <button class="btn btn-primary btn-sm" onclick="App.showToast('Add admin — coming soon','warn')">Add Admin</button>
+      </div>
+      <div class="hr-section">
+        <table style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr style="border-bottom:2px solid var(--g100)">
+              ${['Account','Status','Actions'].map((h,i)=>`<th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em${i===0?';width:50%':''}">${h}</th>`).join('')}
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  },
+
+  renderHRAuditLog() {
+    if (!this.S.hrAuditLog) this.S.hrAuditLog = generateHRAuditLog();
+    const log = this.S.hrAuditLog;
+    const actionColors = {edit_punch:'var(--amber)',approve_doc:'var(--green)',export_data:'var(--blue)',view_phi:'var(--purple)',add_employee:'var(--green)',sync_adp:'var(--cyan)',edit_schedule:'var(--orange)',approve_timeoff:'var(--green)',generate_pbj:'var(--blue)',login:'var(--g400)'};
+    const rows = log.map(e=>`
+      <tr style="border-bottom:1px solid var(--g100)">
+        <td style="padding:9px 14px;font-size:11px;color:var(--g500);white-space:nowrap;font-family:'JetBrains Mono',monospace">${e.ts}</td>
+        <td style="padding:9px 14px;font-size:12px;font-weight:600;color:var(--g800)">${sanitize(e.user)}</td>
+        <td style="padding:9px 14px"><span style="font-size:10px;font-weight:700;color:${actionColors[e.action]||'var(--g500)'};background:var(--g100);padding:2px 8px;border-radius:6px;font-family:'JetBrains Mono',monospace">${e.action}</span></td>
+        <td style="padding:9px 14px;font-size:12px;color:var(--g600)">${sanitize(e.detail)}</td>
+      </tr>`).join('');
+    return `
+      ${this.hrHipaaBar()}
+      <div style="margin-bottom:20px"><div class="hr-page-title">Audit Log</div><div class="hr-page-sub">HIPAA compliance audit trail — all admin actions logged</div></div>
+      <div class="hr-section" style="overflow:auto;max-height:70vh">
+        <table style="width:100%;border-collapse:collapse">
+          <thead style="position:sticky;top:0;background:#fff;z-index:1">
+            <tr style="border-bottom:2px solid var(--g100)">
+              ${['Timestamp','User','Action','Details'].map(h=>`<th style="padding:9px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">${h}</th>`).join('')}
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  },
+
+  renderHRBilling() {
+    const invoices = [
+      {id:'INV-2026-02', date:'Feb 1, 2026', amount:'$299.00', status:'Paid'},
+      {id:'INV-2026-01', date:'Jan 1, 2026', amount:'$299.00', status:'Paid'},
+      {id:'INV-2025-12', date:'Dec 1, 2025', amount:'$299.00', status:'Paid'},
+    ];
+    return `
+      ${this.hrHipaaBar()}
+      <div style="margin-bottom:20px"><div class="hr-page-title">Billing</div></div>
+      <div class="hr-billing-plan" style="margin-bottom:20px">
+        <div style="font-size:20px;font-weight:800;margin-bottom:4px">Manage my Staffing Pro</div>
+        <div style="font-size:14px;opacity:.85;margin-bottom:16px">Up to 100 employees · <strong>$299/mo</strong></div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;opacity:.9">
+          ${['SmartLinx Integration','Unlimited Onboarding','Shift Management','HIPAA Compliant'].map(f=>`<span>✓ ${f}</span>`).join('')}
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+        <div class="hr-section" style="padding:20px">
+          <div style="font-size:12px;font-weight:700;color:var(--g500);margin-bottom:10px">Payment Method</div>
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+            <div style="background:var(--g800);color:#fff;border-radius:6px;padding:6px 12px;font-size:12px;font-family:'JetBrains Mono',monospace">•••• 4242</div>
+            <div style="font-size:12px;color:var(--g500)">Exp 12/27 · Default</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary btn-sm" onclick="App.showToast('Payment processing — coming soon','warn')">Make Payment</button>
+            <button class="btn btn-secondary btn-sm" onclick="App.showToast('Update payment method — coming soon','warn')">Update Method</button>
+          </div>
+        </div>
+        <div class="hr-section">
+          <div class="hr-section-hdr"><span class="hr-section-title">Invoices</span></div>
+          ${invoices.map(inv=>`<div class="hr-row" style="cursor:default">
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:13px;color:var(--g900)">${inv.id}</div>
+              <div style="font-size:11px;color:var(--g500)">${inv.date}</div>
+            </div>
+            <div style="font-weight:700;font-size:13px;color:var(--g900)">${inv.amount}</div>
+            <span style="font-size:11px;font-weight:700;color:var(--green);background:var(--green-l);padding:2px 8px;border-radius:6px">${inv.status}</span>
+          </div>`).join('')}
+        </div>
+      </div>`;
+  },
+
+  // HR helper actions
+  setHREmployeeRate(id, rate) {
+    const emp = this.S.hrEmployees.find(e=>e.id===id);
+    if (emp) { emp.hourlyRate = parseFloat(rate)||null; this.persistData(); }
+  },
+
+  approveHRDoc(id) {
+    const emp = this.S.hrEmployees.find(e=>e.id===id);
+    if (emp) { emp.status='approved'; emp.progress='Complete'; this.persistData(); this.renderHRMain(); this.showToast('Documents approved'); }
+  },
+
+  exportHRSmartLinx(id) {
+    const emp = this.S.hrEmployees.find(e=>e.id===id);
+    if (!emp) return;
+    if (!emp.hourlyRate) { this.showToast('Enter hourly rate before exporting','warn'); return; }
+    const slx = 'SLX-' + (440000 + Math.floor(Math.random()*900));
+    emp.slxId = slx; emp.status = 'active'; emp.progress = 'Complete';
+    this.persistData(); this.renderHRMain(); this.showToast(`Exported to SmartLinx — ID: ${slx}`);
+  },
+
+  moveHRStep(state, idx, dir) {
+    const steps = this.S.hrOnboarding[state].steps;
+    const newIdx = idx + dir;
+    if (newIdx < 0 || newIdx >= steps.length) return;
+    [steps[idx], steps[newIdx]] = [steps[newIdx], steps[idx]];
+    this.persistData(); this.renderHRMain();
+  },
+
+  removeHRStep(state, idx) {
+    if (!confirm('Remove this onboarding step?')) return;
+    this.S.hrOnboarding[state].steps.splice(idx,1);
+    this.persistData(); this.renderHRMain();
+  },
+
+  addHRStep(state) {
+    const title = prompt('Step title:');
+    if (!title) return;
+    const desc = prompt('Step description:') || '';
+    const type = prompt('Type (form / video):', 'form') || 'form';
+    const id = state.toLowerCase() + '_' + Date.now();
+    this.S.hrOnboarding[state].steps.push({id, type:type.trim(), title:title.trim(), desc:desc.trim()});
+    this.persistData(); this.renderHRMain(); this.showToast('Step added');
+  },
+
+  updateInvitePackageLabel() {
+    const facId = document.getElementById('hr-invite-facility')?.value;
+    const fac = HR_FACILITIES.find(f=>f.id===facId);
+    const label = document.getElementById('hr-invite-pkg-label');
+    if (label && fac) {
+      const pkg = fac.state === 'OK' ? 'Oklahoma (Background Check + State W-4)' : 'Texas (DPS CCH Verification)';
+      label.textContent = `Full Package: Application + ${pkg}`;
+    }
+  },
+
+  sendHRInvite() {
+    const name = document.getElementById('hr-invite-name')?.value?.trim();
+    const email = document.getElementById('hr-invite-email')?.value?.trim();
+    const role = document.getElementById('hr-invite-role')?.value;
+    const facId = document.getElementById('hr-invite-facility')?.value;
+    if (!name || !email) { this.showToast('Enter name and email','warn'); return; }
+    const fac = HR_FACILITIES.find(f=>f.id===facId);
+    const initials = name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+    const id = 'hre' + Date.now();
+    this.S.hrEmployees.push({id, initials, name, email, role, facilityId: facId, status:'invited', progress:'Invite sent', slxId:null, hourlyRate:null});
+    this.persistData();
+    this.closeModal('modal-hr-invite');
+    this.showToast(`Invite sent to ${name}`);
+    if (this.S.hrPage === 'employees' || this.S.hrPage === 'dashboard') this.renderHRMain();
   },
 
   openPPDCalc() {
@@ -2943,6 +3771,8 @@ Tap the link below to view and claim:\nhttps://managemystaffing.com/claim?token=
       buildings:this.S.buildings, accounts:this.S.accounts,
       employees:this.S.employees, shifts:this.S.shifts,
       schedulePatterns:this.S.schedulePatterns,
+      hrEmployees:this.S.hrEmployees, hrOnboarding:this.S.hrOnboarding,
+      hrAccounts:this.S.hrAccounts,
     };
     if (IS_SERVER_MODE && _authToken) {
       fetch('/api/data',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},body:JSON.stringify(payload)})
@@ -2968,6 +3798,9 @@ Tap the link below to view and claim:\nhttps://managemystaffing.com/claim?token=
       if (Array.isArray(d.employees) && d.employees.length)        this.S.employees        = d.employees;
       if (Array.isArray(d.shifts)    && d.shifts.length)           this.S.shifts           = d.shifts;
       if (Array.isArray(d.schedulePatterns))                        this.S.schedulePatterns = d.schedulePatterns;
+      if (Array.isArray(d.hrEmployees)  && d.hrEmployees.length)   this.S.hrEmployees   = d.hrEmployees;
+      if (d.hrOnboarding && d.hrOnboarding.TX)                      this.S.hrOnboarding  = d.hrOnboarding;
+      if (Array.isArray(d.hrAccounts)   && d.hrAccounts.length)    this.S.hrAccounts    = d.hrAccounts;
       return true;
     } catch(e) { return false; }
   },
