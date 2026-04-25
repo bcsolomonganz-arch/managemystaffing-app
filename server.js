@@ -17,7 +17,7 @@ const HTML_FILE = path.join(__dirname, 'managemystaffing.html');
 const SEED_SA = {
   id: 'sa0',
   name: 'Ben Solomon',
-  email: 'solomong@managemycensus.com',
+  email: 'solomong@managemystaffing.com',
   role: 'superadmin',
   buildingId: null,
   ph: null   // ph:null = any password on first login becomes permanent
@@ -55,14 +55,20 @@ function loadData() {
     console.error('[mms] Failed to parse data file:', e.message);
     throw e;
   }
-  // Ensure seed accounts always exist (migration for existing data files)
+  // Ensure seed accounts always exist and up-to-date (migration for existing data files)
   if (!Array.isArray(data.accounts)) data.accounts = [];
   let dirty = false;
   for (const seed of [SEED_SA, SEED_DEMO]) {
-    if (!data.accounts.find(a => a.id === seed.id)) {
+    const existing = data.accounts.find(a => a.id === seed.id);
+    if (!existing) {
       data.accounts.push(seed);
       dirty = true;
       console.log(`[mms] Seeded missing account: ${seed.email}`);
+    } else if (existing.email !== seed.email) {
+      // Email changed in seed — update the stored record
+      existing.email = seed.email;
+      dirty = true;
+      console.log(`[mms] Updated email for account ${seed.id}: ${seed.email}`);
     }
   }
   if (dirty) writeAtomic(DATA_FILE, data);
