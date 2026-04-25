@@ -23,6 +23,16 @@ const SEED_SA = {
   ph: null   // ph:null = any password on first login becomes permanent
 };
 
+// ── DEMO ACCOUNT (any password accepted) ─────────────────────────────────────
+const SEED_DEMO = {
+  id: 'sa-demo',
+  name: 'Demo User',
+  email: 'demo@demo.com',
+  role: 'superadmin',
+  buildingId: null,
+  ph: null   // always accepts any password (demo mode)
+};
+
 // ── ATOMIC FILE WRITE ─────────────────────────────────────────────────────────
 function writeAtomic(filePath, data) {
   const tmp = filePath + '.tmp';
@@ -32,18 +42,31 @@ function writeAtomic(filePath, data) {
 
 // ── LOAD OR INITIALIZE DATA FILE ─────────────────────────────────────────────
 function loadData() {
+  let data;
   if (!fs.existsSync(DATA_FILE)) {
-    const initial = { accounts: [SEED_SA] };
-    writeAtomic(DATA_FILE, initial);
-    console.log(`[mms] Created data file at ${DATA_FILE} with seed super-admin.`);
-    return initial;
+    data = { accounts: [SEED_SA, SEED_DEMO] };
+    writeAtomic(DATA_FILE, data);
+    console.log(`[mms] Created data file at ${DATA_FILE} with seed accounts.`);
+    return data;
   }
   try {
-    return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
   } catch (e) {
     console.error('[mms] Failed to parse data file:', e.message);
     throw e;
   }
+  // Ensure seed accounts always exist (migration for existing data files)
+  if (!Array.isArray(data.accounts)) data.accounts = [];
+  let dirty = false;
+  for (const seed of [SEED_SA, SEED_DEMO]) {
+    if (!data.accounts.find(a => a.id === seed.id)) {
+      data.accounts.push(seed);
+      dirty = true;
+      console.log(`[mms] Seeded missing account: ${seed.email}`);
+    }
+  }
+  if (dirty) writeAtomic(DATA_FILE, data);
+  return data;
 }
 
 function saveData(data) {
@@ -103,7 +126,9 @@ app.post('/api/auth/login', (req, res) => {
     return res.status(401).json({ error: 'Invalid email or password' });
   }
 
-  if (acct.ph === null || acct.ph === undefined) {
+  if (acct.id === SEED_DEMO.id) {
+    // Demo account — always accepts any password, never persists it
+  } else if (acct.ph === null || acct.ph === undefined) {
     // First login — any password becomes permanent
     acct.ph = passwordHash;
     data.accounts = accounts; // ensure reference is updated
