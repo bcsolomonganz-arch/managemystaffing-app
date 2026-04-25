@@ -1,0 +1,3040 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';">
+<meta http-equiv="X-Content-Type-Options" content="nosniff">
+<meta http-equiv="X-Frame-Options" content="DENY">
+<meta http-equiv="Referrer-Policy" content="no-referrer">
+<meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=()">
+<meta name="robots" content="noindex, nofollow">
+<title>ManageMyStaffing — HIPAA Compliant</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --blue:#6B9E7A;--blue-d:#537E61;--blue-l:#EEF6F1;--blue-m:#B2D9BC;
+  --green:#059669;--green-l:#ECFDF5;--green-m:#6EE7B7;
+  --amber:#D97706;--amber-l:#FFFBEB;--amber-m:#FCD34D;
+  --red:#DC2626;--red-l:#FEF2F2;
+  --purple:#7C3AED;--cyan:#0891B2;--pink:#DB2777;--orange:#EA580C;
+  --g50:#F9FAFB;--g100:#F3F4F6;--g200:#E5E7EB;--g300:#D1D5DB;
+  --g400:#9CA3AF;--g500:#6B7280;--g600:#4B5563;--g700:#374151;--g800:#1F2937;--g900:#111827;
+  --sidebar:240px;--header:60px;--rpanel:320px;
+  --radius:8px;--radius-lg:12px;
+  --shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.06);
+  --shadow-md:0 4px 6px -1px rgba(0,0,0,.08),0 2px 4px -2px rgba(0,0,0,.05);
+  --shadow-lg:0 10px 15px -3px rgba(0,0,0,.1),0 4px 6px -4px rgba(0,0,0,.06);
+}
+body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);min-height:100vh;font-size:14px;line-height:1.5}
+
+/* LOGIN */
+#login-page{min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#EEF6F1 0%,#F4FAF6 100%)}
+.login-card{background:#fff;border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);width:100%;max-width:420px;padding:40px;border:1px solid var(--g200)}
+.login-logo{display:flex;align-items:center;gap:10px;margin-bottom:32px}
+.login-logo-icon{width:40px;height:40px;background:var(--blue);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px}
+.login-logo-text{font-size:20px;font-weight:700}
+.login-logo-sub{font-size:11px;color:var(--g500);display:block;margin-top:-2px}
+.demo-bar{background:var(--blue-l);border:1px solid var(--blue-m);border-radius:var(--radius);padding:14px;margin-bottom:20px}
+.demo-bar strong{color:var(--blue);display:block;margin-bottom:8px;font-size:13px}
+.demo-links{display:flex;flex-direction:column;gap:6px}
+.demo-link{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#fff;border:1.5px solid var(--blue-m);border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--g800);transition:all .15s}
+.demo-link:hover{background:var(--blue-l);border-color:var(--blue)}
+.demo-link-role{font-size:11px;color:var(--g500);margin-left:auto}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:13px;font-weight:600;color:var(--g700);margin-bottom:6px}
+.form-group input,.form-group select,.form-group textarea{width:100%;padding:10px 12px;border:1.5px solid var(--g200);border-radius:var(--radius);font-family:inherit;font-size:14px;color:var(--g900);background:#fff;transition:border-color .15s}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.1)}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:10px 18px;border-radius:var(--radius);font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;border:none;transition:all .15s;white-space:nowrap}
+.btn-primary{background:var(--blue);color:#fff}.btn-primary:hover{background:var(--blue-d)}
+.btn-secondary{background:#fff;color:var(--g700);border:1.5px solid var(--g200)}.btn-secondary:hover{background:var(--g50);border-color:var(--g300)}
+.btn-danger{background:var(--red);color:#fff}.btn-danger:hover{background:#B91C1C}
+.btn-ghost{background:transparent;color:var(--g600);border:none}.btn-ghost:hover{background:var(--g100)}
+.btn-sm{padding:6px 12px;font-size:13px}
+.btn-full{width:100%;justify-content:center}
+.btn-green{background:var(--blue-d);color:#fff}.btn-green:hover{background:#2D6A4F}
+
+/* APP SHELL */
+#app{display:none;flex-direction:column;min-height:100vh}
+.app-header{height:var(--header);background:#fff;border-bottom:1px solid var(--g200);display:flex;align-items:center;padding:0 20px;gap:16px;position:fixed;top:0;left:0;right:0;z-index:100;box-shadow:var(--shadow)}
+.header-logo{display:flex;align-items:center;gap:8px;min-width:var(--sidebar);margin-left:-4px;cursor:pointer}
+.header-logo-icon{width:32px;height:32px;background:var(--blue);border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px}
+.header-logo-name{font-size:16px;font-weight:700}
+.header-nav{flex:1;display:flex;align-items:center;justify-content:center;gap:8px}
+.month-nav{display:flex;align-items:center;gap:12px}
+.month-nav button{width:32px;height:32px;border-radius:8px;border:1.5px solid var(--g200);background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--g600);transition:all .15s}
+.month-nav button:hover{border-color:var(--blue);color:var(--blue);background:var(--blue-l)}
+.month-nav h2{font-size:17px;font-weight:700;min-width:160px;text-align:center}
+.header-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
+.role-badge{padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;letter-spacing:.02em}
+.role-super{background:#FDF4FF;color:#7E22CE;border:1px solid #E9D5FF}
+.role-admin{background:var(--blue-l);color:var(--blue-d);border:1px solid var(--blue-m)}
+.role-emp{background:var(--blue-l);color:var(--blue-d);border:1px solid var(--blue-m)}
+.avatar-menu{position:relative}
+.avatar{width:34px;height:34px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;cursor:pointer;border:2px solid var(--g200)}
+.avatar-dropdown{position:absolute;top:44px;right:0;background:#fff;border:1px solid var(--g200);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);min-width:200px;padding:8px;z-index:200;display:none}
+.avatar-menu:hover .avatar-dropdown{display:block}
+.avatar-dd-name{padding:8px 12px 2px;font-size:13px;font-weight:700;color:var(--g900)}
+.avatar-dd-sub{padding:2px 12px 8px;font-size:12px;color:var(--g500)}
+.avatar-dd-divider{height:1px;background:var(--g200);margin:4px 0}
+.avatar-dd-item{padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--g700);display:flex;align-items:center;gap:8px}
+.avatar-dd-item:hover{background:var(--g50)}
+
+/* APP BODY */
+.app-body{display:flex;margin-top:var(--header);min-height:calc(100vh - var(--header))}
+
+/* SIDEBAR */
+.sidebar{width:var(--sidebar);background:#fff;border-right:1px solid var(--g200);position:fixed;top:var(--header);bottom:0;left:0;overflow-y:auto;z-index:90}
+.sidebar::-webkit-scrollbar{width:4px}.sidebar::-webkit-scrollbar-thumb{background:var(--g200);border-radius:2px}
+.sidebar-section-title{font-size:11px;font-weight:700;color:var(--g400);letter-spacing:.08em;text-transform:uppercase;padding:16px 16px 8px}
+.group-item{display:flex;align-items:center;gap:10px;padding:9px 16px;cursor:pointer;border-radius:8px;margin:1px 8px;transition:all .15s;font-size:14px;font-weight:500;color:var(--g700)}
+.group-item:hover{background:var(--g50);color:var(--g900)}
+.group-item.active{background:var(--blue-l);color:var(--blue);font-weight:600}
+.group-icon{width:28px;height:28px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
+.group-badge{margin-left:auto;background:var(--g100);color:var(--g500);font-size:11px;font-weight:600;padding:2px 7px;border-radius:20px}
+.group-item.active .group-badge{background:var(--blue-m);color:var(--blue-d)}
+.sidebar-divider{height:1px;background:var(--g100);margin:8px 16px}
+.emp-list{padding:0 8px 16px}
+.emp-item{display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;cursor:pointer;transition:background .15s}
+.emp-item:hover{background:var(--g50)}
+.emp-avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0}
+.emp-name{font-size:13px;font-weight:600;color:var(--g800);line-height:1.2}
+.emp-status{font-size:11px;color:var(--g500)}
+
+/* MAIN */
+.main{margin-left:var(--sidebar);flex:1;padding:24px;transition:margin-right .25s}
+.main.panel-open{margin-right:var(--rpanel)}
+.main-full{margin-left:0}
+
+/* CALENDAR TOOLBAR */
+.cal-toolbar{display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+.view-tabs{display:flex;background:var(--g100);border-radius:8px;padding:3px}
+.view-tab{padding:6px 14px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;color:var(--g600);transition:all .15s}
+.view-tab.active{background:#fff;color:var(--g900);box-shadow:var(--shadow)}
+.filter-tabs{display:flex;background:var(--g100);border-radius:8px;padding:3px}
+.filter-tab{padding:6px 14px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;color:var(--g600);transition:all .15s}
+.filter-tab.active.scheduled{background:#fff;color:var(--blue-d);border:1.5px solid var(--blue-m);box-shadow:var(--shadow)}
+.filter-tab.active.open{background:var(--blue-l);color:var(--blue-d);border:1.5px solid var(--blue-m);box-shadow:var(--shadow)}
+.group-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:20px;font-size:13px;font-weight:600}
+
+/* CALENDAR */
+.cal-grid{background:#fff;border-radius:var(--radius-lg);border:1px solid var(--g200);overflow:hidden;box-shadow:var(--shadow)}
+.cal-header-row{display:grid;grid-template-columns:repeat(7,1fr);border-bottom:1px solid var(--g200)}
+.cal-dow{padding:10px 0;text-align:center;font-size:12px;font-weight:700;color:var(--g400);letter-spacing:.05em;text-transform:uppercase}
+.cal-days{display:grid;grid-template-columns:repeat(7,1fr)}
+.cal-cell{min-height:100px;border-right:1px solid var(--g100);border-bottom:1px solid var(--g100);padding:8px;cursor:pointer;transition:background .15s;position:relative}
+.cal-cell:nth-child(7n){border-right:none}
+.cal-cell:hover{background:var(--g50)}
+.cal-cell.today{background:var(--blue-l)}
+.cal-date{font-size:13px;font-weight:600;color:var(--g700);line-height:1;margin-bottom:6px;display:inline-flex;width:24px;height:24px;align-items:center;justify-content:center}
+.cal-cell.today .cal-date{background:var(--blue);color:#fff;border-radius:50%}
+.cal-cell.other-month .cal-date{color:var(--g300)}
+.cal-cell.selected{background:var(--blue-l);outline:2px solid var(--blue-m);outline-offset:-1px}
+.cal-cell.has-open{background:linear-gradient(to bottom,#fff 55%,var(--blue-l))}
+/* Month banner inside calendar */
+.cal-month-banner{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--g200);background:var(--g50)}
+.cal-month-title{font-size:16px;font-weight:800;color:var(--g900)}
+.cal-month-nav{display:flex;align-items:center;gap:8px}
+.cal-month-btn{width:28px;height:28px;border-radius:6px;border:1.5px solid var(--g200);background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--g600);transition:all .15s;font-size:14px}
+.cal-month-btn:hover{border-color:var(--blue-m);color:var(--blue-d);background:var(--blue-l)}
+/* 14-day week grid */
+.week14-grid{background:#fff;border-radius:var(--radius-lg);border:1px solid var(--g200);overflow:hidden;box-shadow:var(--shadow)}
+.week14-week-hdr{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--blue-l);border-bottom:1px solid var(--blue-m)}
+.week14-week-label{font-size:12px;font-weight:700;color:var(--blue-d);text-transform:uppercase;letter-spacing:.06em}
+.week14-row{display:grid;grid-template-columns:repeat(7,1fr);border-bottom:1px solid var(--g100)}
+.week14-row:last-child{border-bottom:none}
+.week14-cell{min-height:90px;border-right:1px solid var(--g100);padding:8px;cursor:pointer;transition:background .15s}
+.week14-cell:nth-child(7n){border-right:none}
+.week14-cell:hover{background:var(--g50)}
+.week14-cell.today{background:var(--blue-l)}
+.week14-cell.has-open{background:linear-gradient(to bottom,#fff 50%,var(--blue-l))}
+.week14-cell.selected{background:var(--blue-l);outline:2px solid var(--blue-m);outline-offset:-1px}
+.week14-date{font-size:12px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px}
+.week14-cell.today .week14-date{color:var(--blue-d)}
+.week14-nav{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--g200);background:var(--g50)}
+.cal-summary{display:flex;flex-direction:column;gap:3px}
+.cal-chip{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:500;padding:2px 6px;border-radius:4px}
+.cal-chip.sched{background:var(--blue-l);color:var(--blue-d)}
+.cal-chip.open{background:var(--blue-l);color:var(--blue-d);border:1px solid var(--blue-m)}
+.shift-row{display:flex;align-items:center;gap:4px;margin-bottom:2px}
+.shift-label{font-size:10px;font-weight:700;color:var(--g400);width:22px;flex-shrink:0}
+.shift-emp{background:var(--blue-l);color:var(--blue-d);padding:1px 5px;border-radius:3px;font-size:10px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:66px}
+.shift-open-tag{background:#fff;color:var(--blue-d);padding:1px 5px;border-radius:3px;font-size:10px;font-weight:600;border:1.5px dashed var(--blue-m)}
+.pattern-dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:2px}
+
+/* RIGHT PANEL */
+.right-panel{width:var(--rpanel);background:#fff;border-left:1px solid var(--g200);position:fixed;top:var(--header);bottom:0;right:calc(-1 * var(--rpanel));transition:right .25s;overflow-y:auto;z-index:80;box-shadow:var(--shadow-lg)}
+.right-panel.open{right:0}
+.rp-header{padding:20px;border-bottom:1px solid var(--g200);display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.rp-title{font-size:17px;font-weight:700}
+.rp-sub{font-size:13px;color:var(--g500);margin-top:2px}
+.rp-close{width:28px;height:28px;border-radius:6px;border:none;background:var(--g100);cursor:pointer;font-size:16px;color:var(--g500);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.rp-close:hover{background:var(--g200)}
+.rp-body{padding:16px}
+.shift-block{border:1.5px solid var(--g200);border-radius:var(--radius);padding:14px;margin-bottom:12px}
+.shift-block-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.shift-time{font-size:13px;font-weight:700;display:flex;align-items:center;gap:6px}
+.shift-type-badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px}
+.badge-day{background:#FEF3C7;color:#92400E}
+.badge-evening{background:#EDE9FE;color:#5B21B6}
+.badge-night{background:#1E293B;color:#94A3B8}
+.badge-morning{background:#ECFDF5;color:#065F46}
+.badge-afternoon{background:#FFF7ED;color:#9A3412}
+.emp-slot{display:flex;align-items:center;gap:10px;padding:8px;border-radius:6px;background:var(--g50);margin-bottom:6px}
+.emp-slot:last-child{margin-bottom:0}
+.emp-slot-avatar{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0}
+.emp-slot-name{font-size:13px;font-weight:600;flex:1}
+.emp-slot-open{display:flex;align-items:center;gap:8px;padding:8px;border-radius:6px;background:var(--blue-l);border:1.5px dashed var(--blue-m);margin-bottom:6px}
+.emp-slot-open-label{font-size:12px;font-weight:600;color:var(--blue-d);flex:1}
+.btn-assign-sm{padding:5px 12px;font-size:12px;font-weight:600;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer}
+.btn-assign-sm:hover{background:var(--blue-d)}
+.btn-claim-sm{padding:5px 12px;font-size:12px;font-weight:600;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer}
+.btn-claim-sm:hover{background:var(--blue-d)}
+.assign-select{font-family:inherit;font-size:12px;padding:4px 8px;border:1.5px solid var(--blue-m);border-radius:6px;background:#fff;color:var(--g900);max-width:150px}
+
+/* MODALS */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:300;display:none;align-items:center;justify-content:center;padding:20px}
+.modal-overlay.open{display:flex}
+.modal{background:#fff;border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);width:100%;max-width:520px;max-height:92vh;overflow-y:auto}
+.modal-lg{max-width:680px}
+.modal-xl{max-width:820px}
+.modal-header{padding:20px 24px;border-bottom:1px solid var(--g200);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:#fff;z-index:1}
+.modal-title{font-size:18px;font-weight:700}
+.modal-close{width:32px;height:32px;border-radius:8px;border:none;background:var(--g100);cursor:pointer;font-size:18px;color:var(--g500);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.modal-close:hover{background:var(--g200)}
+.modal-body{padding:24px}
+.modal-footer{padding:16px 24px;border-top:1px solid var(--g200);display:flex;justify-content:flex-end;gap:10px;position:sticky;bottom:0;background:#fff}
+.section-label{font-size:12px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;margin-top:20px}
+.section-label:first-child{margin-top:0}
+.checkbox-group{display:flex;flex-direction:column;gap:8px}
+.checkbox-item{display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px 12px;border-radius:8px;border:1.5px solid var(--g200);transition:all .15s}
+.checkbox-item:hover{border-color:var(--blue-m);background:var(--blue-l)}
+.checkbox-item input{width:16px;height:16px;margin-top:1px;cursor:pointer;accent-color:var(--blue);flex-shrink:0}
+.checkbox-label{font-size:13px;font-weight:500;color:var(--g800);flex:1}
+.checkbox-desc{font-size:12px;color:var(--g500);font-weight:400;margin-top:2px}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+
+/* Roster */
+.roster-table{width:100%;border-collapse:collapse}
+.roster-table th{padding:9px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;border-bottom:1.5px solid var(--g200);background:var(--g50)}
+.roster-table td{padding:11px 14px;border-bottom:1px solid var(--g100);font-size:13px;vertical-align:middle}
+.roster-table tr:last-child td{border-bottom:none}
+.roster-table tr.inactive-row td{opacity:.55}
+.roster-row-avatar{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0}
+.roster-term-log{background:var(--g50);border:1px solid var(--g200);border-radius:6px;padding:8px 10px;font-size:12px;color:var(--g600);margin-top:6px}
+.roster-term-entry{padding:4px 0;border-bottom:1px solid var(--g100)}
+.roster-term-entry:last-child{border-bottom:none}
+.inactivate-form{background:var(--g50);border:1.5px solid var(--g200);border-radius:8px;padding:12px;margin-top:8px}
+.tag-inactive{background:var(--g100);color:var(--g500);font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;border:1px solid var(--g300)}
+.tag-active{background:var(--blue-l);color:var(--blue-d);font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;border:1px solid var(--blue-m)}
+
+/* Notification timing rows */
+.notif-timing-group{display:flex;flex-direction:column;gap:8px}
+.notif-timing-row{border:1.5px solid var(--g200);border-radius:8px;overflow:hidden;transition:border-color .15s;background:#fff}
+.notif-timing-row:has(input.notif-main:checked){border-color:var(--blue-m)}
+.notif-row-main{display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;background:#fff;transition:background .15s}
+.notif-row-main:hover{background:var(--blue-l)}
+.notif-row-main input{width:15px;height:15px;cursor:pointer;accent-color:var(--blue);flex-shrink:0;margin-top:0}
+.notif-row-icon{width:26px;height:26px;border-radius:6px;background:var(--blue-l);color:var(--blue-d);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.notif-row-label{font-size:13px;font-weight:500;color:var(--g800);flex:1}
+.notif-channels{display:flex;gap:6px;padding:8px 12px 10px 47px;background:var(--g50);border-top:1px solid var(--g100)}
+.notif-channel{display:flex;align-items:center;gap:5px;padding:4px 10px;border:1.5px solid var(--g200);border-radius:20px;cursor:pointer;font-size:12px;font-weight:500;color:var(--g600);background:#fff;transition:all .15s;user-select:none}
+.notif-channel:hover{border-color:var(--blue-m);background:var(--blue-l);color:var(--blue-d)}
+.notif-channel input{accent-color:var(--blue);cursor:pointer;width:12px;height:12px;flex-shrink:0}
+.notif-channel:has(input:checked){border-color:var(--blue);background:var(--blue-l);color:var(--blue-d)}
+
+/* SUPER ADMIN */
+.sa-page{padding:32px;margin-left:0}
+.sa-hero{margin-bottom:32px}
+.sa-hero h1{font-size:28px;font-weight:700;color:var(--g900);margin-bottom:4px}
+.sa-hero p{font-size:15px;color:var(--g500)}
+.buildings-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px}
+.building-card{background:#fff;border:1px solid var(--g200);border-radius:var(--radius-lg);padding:24px;box-shadow:var(--shadow);transition:all .2s;position:relative;overflow:hidden}
+.building-card::before{content:'';position:absolute;top:0;left:0;right:0;height:4px;background:var(--blue)}
+.building-card:hover{box-shadow:var(--shadow-md);border-color:var(--g300);transform:translateY(-1px)}
+.building-name{font-size:18px;font-weight:700;color:var(--g900);margin-bottom:4px}
+.building-addr{font-size:13px;color:var(--g500);margin-bottom:16px;display:flex;align-items:center;gap:4px}
+.building-stats{display:flex;gap:16px;margin-bottom:16px}
+.building-stat{text-align:center}
+.building-stat-val{font-size:20px;font-weight:700;color:var(--g900)}
+.building-stat-label{font-size:11px;color:var(--g500);font-weight:600;text-transform:uppercase}
+.building-admin{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--g50);border-radius:8px;margin-bottom:16px}
+.building-admin-avatar{width:30px;height:30px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0}
+.building-admin-info{flex:1;min-width:0}
+.building-admin-name{font-size:13px;font-weight:600;color:var(--g800)}
+.building-admin-email{font-size:12px;color:var(--g500);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.building-actions{display:flex;gap:8px}
+.sa-stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:32px}
+.sa-stat-card{background:#fff;border:1px solid var(--g200);border-radius:var(--radius-lg);padding:20px;box-shadow:var(--shadow)}
+.sa-stat-val{font-size:32px;font-weight:700;color:var(--g900)}
+.sa-stat-label{font-size:13px;color:var(--g500);font-weight:500;margin-top:2px}
+
+/* PATTERN BUILDER */
+.pattern-tiles{display:flex;flex-wrap:wrap;gap:8px;padding:16px;background:var(--g50);border-radius:var(--radius);margin-bottom:12px;min-height:72px;align-items:center}
+.pattern-tile{width:48px;height:56px;border-radius:8px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:11px;font-weight:700;transition:all .15s;border:2px solid transparent;user-select:none;gap:4px;position:relative}
+.pattern-tile.on{background:var(--blue);color:#fff;border-color:var(--blue-d)}
+.pattern-tile.off{background:#fff;color:var(--g400);border-color:var(--g200)}
+.pattern-tile:hover.on{background:var(--blue-d)}
+.pattern-tile:hover.off{background:var(--g100);border-color:var(--g300)}
+.pattern-tile-label{font-size:9px;font-weight:600;text-transform:uppercase;opacity:.7}
+.pattern-tile-del{position:absolute;top:-6px;right:-6px;width:16px;height:16px;background:var(--red);color:#fff;border-radius:50%;font-size:10px;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .15s;cursor:pointer;border:none}
+.pattern-tile:hover .pattern-tile-del{opacity:1}
+.preset-btns{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.preset-btn{padding:6px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;border:1.5px solid var(--g200);background:#fff;color:var(--g700);transition:all .15s}
+.preset-btn:hover{border-color:var(--blue);color:var(--blue);background:var(--blue-l)}
+.preset-btn.active{border-color:var(--blue);color:var(--blue-d);background:var(--blue-l)}
+.pattern-preview{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:8px}
+.preview-day{padding:6px 4px;border-radius:6px;text-align:center;font-size:11px;font-weight:600;border:1.5px solid transparent}
+.preview-day.on{background:var(--blue-l);color:var(--blue);border-color:var(--blue-m)}
+.preview-day.off{background:var(--g100);color:var(--g400);border-color:var(--g200)}
+.preview-day.today-marker{outline:2px solid var(--blue);outline-offset:1px}
+.duration-tabs{display:flex;gap:6px;flex-wrap:wrap}
+.duration-tab{padding:7px 14px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;border:1.5px solid var(--g200);background:#fff;color:var(--g700);transition:all .15s}
+.duration-tab.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+
+/* ADMIN TABLE */
+.admin-table{width:100%;border-collapse:collapse}
+.admin-table th{padding:10px 12px;text-align:left;font-size:12px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.05em;border-bottom:2px solid var(--g200)}
+.admin-table td{padding:12px;border-bottom:1px solid var(--g100);font-size:13px;vertical-align:middle}
+.admin-table tr:last-child td{border-bottom:none}
+.admin-table tr:hover td{background:var(--g50)}
+
+/* STATS */
+.stat-row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}
+.stat-card{background:#fff;border:1px solid var(--g200);border-radius:var(--radius-lg);padding:16px;box-shadow:var(--shadow)}
+.stat-value{font-size:28px;font-weight:700}
+.stat-label{font-size:12px;font-weight:600;color:var(--g500);margin-top:2px}
+.stat-change{font-size:12px;font-weight:600;margin-top:6px}
+
+/* MISC */
+.tag{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600}
+.tag-blue{background:var(--blue-l);color:var(--blue-d)}.tag-green{background:var(--blue-l);color:var(--blue-d)}.tag-amber{background:var(--g100);color:var(--g700);border:1px solid var(--g300)}.tag-red{background:var(--red-l);color:var(--red)}.tag-purple{background:var(--blue-l);color:var(--blue-d)}
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;color:var(--g400);gap:12px;text-align:center}
+.empty-icon{font-size:48px;opacity:.4}
+.empty-text{font-size:15px;font-weight:600;color:var(--g500)}
+.toast{position:fixed;bottom:24px;right:24px;background:var(--g900);color:#fff;padding:12px 20px;border-radius:var(--radius);font-size:14px;font-weight:500;z-index:999;display:none;align-items:center;gap:8px;box-shadow:var(--shadow-lg);animation:slideUp .2s ease}
+.toast.show{display:flex}
+@keyframes slideUp{from{transform:translateY(10px);opacity:0}to{transform:translateY(0);opacity:1}}
+hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
+.info-box{background:var(--blue-l);border:1px solid var(--blue-m);border-radius:var(--radius);padding:12px 14px;font-size:13px;color:var(--g700);margin-bottom:16px}
+.alert-preview{background:var(--g50);border:1.5px solid var(--g200);border-radius:var(--radius);padding:14px;font-size:13px;color:var(--g700);font-style:italic;line-height:1.6;white-space:pre-wrap}
+
+/* ── SECURITY & HIPAA ────────────────────────────────────── */
+/* Session warning banner */
+.session-warning{position:fixed;top:68px;left:50%;transform:translateX(-50%);background:#FEF2F2;border:1.5px solid var(--red);border-radius:var(--radius);padding:10px 18px;z-index:9000;font-size:13px;font-weight:600;color:var(--red);display:none;align-items:center;gap:10px;box-shadow:var(--shadow-md);white-space:nowrap}
+/* Lock screen */
+.lock-screen{position:fixed;inset:0;background:rgba(17,24,39,.97);z-index:99999;display:none;flex-direction:column;align-items:center;justify-content:center;gap:0}
+.lock-screen.active{display:flex}
+.lock-card{background:#1F2937;border:1px solid #374151;border-radius:16px;padding:40px;max-width:380px;width:90%;display:flex;flex-direction:column;align-items:center;gap:16px}
+.lock-card h2{color:#F9FAFB;font-size:18px;margin:0}
+.lock-card p{color:#9CA3AF;font-size:13px;text-align:center;margin:0;line-height:1.6}
+.lock-input{width:100%;padding:12px 14px;border:2px solid #374151;background:#111827;color:#F9FAFB;border-radius:8px;font-size:15px;font-family:inherit;outline:none;transition:border-color .15s}
+.lock-input:focus{border-color:var(--blue)}
+/* HIPAA privacy notice */
+.hipaa-banner{display:flex;align-items:center;gap:8px;background:#ECFDF5;border:1px solid #6EE7B7;border-radius:6px;padding:8px 12px;margin-bottom:16px;font-size:12px;color:#065F46;font-weight:500}
+.hipaa-badge-sm{display:inline-flex;align-items:center;gap:4px;background:#ECFDF5;border:1px solid #6EE7B7;color:#065F46;font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px;letter-spacing:.3px}
+/* Audit log */
+.audit-row{display:flex;gap:10px;align-items:flex-start;padding:9px 16px;border-bottom:1px solid var(--g100);font-size:12px}
+.audit-row:hover{background:var(--g50)}
+.audit-ts{color:var(--g400);font-family:'JetBrains Mono',monospace;font-size:10px;white-space:nowrap;padding-top:1px;min-width:130px}
+.audit-action{flex:1;color:var(--g700)}
+.audit-user{color:var(--blue-d);font-weight:600}
+.audit-risk{font-size:10px;font-weight:700;padding:2px 6px;border-radius:10px;white-space:nowrap}
+.risk-low{background:#D1FAE5;color:#065F46}
+.risk-medium{background:#FEF3C7;color:#92400E}
+.risk-high{background:#FEE2E2;color:#DC2626}
+/* Login error / strength */
+.login-error-msg{background:#FEF2F2;border:1px solid #FECACA;border-radius:var(--radius);padding:10px 14px;color:var(--red);font-size:13px;margin-bottom:12px;display:none}
+.pw-strength-bar{height:4px;border-radius:2px;margin-top:5px;transition:all .3s;width:0}
+.pw-strength-bar.weak{background:var(--red);width:33%}
+.pw-strength-bar.medium{background:var(--blue-m);width:66%}
+.pw-strength-bar.strong{background:var(--blue);width:100%}
+/* HIPAA footer */
+.hipaa-footer{background:#111827;color:#6B7280;font-size:11px;padding:10px 20px;display:flex;align-items:center;justify-content:center;gap:16px;flex-wrap:wrap;border-top:1px solid #1F2937}
+.hipaa-footer a{color:#4B5563;text-decoration:underline;cursor:pointer}
+/* Force-hide print for sensitive data */
+@media print{.no-print{display:none!important}}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-page">
+  <div class="login-card">
+    <div class="login-logo">
+      <div class="login-logo-icon" style="background:transparent;padding:0;width:52px;height:52px">
+        <svg viewBox="0 0 100 92" xmlns="http://www.w3.org/2000/svg" width="52" height="52">
+          <rect x="68" y="4" width="13" height="24" rx="4" fill="#6B9E7A"/>
+          <path d="M50 5 L0 52 Q0 54 2 54 L98 54 Q100 54 100 52 Z" fill="#6B9E7A"/>
+          <rect x="2" y="50" width="96" height="42" rx="6" fill="#6B9E7A"/>
+          <rect x="35" y="15" width="12" height="10" rx="2.5" fill="white"/>
+          <rect x="51" y="15" width="12" height="10" rx="2.5" fill="white"/>
+          <rect x="35" y="28" width="12" height="10" rx="2.5" fill="white"/>
+          <rect x="51" y="28" width="12" height="10" rx="2.5" fill="white"/>
+          <rect x="62" y="57" width="11" height="9" rx="2" fill="white"/>
+          <rect x="76" y="57" width="11" height="9" rx="2" fill="white"/>
+          <rect x="62" y="69" width="11" height="9" rx="2" fill="white"/>
+          <rect x="76" y="69" width="11" height="9" rx="2" fill="white"/>
+          <rect x="6" y="63" width="30" height="9" rx="4.5" fill="white"/>
+          <rect x="16" y="53" width="9" height="29" rx="4.5" fill="white"/>
+          <rect x="40" y="68" width="20" height="24" rx="3" fill="white"/>
+        </svg>
+      </div>
+      <div>
+        <div class="login-logo-text">ManageMyStaffing</div>
+        <span class="login-logo-sub">Nursing Home Staffing Platform</span>
+      </div>
+    </div>
+    <div class="demo-bar">
+      <strong>Demo — click to sign in:</strong>
+      <div class="demo-links">
+        <div class="demo-link" onclick="App.demoLogin('superadmin')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 0 20M12 2a15.3 15.3 0 0 0 0 20"/></svg> Super Admin <span class="demo-link-role">All Buildings</span></div>
+        <div class="demo-link" onclick="App.demoLogin('admin')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M3 21h18M3 7l9-4 9 4M5 21V7M19 21V7"/><path d="M9 21v-4h6v4"/></svg> Building Admin <span class="demo-link-role">Harmony Hills</span></div>
+        <div class="demo-link" onclick="App.demoLogin('CNA')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="7" r="4"/><path d="M5.5 21v-2a6.5 6.5 0 0 1 13 0v2"/><path d="M12 12v5M9.5 14.5h5"/></svg> CNA Employee <span class="demo-link-role">CNA Shifts Only</span></div>
+        <div class="demo-link" onclick="App.demoLogin('Charge Nurse')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M5 3v7a7 7 0 0 0 14 0V3"/><path d="M5 3h3M16 3h3"/><path d="M12 17v2"/><circle cx="12" cy="21" r="1.5" fill="currentColor" stroke="none"/></svg> Charge Nurse <span class="demo-link-role">CN Shifts Only</span></div>
+      </div>
+    </div>
+    <div class="hipaa-banner"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> HIPAA Compliant — All access is logged and monitored</div>
+    <div id="login-error" class="login-error-msg"></div>
+    <div class="form-group"><label>Email</label><input type="email" id="login-email" placeholder="you@example.com" autocomplete="username" maxlength="254"></div>
+    <div class="form-group">
+      <label>Password</label>
+      <input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password" maxlength="128" onkeydown="if(event.key==='Enter')App.loginForm()">
+      <div class="pw-strength-bar" id="pw-strength-bar"></div>
+    </div>
+    <button class="btn btn-primary btn-full" onclick="App.loginForm()">Sign In</button>
+    <p style="font-size:11px;color:var(--g400);text-align:center;margin-top:12px">Unauthorized access is prohibited. All sessions are monitored and audited per HIPAA 45 CFR §164.312.</p>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+  <header class="app-header">
+    <div class="header-logo" onclick="App.goHome()">
+      <div class="header-logo-icon" style="background:transparent;padding:0;overflow:visible" id="header-logo-svg"></div>
+      <span class="header-logo-name">ManageMyStaffing</span>
+    </div>
+    <div class="header-nav" id="header-nav"></div>
+    <div class="header-actions" id="header-actions"></div>
+  </header>
+  <div class="app-body">
+    <aside class="sidebar" id="sidebar" style="display:none"></aside>
+    <main class="main" id="main"></main>
+    <div class="right-panel" id="right-panel"><div id="rp-content"></div></div>
+  </div>
+  <footer class="hipaa-footer no-print">
+    <span><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:3px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> HIPAA Compliant</span>
+    <span>·</span><span>45 CFR §164.312 — All access is audited &amp; monitored</span>
+    <span>·</span><span>Session auto-locks after 15 min inactivity</span>
+    <span id="footer-audit-link"></span>
+    <span>·</span><span>© 2026 ManageMyStaffing.com</span>
+  </footer>
+</div>
+
+<!-- MODAL: Add Building -->
+<div class="modal-overlay" id="modal-building">
+  <div class="modal">
+    <div class="modal-header"><span class="modal-title"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px;color:var(--blue)"><rect x="2" y="7" width="16" height="12" rx="1.5"/><path d="M6 7V5a4 4 0 0 1 8 0v2"/><rect x="8" y="11" width="4" height="4" rx="0.5"/></svg>Add New Building</span><button class="modal-close" onclick="App.closeModal('modal-building')">✕</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label>Facility Name</label><input type="text" id="b-name" placeholder="Sunrise Skilled Care"></div>
+      <div class="form-group"><label>Address</label><input type="text" id="b-addr" placeholder="123 Main St, Springfield, IL"></div>
+      <div class="grid-2">
+        <div class="form-group"><label>Phone</label><input type="tel" id="b-phone" placeholder="555-0100"></div>
+        <div class="form-group"><label>Bed Count</label><input type="number" id="b-beds" placeholder="120" min="1"></div>
+      </div>
+      <div class="section-label">Primary Admin Account</div>
+      <div class="grid-2">
+        <div class="form-group"><label>Admin Name</label><input type="text" id="b-admin-name" placeholder="Jane Smith"></div>
+        <div class="form-group"><label>Admin Email</label><input type="email" id="b-admin-email" placeholder="jane@facility.com"></div>
+      </div>
+      <div class="form-group"><label>Temporary Password</label><input type="text" id="b-admin-pass" placeholder="Auto-generated" value=""></div>
+      <div class="info-box" style="display:flex;align-items:flex-start;gap:8px"><svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px"><rect x="2" y="4" width="16" height="13" rx="1.5"/><path d="m18 5-8 6-8-6"/></svg><span>An invitation will be sent to the admin with login instructions and a password reset link.</span></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="App.closeModal('modal-building')">Cancel</button>
+      <button class="btn btn-primary" onclick="App.saveBuilding()">Create Building & Admin Account</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Add Employee -->
+<div class="modal-overlay" id="modal-add-emp">
+  <div class="modal">
+    <div class="modal-header"><span class="modal-title">Add Employee</span><button class="modal-close" onclick="App.closeModal('modal-add-emp')">✕</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label>Full Name</label><input type="text" id="emp-name" placeholder="Jane Smith"></div>
+      <div class="form-group"><label>Position</label>
+        <select id="emp-position">
+          <option value="">Select position...</option>
+          <option>Nurse Management</option><option>Charge Nurse</option><option>CNA</option><option>CMA</option>
+          <option>Housekeeping</option><option>Laundry</option><option>Cook</option><option>Dietary Aid</option>
+        </select>
+      </div>
+      <div class="grid-2">
+        <div class="form-group"><label>Email</label><input type="email" id="emp-email" placeholder="jane@example.com"></div>
+        <div class="form-group"><label>Phone</label><input type="tel" id="emp-phone" placeholder="555-0100"></div>
+      </div>
+      <div class="form-group"><label>Role</label>
+        <select id="emp-role">
+          <option value="employee">Employee</option>
+          <option value="admin">Building Admin</option>
+        </select>
+      </div>
+      <div class="section-label">Alert Timing &amp; Channels</div>
+      <div class="notif-timing-group">
+        <!-- Immediately -->
+        <div class="notif-timing-row">
+          <label class="notif-row-main">
+            <input type="checkbox" id="notif-immediate" class="notif-main" checked>
+            <div class="notif-row-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9z"/></svg></div>
+            <span class="notif-row-label">Immediately when a shift opens</span>
+          </label>
+          <div class="notif-channels">
+            <label class="notif-channel"><input type="checkbox" id="notif-immediate-email" checked><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg> Email</label>
+            <label class="notif-channel"><input type="checkbox" id="notif-immediate-sms" checked><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> SMS</label>
+          </div>
+        </div>
+        <!-- 24 hours -->
+        <div class="notif-timing-row">
+          <label class="notif-row-main">
+            <input type="checkbox" id="notif-day" class="notif-main">
+            <div class="notif-row-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>
+            <span class="notif-row-label">24 hours before shift starts</span>
+          </label>
+          <div class="notif-channels">
+            <label class="notif-channel"><input type="checkbox" id="notif-day-email"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg> Email</label>
+            <label class="notif-channel"><input type="checkbox" id="notif-day-sms"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> SMS</label>
+          </div>
+        </div>
+        <!-- 1 week -->
+        <div class="notif-timing-row">
+          <label class="notif-row-main">
+            <input type="checkbox" id="notif-week" class="notif-main">
+            <div class="notif-row-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div>
+            <span class="notif-row-label">1 week ahead — upcoming open shifts</span>
+          </label>
+          <div class="notif-channels">
+            <label class="notif-channel"><input type="checkbox" id="notif-week-email"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg> Email</label>
+            <label class="notif-channel"><input type="checkbox" id="notif-week-sms"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> SMS</label>
+          </div>
+        </div>
+        <!-- Daily digest -->
+        <div class="notif-timing-row">
+          <label class="notif-row-main">
+            <input type="checkbox" id="notif-daily" class="notif-main">
+            <div class="notif-row-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></div>
+            <span class="notif-row-label">Daily digest of all open shifts</span>
+          </label>
+          <div class="notif-channels">
+            <label class="notif-channel"><input type="checkbox" id="notif-daily-email"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg> Email</label>
+            <label class="notif-channel"><input type="checkbox" id="notif-daily-sms"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> SMS</label>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="App.closeModal('modal-add-emp')">Cancel</button>
+      <button class="btn btn-primary" onclick="App.saveEmployee()">Add Employee</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Send Alert -->
+<div class="modal-overlay" id="modal-alert">
+  <div class="modal modal-lg">
+    <div class="modal-header"><span class="modal-title"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px;color:var(--blue)"><path d="M3 7.5C3 6.7 3.7 6 4.5 6H6l5-3v14l-5-3H4.5A1.5 1.5 0 0 1 3 12.5v-5z"/><path d="M14 8a3 3 0 0 1 0 4"/></svg>Send Group Alert</span><button class="modal-close" onclick="App.closeModal('modal-alert')">✕</button></div>
+    <div class="modal-body">
+      <div class="section-label">Notify These Groups</div>
+      <div class="checkbox-group" id="alert-group-list"></div>
+      <div class="section-label">Message Type</div>
+      <div class="checkbox-group">
+        <label class="checkbox-item"><input type="radio" name="alert-type" value="open" checked onchange="App.updateAlertPreview()"><div class="checkbox-label">Open Shifts Available<div class="checkbox-desc">Staff can tap link to view and claim</div></div></label>
+        <label class="checkbox-item"><input type="radio" name="alert-type" value="urgent" onchange="App.updateAlertPreview()"><div class="checkbox-label">Urgent Coverage Needed<div class="checkbox-desc">High priority — same day/next shift</div></div></label>
+        <label class="checkbox-item"><input type="radio" name="alert-type" value="custom" onchange="App.updateAlertPreview()"><div class="checkbox-label">Custom Message</div></label>
+      </div>
+      <div id="custom-msg-wrap" style="display:none;margin-top:12px">
+        <div class="form-group"><label>Message</label><textarea id="custom-msg" rows="3" oninput="App.updateAlertPreview()"></textarea></div>
+      </div>
+      <div class="section-label">Send Via</div>
+      <div style="display:flex;gap:10px">
+        <label class="checkbox-item" style="flex:1"><input type="checkbox" id="send-sms" checked><div class="checkbox-label" style="display:flex;align-items:center;gap:6px"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> SMS</div></label>
+        <label class="checkbox-item" style="flex:1"><input type="checkbox" id="send-email" checked><div class="checkbox-label" style="display:flex;align-items:center;gap:6px"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg> Email</div></label>
+      </div>
+      <div class="section-label">Preview</div>
+      <div class="alert-preview" id="alert-preview-text"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="App.closeModal('modal-alert')">Cancel</button>
+      <button class="btn btn-primary" onclick="App.sendAlert()" style="display:flex;align-items:center;gap:6px"><svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2" fill="currentColor" stroke="none" opacity=".85"/></svg> Send Alert</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Claim Shift -->
+<div class="modal-overlay" id="modal-claim">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-header"><span class="modal-title">Claim This Shift?</span><button class="modal-close" onclick="App.closeModal('modal-claim')">✕</button></div>
+    <div class="modal-body" id="claim-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="App.closeModal('modal-claim')">Cancel</button>
+      <button class="btn btn-green" id="claim-confirm-btn">Confirm Claim</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Schedule Pattern -->
+<div class="modal-overlay" id="modal-pattern">
+  <div class="modal modal-xl">
+    <div class="modal-header"><span class="modal-title"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px;color:var(--blue)"><rect x="2" y="4" width="16" height="14" rx="1.5"/><path d="M6 2v4M14 2v4M2 9h16"/><circle cx="10" cy="13.5" r="1.2" fill="currentColor" stroke="none"/></svg>Set Schedule Rotation</span><button class="modal-close" onclick="App.closeModal('modal-pattern')">✕</button></div>
+    <div class="modal-body">
+      <div class="grid-2">
+        <div class="form-group"><label>Employee</label><select id="pat-emp"></select></div>
+        <div class="form-group"><label>Shift Type</label><select id="pat-shift"></select></div>
+      </div>
+      <div class="form-group"><label>Pattern Start Date</label><input type="date" id="pat-start" onchange="App.renderPatternPreview()"></div>
+      <div class="section-label">Quick Presets</div>
+      <div class="preset-btns" id="preset-btns">
+        <button class="preset-btn" onclick="App.applyPreset('weekdays')">Weekdays (M–F)</button>
+        <button class="preset-btn" onclick="App.applyPreset('2on2off')">2 On / 2 Off</button>
+        <button class="preset-btn" onclick="App.applyPreset('3on2off')">3 On / 2 Off</button>
+        <button class="preset-btn" onclick="App.applyPreset('223')">2 On / 2 Off / 3 On / 2 Off</button>
+        <button class="preset-btn" onclick="App.applyPreset('4on3off')">4 On / 3 Off</button>
+        <button class="preset-btn" onclick="App.applyPreset('alternating')">Every Other Day</button>
+      </div>
+      <div class="section-label">Pattern Sequence <span style="font-weight:400;color:var(--g400);font-size:11px;text-transform:none;letter-spacing:0">(click to toggle on/off · drag to reorder)</span></div>
+      <div class="pattern-tiles" id="pattern-tiles"></div>
+      <div style="display:flex;gap:8px;margin-bottom:16px">
+        <button class="btn btn-secondary btn-sm" onclick="App.addPatternDay(1)">+ Add On Day</button>
+        <button class="btn btn-secondary btn-sm" onclick="App.addPatternDay(0)">+ Add Off Day</button>
+        <button class="btn btn-ghost btn-sm" onclick="App.clearPattern()" style="color:var(--red)">Clear All</button>
+        <span style="margin-left:auto;font-size:13px;color:var(--g500);display:flex;align-items:center" id="cycle-label"></span>
+      </div>
+      <div class="section-label">Apply For</div>
+      <div class="duration-tabs" id="duration-tabs">
+        <div class="duration-tab active" data-months="1" onclick="App.selectDuration(1)">1 Month</div>
+        <div class="duration-tab" data-months="3" onclick="App.selectDuration(3)">3 Months</div>
+        <div class="duration-tab" data-months="6" onclick="App.selectDuration(6)">6 Months</div>
+        <div class="duration-tab" data-months="12" onclick="App.selectDuration(12)">1 Year</div>
+      </div>
+      <div class="section-label">Schedule Preview (next 28 days)</div>
+      <div class="pattern-preview" id="pattern-preview"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="App.closeModal('modal-pattern')">Cancel</button>
+      <button class="btn btn-primary" onclick="App.applyPattern()">Apply Rotation Pattern</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"><span id="toast-icon"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,8 6,12 14,4"/></svg></span><span id="toast-msg"></span></div>
+
+<script>
+// ════════════════════════════════════════════════════════════
+//  CONSTANTS
+// ════════════════════════════════════════════════════════════
+const GROUPS = ['Nurse Management','Charge Nurse','CNA','CMA','Housekeeping','Laundry','Cook','Dietary Aid'];
+// Sidebar display groups — Cook+Dietary Aid merged into 'Dietary'
+const DISPLAY_GROUPS = ['Nurse Management','Charge Nurse','CNA','CMA','Housekeeping','Laundry','Dietary'];
+// Maps display group → actual data groups
+const GROUP_MAP = {'Dietary':['Cook','Dietary Aid']};
+const getActualGroups = g => GROUP_MAP[g] || [g];
+const CLINICAL = ['Nurse Management','Charge Nurse','CNA','CMA'];
+const G_ICONS = {
+  'Nurse Management': `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M6 20v-2a6 6 0 0 1 12 0v2"/><path d="M12 12v3"/><path d="M9.5 15.5l2.5 2.5 2.5-2.5"/></svg>`,
+  'Charge Nurse': `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v7a7 7 0 0 0 14 0V3"/><path d="M5 3h3M16 3h3"/><path d="M12 17v2"/><circle cx="12" cy="21" r="1.5" fill="currentColor" stroke="none"/></svg>`,
+  'CNA': `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7" r="4"/><path d="M5.5 21v-2a6.5 6.5 0 0 1 13 0v2"/><path d="M12 12v5M9.5 14.5h5"/></svg>`,
+  'CMA': `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m10.5 20.5 10-10a4.95 4.95 0 0 0-7-7l-10 10a4.95 4.95 0 0 0 7 7z"/><path d="m8.5 8.5 7 7"/></svg>`,
+  'Housekeeping': `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 3 8 13"/><path d="M8 13l-3 7 5-1 1-6z" fill="currentColor" stroke-linejoin="round"/></svg>`,
+  'Laundry': `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="18" rx="2"/><circle cx="12" cy="13" r="4"/><path d="M6 7h.01M9 7h.01M12 7h.01"/></svg>`,
+  'Dietary': `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3zm0 0v7"/></svg>`,
+  'Cook': `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21a1 1 0 0 0 1-1v-5.35c0-.46.32-.84.73-1.04a4 4 0 0 0-2.13-7.59 5 5 0 0 0-9.19 0 4 4 0 0 0-2.13 7.59c.41.2.72.58.72 1.04V20a1 1 0 0 0 1 1z"/><path d="M6 17h12"/></svg>`,
+  'Dietary Aid': `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3zm0 0v7"/></svg>`,
+};
+const G_COLORS = {'Nurse Management':'#1A3C34','Charge Nurse':'#2D6A4F','CNA':'#6B9E7A','CMA':'#40916C','Housekeeping':'#52B788','Laundry':'#3D7A52','Cook':'#1B5E3B','Dietary Aid':'#4A8A5E','Dietary':'#1B5E3B'};
+const CLINICAL_SHIFTS = [{type:'Day',start:'7:00 AM',end:'3:00 PM'},{type:'Evening',start:'3:00 PM',end:'11:00 PM'},{type:'Night',start:'11:00 PM',end:'7:00 AM'}];
+const NON_CLINICAL_SHIFTS = [{type:'Morning',start:'6:00 AM',end:'2:00 PM'},{type:'Afternoon',start:'2:00 PM',end:'10:00 PM'}];
+const SHIFT_TYPES = g => CLINICAL.includes(g) ? CLINICAL_SHIFTS : NON_CLINICAL_SHIFTS;
+const SLOTS = {'Nurse Management':[1,0,0],'Charge Nurse':[1,1,1],'CNA':[3,3,2],'CMA':[1,1,1],'Housekeeping':[2,1],'Laundry':[1,1],'Cook':[2,1],'Dietary Aid':[2,1]};
+const TODAY = new Date().toISOString().slice(0,10);
+// Server mode: true when served by Node.js (production)
+// false when opened as a local file (demo/dev)
+const IS_SERVER_MODE = window.location.protocol !== 'file:' && window.location.hostname !== '';
+let _authToken = localStorage.getItem('mms_token') || null;
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+const LOGO_SVG = `<svg viewBox="0 0 100 92" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%">
+  <!-- Chimney (renders behind roof) -->
+  <rect x="68" y="4" width="13" height="24" rx="4" fill="#6B9E7A"/>
+  <!-- Roof -->
+  <path d="M50 5 L0 52 Q0 54 2 54 L98 54 Q100 54 100 52 Z" fill="#6B9E7A"/>
+  <!-- House body -->
+  <rect x="2" y="50" width="96" height="42" rx="6" fill="#6B9E7A"/>
+  <!-- Upper center window 2×2 -->
+  <rect x="35" y="15" width="12" height="10" rx="2.5" fill="white"/>
+  <rect x="51" y="15" width="12" height="10" rx="2.5" fill="white"/>
+  <rect x="35" y="28" width="12" height="10" rx="2.5" fill="white"/>
+  <rect x="51" y="28" width="12" height="10" rx="2.5" fill="white"/>
+  <!-- Lower right window 2×2 -->
+  <rect x="62" y="57" width="11" height="9" rx="2" fill="white"/>
+  <rect x="76" y="57" width="11" height="9" rx="2" fill="white"/>
+  <rect x="62" y="69" width="11" height="9" rx="2" fill="white"/>
+  <rect x="76" y="69" width="11" height="9" rx="2" fill="white"/>
+  <!-- Medical cross (left) -->
+  <rect x="6" y="63" width="30" height="9" rx="4.5" fill="white"/>
+  <rect x="16" y="53" width="9" height="29" rx="4.5" fill="white"/>
+  <!-- Door (centered bottom) -->
+  <rect x="40" y="68" width="20" height="24" rx="3" fill="white"/>
+</svg>`;
+
+const PRESETS = {
+  weekdays:[1,1,1,1,1,0,0],
+  '2on2off':[1,1,0,0],
+  '3on2off':[1,1,1,0,0],
+  '223':[1,1,0,0,1,1,1,0,0],
+  '4on3off':[1,1,1,1,0,0,0],
+  alternating:[1,0],
+};
+
+// ════════════════════════════════════════════════════════════
+//  SEED DATA
+// ════════════════════════════════════════════════════════════
+const SEED_BUILDINGS = [
+  {id:'b1',name:'Harmony Hills Nursing Home',address:'421 Harmony Ln, Springfield, IL 62701',phone:'555-0200',beds:120,color:'#2563EB'},
+  {id:'b2',name:'Sunrise Skilled Care',address:'89 Sunrise Blvd, Riverside, CA 92501',phone:'555-0201',beds:96,color:'#7C3AED'},
+  {id:'b3',name:'Willowbrook Care Center',address:'1144 Willow Dr, Lakewood, CO 80401',phone:'555-0202',beds:80,color:'#059669'},
+  {id:'b4',name:'Golden Acres Rehabilitation',address:'775 Golden Ave, Hillside, TX 76001',phone:'555-0203',beds:64,color:'#D97706'},
+];
+
+// ── PASSWORD HASHING (function declaration = hoisted, usable below) ──────────
+// Multi-round FNV-1a — better than plaintext, NOT a substitute for bcrypt+server
+function hashPw(email, pw) {
+  const salt = 'MMS_HIPAA_PW_SALT_2026_UNIQUE_K9X';
+  let h = fnv32(email.toLowerCase().trim() + salt);
+  const s = pw + email.toLowerCase().trim() + salt;
+  for (let i = 0; i < 800; i++) h = fnv32(h + s + String(i));
+  return h;
+}
+function genTempPw() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%';
+  let pw = '';
+  for (let i = 0; i < 14; i++) pw += chars[Math.floor(Math.random() * chars.length)];
+  // Ensure complexity: uppercase, lowercase, digit, special
+  pw = pw.slice(0,11) + 'A3!'; // guarantee mix at end
+  return pw;
+}
+
+// Demo credential table — displayed in the demo bar, hashed for actual verification
+// In production: remove demo buttons; use server-side bcrypt
+const DEMO_CREDS = {
+  'superadmin@managemystaffing.com': 'SuperAdmin@2026!',
+  'admin@harmony.com':    'Harmony@Admin1!',
+  'admin@sunrise.com':    'Sunrise@Admin1!',
+  'admin@willowbrook.com':'Willow@Admin1!',
+  'admin@goldenacres.com':'Golden@Admin1!',
+  'sam@harmony.com':      'SamT@Admin2026!',
+};
+const EMP_DEFAULT_PW = 'Employee@2026!';
+
+const SEED_ACCOUNTS = [
+  {id:'sa0',name:'Ben Solomon',email:'solomong@managemycensus.com',role:'superadmin',buildingId:null,ph:null},
+  {id:'sa1',name:'Platform Super Admin',email:'superadmin@managemystaffing.com',role:'superadmin',buildingId:null,
+   ph:hashPw('superadmin@managemystaffing.com','SuperAdmin@2026!')},
+  {id:'a1',name:'Jennifer Walsh',email:'admin@harmony.com',role:'admin',buildingId:'b1',
+   ph:hashPw('admin@harmony.com','Harmony@Admin1!')},
+  {id:'a2',name:'Marcus Chen',email:'admin@sunrise.com',role:'admin',buildingId:'b2',
+   ph:hashPw('admin@sunrise.com','Sunrise@Admin1!')},
+  {id:'a3',name:'Patricia Moore',email:'admin@willowbrook.com',role:'admin',buildingId:'b3',
+   ph:hashPw('admin@willowbrook.com','Willow@Admin1!')},
+  {id:'a4',name:'Robert Lee',email:'admin@goldenacres.com',role:'admin',buildingId:'b4',
+   ph:hashPw('admin@goldenacres.com','Golden@Admin1!')},
+  {id:'a5',name:'Samantha Torres',email:'sam@harmony.com',role:'admin',buildingId:'b1',
+   ph:hashPw('sam@harmony.com','SamT@Admin2026!')},
+];
+
+const SEED_EMPLOYEES = [
+  {id:'e00',name:'Patricia Reynolds',group:'Nurse Management',email:'pat.reynolds@example.com',phone:'555-0100',buildingId:'b1',notifEmail:true,notifSMS:true,notifPrefs:['immediate'],initials:'PR'},
+  {id:'e01',name:'Sarah Mitchell',group:'Charge Nurse',email:'sarah@example.com',phone:'555-0101',buildingId:'b1',notifEmail:true,notifSMS:true,notifPrefs:['immediate'],initials:'SM'},
+  {id:'e02',name:'James Rodriguez',group:'Charge Nurse',email:'james@example.com',phone:'555-0102',buildingId:'b1',notifEmail:true,notifSMS:false,notifPrefs:['immediate','week'],initials:'JR'},
+  {id:'e03',name:'Emily Chen',group:'Charge Nurse',email:'emily@example.com',phone:'555-0103',buildingId:'b1',notifEmail:false,notifSMS:true,notifPrefs:['day'],initials:'EC'},
+  {id:'e04',name:'Robert Taylor',group:'Charge Nurse',email:'robert@example.com',phone:'555-0104',buildingId:'b1',notifEmail:true,notifSMS:true,notifPrefs:['immediate','daily'],initials:'RT'},
+  {id:'e05',name:'Maria Garcia',group:'CNA',email:'maria@example.com',phone:'555-0105',buildingId:'b1',notifEmail:true,notifSMS:true,notifPrefs:['immediate'],initials:'MG'},
+  {id:'e06',name:'David Kim',group:'CNA',email:'david@example.com',phone:'555-0106',buildingId:'b1',notifEmail:true,notifSMS:false,notifPrefs:['immediate','week'],initials:'DK'},
+  {id:'e07',name:'Ashley Johnson',group:'CNA',email:'ashley@example.com',phone:'555-0107',buildingId:'b1',notifEmail:false,notifSMS:true,notifPrefs:['day','daily'],initials:'AJ'},
+  {id:'e08',name:'Michael Brown',group:'CNA',email:'michael@example.com',phone:'555-0108',buildingId:'b1',notifEmail:true,notifSMS:true,notifPrefs:['immediate'],initials:'MB'},
+  {id:'e09',name:'Lisa Martinez',group:'CNA',email:'lisa@example.com',phone:'555-0109',buildingId:'b1',notifEmail:true,notifSMS:false,notifPrefs:['week'],initials:'LM'},
+  {id:'e10',name:'Kevin Wilson',group:'CNA',email:'kevin@example.com',phone:'555-0110',buildingId:'b1',notifEmail:true,notifSMS:true,notifPrefs:['immediate','day'],initials:'KW'},
+  {id:'e11',name:'Jennifer Adams',group:'CMA',email:'jen@example.com',phone:'555-0111',buildingId:'b1',notifEmail:true,notifSMS:true,notifPrefs:['immediate'],initials:'JA'},
+  {id:'e12',name:'Thomas Lee',group:'CMA',email:'thomas@example.com',phone:'555-0112',buildingId:'b1',notifEmail:true,notifSMS:false,notifPrefs:['daily'],initials:'TL'},
+  {id:'e13',name:'Stephanie White',group:'CMA',email:'steph@example.com',phone:'555-0113',buildingId:'b1',notifEmail:false,notifSMS:true,notifPrefs:['immediate','week'],initials:'SW'},
+  {id:'e14',name:'Carlos Rivera',group:'Housekeeping',email:'carlos@example.com',phone:'555-0114',buildingId:'b1',notifEmail:true,notifSMS:true,notifPrefs:['immediate'],initials:'CR'},
+  {id:'e15',name:'Patricia Moore',group:'Housekeeping',email:'pat@example.com',phone:'555-0115',buildingId:'b1',notifEmail:true,notifSMS:false,notifPrefs:['day'],initials:'PM'},
+  {id:'e16',name:'Anthony Davis',group:'Housekeeping',email:'anthony@example.com',phone:'555-0116',buildingId:'b1',notifEmail:true,notifSMS:true,notifPrefs:['immediate'],initials:'AD'},
+  {id:'e17',name:'Dorothy Thompson',group:'Laundry',email:'dorothy@example.com',phone:'555-0117',buildingId:'b1',notifEmail:true,notifSMS:true,notifPrefs:['immediate'],initials:'DT'},
+  {id:'e18',name:'Richard Jackson',group:'Laundry',email:'richard@example.com',phone:'555-0118',buildingId:'b1',notifEmail:false,notifSMS:true,notifPrefs:['day'],initials:'RJ'},
+  {id:'e19',name:'Betty Harris',group:'Cook',email:'betty@example.com',phone:'555-0119',buildingId:'b1',notifEmail:true,notifSMS:true,notifPrefs:['immediate'],initials:'BH'},
+  {id:'e20',name:'George Martin',group:'Cook',email:'george@example.com',phone:'555-0120',buildingId:'b1',notifEmail:true,notifSMS:false,notifPrefs:['week','daily'],initials:'GM'},
+  {id:'e21',name:'Sandra Thompson',group:'Dietary Aid',email:'sandra@example.com',phone:'555-0121',buildingId:'b1',notifEmail:true,notifSMS:true,notifPrefs:['immediate'],initials:'ST'},
+  {id:'e22',name:'Christopher Garcia',group:'Dietary Aid',email:'chris@example.com',phone:'555-0122',buildingId:'b1',notifEmail:true,notifSMS:true,notifPrefs:['day'],initials:'CG'},
+  {id:'e23',name:'Nicole Wilson',group:'Dietary Aid',email:'nicole@example.com',phone:'555-0123',buildingId:'b1',notifEmail:false,notifSMS:true,notifPrefs:['immediate'],initials:'NW'},
+];
+
+function generateShifts(employees) {
+  const shifts = [];
+  let sid = 1;
+  const now = new Date();
+  for (let offset = -1; offset <= 5; offset++) {
+    const totalMonth = now.getMonth() + offset;
+    const year  = now.getFullYear() + Math.floor(totalMonth / 12);
+    const month = ((totalMonth % 12) + 12) % 12;
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const dow = new Date(year, month, d).getDay();
+      GROUPS.forEach(group => {
+        const shiftList = SHIFT_TYPES(group);
+        const slotArr   = SLOTS[group];
+        const groupEmps = employees.filter(e => e.group === group && !e.inactive);
+        shiftList.forEach((sh, si) => {
+          const slots = Array.isArray(slotArr) ? slotArr[si] : slotArr;
+          for (let slot = 0; slot < slots; slot++) {
+            const seed = d*17 + si*11 + slot*7 + month*31 + group.length*3;
+            const weekendBoost = (dow===0||dow===6)?2:0;
+            const isOpen = (seed % (9-weekendBoost) === 0);
+            let empId = null;
+            if (!isOpen && groupEmps.length>0) empId = groupEmps[(seed+slot*3)%groupEmps.length].id;
+            shifts.push({id:`s${String(sid++).padStart(5,'0')}`,date:dateStr,group,type:sh.type,start:sh.start,end:sh.end,slot,employeeId:empId,status:empId?'scheduled':'open',buildingId:'b1',patternGenerated:false});
+          }
+        });
+      });
+    }
+  }
+  return shifts;
+}
+
+// ════════════════════════════════════════════════════════════
+//  SECURITY & HIPAA ENGINE
+// ════════════════════════════════════════════════════════════
+const SEC = {
+  SESSION_MS:    15 * 60 * 1000,   // 15-min idle lock (HIPAA §164.312(a)(2)(iii))
+  WARN_MS:        2 * 60 * 1000,   // warn 2 min before lock
+  MAX_ATTEMPTS:   5,               // lockout after 5 bad logins
+  LOCKOUT_MS:    15 * 60 * 1000,   // 15-min lockout
+  SESSION_KEY:   'mms_sess_v3',
+  AUDIT_KEY:     'mms_audit_v1',
+  PRIVACY_PFX:   'mms_priv_',
+  ATTEMPT_PFX:   'mms_att_',
+  OBF:           'MMS_HIPAA_2026_SEC_KEY',
+  // User data persistence — survives code updates; never cleared on deploy
+  DATA_KEY:      'mms_data_v1',
+};
+
+/** Escape HTML to prevent XSS before inserting user content into innerHTML */
+function sanitize(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#x27;').replace(/`/g,'&#x60;');
+}
+
+/** FNV-1a 32-bit hash */
+function fnv32(str) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return h.toString(16).padStart(8,'0');
+}
+
+/** XOR-obfuscate + base64 session data in localStorage */
+function obf(data) {
+  const s = JSON.stringify(data), k = SEC.OBF;
+  let o = '';
+  for (let i = 0; i < s.length; i++) o += String.fromCharCode(s.charCodeAt(i) ^ k.charCodeAt(i % k.length));
+  try { return btoa(unescape(encodeURIComponent(o))); } catch(e) { return btoa(o); }
+}
+function deobf(enc) {
+  try {
+    let s;
+    try { s = decodeURIComponent(escape(atob(enc))); } catch(e) { s = atob(enc); }
+    const k = SEC.OBF;
+    let o = '';
+    for (let i = 0; i < s.length; i++) o += String.fromCharCode(s.charCodeAt(i) ^ k.charCodeAt(i % k.length));
+    return JSON.parse(o);
+  } catch(e) { return null; }
+}
+
+/** Strip dangerous chars from user input */
+function sanitizeInput(val, maxLen = 256) {
+  if (typeof val !== 'string') return '';
+  return val.trim().slice(0, maxLen);
+}
+
+/** Password strength */
+function pwStrength(p) {
+  let s = 0;
+  if (p.length >= 8) s++; if (p.length >= 12) s++;
+  if (/[A-Z]/.test(p)) s++; if (/[a-z]/.test(p)) s++;
+  if (/[0-9]/.test(p)) s++; if (/[^A-Za-z0-9]/.test(p)) s++;
+  return s <= 2 ? 'weak' : s <= 4 ? 'medium' : 'strong';
+}
+
+/** Audit log — every access to PHI is recorded per HIPAA §164.312(b) */
+const Audit = {
+  log(action, detail, userId, risk = 'low') {
+    try {
+      const all = this.all();
+      all.unshift({ id: Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+        ts: new Date().toISOString(), action, detail: String(detail||'').slice(0,200),
+        userId: userId ? String(userId).slice(0,50) : null, risk });
+      localStorage.setItem(SEC.AUDIT_KEY, JSON.stringify(all.slice(0, 2000)));
+    } catch(e) {}
+  },
+  all() { try { return JSON.parse(localStorage.getItem(SEC.AUDIT_KEY)||'[]'); } catch(e) { return []; } },
+};
+
+/** Login rate-limiter — prevents brute-force per HIPAA §164.308(a)(5) */
+const RateLimit = {
+  _k(e)  { return SEC.ATTEMPT_PFX + fnv32(e.toLowerCase()); },
+  get(e) { try { return JSON.parse(localStorage.getItem(this._k(e))||'{"n":0,"until":0}'); } catch(e2) { return {n:0,until:0}; } },
+  hit(e) { const r = this.get(e); r.n++; if (r.n >= SEC.MAX_ATTEMPTS) r.until = Date.now() + SEC.LOCKOUT_MS; localStorage.setItem(this._k(e), JSON.stringify(r)); return r; },
+  ok(e)  { const r = this.get(e); if (r.until > Date.now()) return false; if (r.until) localStorage.removeItem(this._k(e)); return true; },
+  mins(e){ return Math.ceil((this.get(e).until - Date.now()) / 60000); },
+  reset(e){ localStorage.removeItem(this._k(e)); },
+};
+
+// ════════════════════════════════════════════════════════════
+//  APP
+// ════════════════════════════════════════════════════════════
+const App = {
+  S: {
+    user: null,
+    buildings: [...SEED_BUILDINGS],
+    accounts: [...SEED_ACCOUNTS],
+    employees: [...SEED_EMPLOYEES],
+    shifts: [],
+    schedulePatterns: [],
+    // calendar state
+    selectedGroup: 'CNA',
+    calView: 'month',
+    filter: 'scheduled',
+    viewYear: 2026, viewMonth: 3,
+    selectedDate: null,
+    panelOpen: false,
+    // pattern builder state
+    patPattern: [1,1,0,0],
+    patDuration: 1,
+    patPreset: null,
+  },
+
+  // ── TIMERS & INTERNAL STATE ───────────────────────────────
+  _sessionTimer: null, _warnTimer: null, _warnCountdown: null,
+  _sessionLocked: false, _activityBound: false,
+
+  // ── INIT ─────────────────────────────────────────────────
+  async init() {
+    const logoEl = document.getElementById('header-logo-svg');
+    if (logoEl) logoEl.innerHTML = LOGO_SVG;
+
+    if (IS_SERVER_MODE) {
+      // ── PRODUCTION / SERVER MODE ──────────────────────────────────
+      // Hide demo bar immediately in server mode
+      const demoBanner = document.getElementById('demo-mode-banner');
+      if (demoBanner) demoBanner.style.display = 'none';
+      // Hide demo shortcut bar on login page
+      const demoBar = document.querySelector('.demo-bar');
+      if (demoBar) demoBar.style.display = 'none';
+
+      // Try to restore session from stored token
+      if (_authToken) {
+        try {
+          const vResp = await fetch('/api/auth/verify', {headers:{'Authorization':`Bearer ${_authToken}`}});
+          if (vResp.ok) {
+            const {user} = await vResp.json();
+            const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${_authToken}`}});
+            if (dResp.ok) {
+              this.applyServerData(await dResp.json());
+              this.S.user = user;
+              this.showApp();
+              return;
+            }
+          }
+        } catch(e) {}
+        // Token invalid — clear it
+        localStorage.removeItem('mms_token');
+        _authToken = null;
+      }
+      // Show login page
+      document.getElementById('login-page').style.display = 'flex';
+      document.getElementById('app').style.display = 'none';
+      const pw = document.getElementById('login-pass');
+      if (pw) pw.addEventListener('input', () => {
+        const bar = document.getElementById('pw-strength-bar');
+        if (bar && pw.value) bar.className = 'pw-strength-bar '+pwStrength(pw.value);
+        else if (bar) bar.className = 'pw-strength-bar';
+      });
+      return;
+    }
+
+    // ── LOCAL FILE / DEMO MODE ────────────────────────────
+    const loaded = this.loadPersistedData();
+    if (!loaded) {
+      this.S.shifts = generateShifts(this.S.employees);
+      this.persistData();
+    }
+    ['mms_user','mms_session','mms_sess_v1','mms_sess_v2'].forEach(k => localStorage.removeItem(k));
+    try {
+      const saved = localStorage.getItem(SEC.SESSION_KEY);
+      if (saved) {
+        const parsed = deobf(saved);
+        if (parsed && parsed.uid && parsed.role && parsed.ts) {
+          if (Date.now() - parsed.ts < 86400000) {
+            const user = this.S.accounts.find(a => a.id === parsed.uid)
+              || (() => { const e = this.S.employees.find(e => e.id === parsed.uid); return e ? {id:e.id,name:e.name,role:'employee',group:e.group,email:e.email,buildingId:e.buildingId} : null; })();
+            if (user) { this.S.user = user; this.showApp(); return; }
+          }
+        }
+      }
+    } catch(e) {}
+    localStorage.removeItem(SEC.SESSION_KEY);
+    document.getElementById('login-page').style.display = 'flex';
+    document.getElementById('app').style.display = 'none';
+    const pw = document.getElementById('login-pass');
+    if (pw) pw.addEventListener('input', () => {
+      const bar = document.getElementById('pw-strength-bar');
+      if (bar && pw.value) bar.className = 'pw-strength-bar '+pwStrength(pw.value);
+      else if (bar) bar.className = 'pw-strength-bar';
+    });
+  },
+
+  // ── DEMO LOGIN ────────────────────────────────────────────
+  demoLogin(role) {
+    try {
+      if (role === 'superadmin') {
+        this.S.user = {...this.S.accounts.find(a => a.role === 'superadmin'), _demo:true};
+      } else if (role === 'admin') {
+        this.S.user = {...this.S.accounts.find(a => a.id === 'a1'), _demo:true};
+      } else {
+        const emp = this.S.employees.find(e => e.group === role) || this.S.employees[0];
+        this.S.user = {id:emp.id,name:emp.name,role:'employee',group:emp.group,email:emp.email,buildingId:emp.buildingId,_demo:true};
+      }
+      // DEMO sessions: use sessionStorage only (no persistent localStorage token)
+      try { sessionStorage.setItem(SEC.SESSION_KEY+'_demo', obf({uid:this.S.user.id,role:this.S.user.role,ts:Date.now(),demo:true})); } catch(e2) {}
+      localStorage.removeItem(SEC.SESSION_KEY); // ensure no real session persists
+      Audit.log('DEMO_LOGIN', 'Demo login as '+sanitize(role), this.S.user?.id, 'medium');
+      this.showApp();
+    } catch(err) {
+      document.getElementById('login-page').style.display = 'flex';
+      document.getElementById('app').style.display = 'none';
+    }
+  },
+
+  // ── LOGIN FORM (rate-limited, audited) ───────────────────
+  async loginForm() {
+    const emailRaw = (document.getElementById('login-email').value || '').trim().toLowerCase();
+    const pass     = (document.getElementById('login-pass').value || '');
+    const errEl    = document.getElementById('login-error');
+    const showErr  = msg => { if(errEl){errEl.textContent=msg;errEl.style.display='block';} };
+    if (!emailRaw || !pass) { showErr('Please enter your email and password.'); return; }
+    if (emailRaw.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)) { showErr('Please enter a valid email address.'); return; }
+
+    if (IS_SERVER_MODE) {
+      // ── SERVER MODE AUTH ────────────────────────────────
+      try {
+        const hash = hashPw(emailRaw, pass);
+        const resp = await fetch('/api/auth/login', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({email:emailRaw, passwordHash:hash})
+        });
+        if (!resp.ok) {
+          const body = await resp.json().catch(()=>({}));
+          if (resp.status === 401) showErr('Invalid email or password.');
+          else if (resp.status === 423) showErr('Account locked. Please try again later.');
+          else showErr(body.error || 'Login failed. Please try again.');
+          Audit.log('LOGIN_FAILED', 'Server auth failed: '+sanitize(emailRaw), null, 'high');
+          return;
+        }
+        const {token, user} = await resp.json();
+        _authToken = token;
+        localStorage.setItem('mms_token', token);
+        // Load all data
+        const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${token}`}});
+        if (dResp.ok) this.applyServerData(await dResp.json());
+        else {
+          // No data yet (fresh server) — seed with current state + generate shifts
+          this.S.shifts = generateShifts(this.S.employees);
+          this.persistData();
+        }
+        if (errEl) errEl.style.display = 'none';
+        this.S.user = user;
+        Audit.log('LOGIN_SUCCESS', 'Login: '+sanitize(emailRaw), user.id, 'low');
+        this.showApp();
+      } catch(e) {
+        showErr('Connection error. Please check your connection and try again.');
+      }
+      return;
+    }
+
+    // ── LOCAL FILE / DEMO MODE AUTH ──────────────────────
+    if (!RateLimit.ok(emailRaw)) {
+      const m = RateLimit.mins(emailRaw);
+      showErr(`Account locked due to repeated failures. Try again in ${m} minute${m===1?'':'s'}.`);
+      Audit.log('LOGIN_BLOCKED', 'Locked: '+sanitize(emailRaw), null, 'high');
+      return;
+    }
+    const acct = this.S.accounts.find(a => a.email.toLowerCase() === emailRaw);
+    let user = null, pwMatch = false;
+    if (acct) {
+      if (acct.ph && hashPw(emailRaw, pass) === acct.ph) { user = acct; pwMatch = true; }
+      else if (!acct.ph) { user = acct; pwMatch = true; }
+    } else {
+      const emp = this.S.employees.find(e => e.email.toLowerCase() === emailRaw);
+      if (emp) {
+        const expectedPh = emp.ph || hashPw(emp.email.toLowerCase(), EMP_DEFAULT_PW);
+        if (hashPw(emailRaw, pass) === expectedPh) {
+          user = {id:emp.id,name:emp.name,role:'employee',group:emp.group,email:emp.email,buildingId:emp.buildingId};
+          pwMatch = true;
+        } else { user = {id:emp.id}; }
+      }
+    }
+    if (!user || !pwMatch) {
+      const r = RateLimit.hit(emailRaw);
+      const left = SEC.MAX_ATTEMPTS - r.n;
+      if (left > 0) showErr(`Invalid email or password. ${left} attempt${left===1?'':'s'} remaining before lockout.`);
+      else showErr('Account locked for 15 minutes due to repeated login failures.');
+      Audit.log('LOGIN_FAILED', 'Bad credentials: '+sanitize(emailRaw), null, 'high');
+      return;
+    }
+    RateLimit.reset(emailRaw);
+    if (errEl) errEl.style.display = 'none';
+    this.S.user = user;
+    localStorage.removeItem(SEC.SESSION_KEY);
+    try { localStorage.setItem(SEC.SESSION_KEY, obf({uid:user.id,role:user.role,ts:Date.now()})); } catch(e2) {}
+    try { sessionStorage.setItem('mms_lock_hash', hashPw(emailRaw, pass)); } catch(e2) {}
+    Audit.log('LOGIN_SUCCESS', 'Login: '+sanitize(emailRaw), user.id, 'low');
+    this.showApp();
+  },
+
+  // ── LOGOUT ───────────────────────────────────────────────
+  logout() {
+    _authToken = null;
+    localStorage.removeItem('mms_token');
+    Audit.log('LOGOUT', 'User logged out', this.S.user?.id, 'low');
+    this._clearSessionTimers();
+    localStorage.removeItem(SEC.SESSION_KEY);
+    sessionStorage.removeItem(SEC.SESSION_KEY+'_demo');
+    sessionStorage.removeItem('mms_lock_hash');
+    this.S.user = null; this.S.panelOpen = false; this._sessionLocked = false;
+    document.getElementById('lock-screen').classList.remove('active');
+    document.getElementById('session-warning').style.display = 'none';
+    const demoBanner = document.getElementById('demo-mode-banner');
+    if (demoBanner) demoBanner.style.display = 'none';
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('login-page').style.display = 'flex';
+  },
+
+  // ── SHOW APP ─────────────────────────────────────────────
+  showApp() {
+    document.getElementById('login-page').style.display = 'none';
+    document.getElementById('app').style.display = 'flex';
+    const u = this.S.user;
+    if (u.role === 'employee') this.S.selectedGroup = u.group;
+    else this.S.selectedGroup = 'CNA';
+    this.render();
+    // Show or hide DEMO MODE banner
+    const demoBanner = document.getElementById('demo-mode-banner');
+    if (demoBanner) demoBanner.style.display = u._demo ? 'flex' : 'none';
+    // Footer audit link: admin/superadmin only
+    const footerAudit = document.getElementById('footer-audit-link');
+    if (footerAudit) footerAudit.innerHTML = ['admin','superadmin'].includes(u.role)
+      ? `<span>·</span><span style="cursor:pointer;text-decoration:underline" onclick="App.openAuditLog()">View Audit Log</span>` : '';
+    Audit.log('APP_ENTER', 'Entered app as '+sanitize(u.role), u.id, 'low');
+    if (!this._checkPrivacyNotice()) return; // show privacy notice first
+    if (!u._demo) this._startSessionTimer(); // no session timer for demo
+  },
+
+  // ── SESSION TIMEOUT (HIPAA §164.312(a)(2)(iii)) ──────────
+  _startSessionTimer() {
+    this._clearSessionTimers();
+    this._warnTimer   = setTimeout(() => this._showSessionWarning(), SEC.SESSION_MS - SEC.WARN_MS);
+    this._sessionTimer= setTimeout(() => this._lockSession(),        SEC.SESSION_MS);
+    if (!this._activityBound) {
+      this._activityBound = true;
+      this._actHandler = () => { if (!this._sessionLocked) this._resetActivity(); };
+      ['click','keydown','touchstart','scroll'].forEach(ev =>
+        document.addEventListener(ev, this._actHandler, {capture:true,passive:true}));
+    }
+  },
+
+  _resetActivity() {
+    this._clearSessionTimers();
+    document.getElementById('session-warning').style.display = 'none';
+    this._startSessionTimer();
+  },
+
+  _clearSessionTimers() {
+    clearTimeout(this._sessionTimer);
+    clearTimeout(this._warnTimer);
+    clearInterval(this._warnCountdown);
+  },
+
+  _showSessionWarning() {
+    const el = document.getElementById('session-warning');
+    if (el) el.style.display = 'flex';
+    const cd = document.getElementById('warning-countdown');
+    let ms = SEC.WARN_MS;
+    this._warnCountdown = setInterval(() => {
+      ms -= 1000; if (ms <= 0) { clearInterval(this._warnCountdown); return; }
+      const m = Math.floor(ms/60000), s = Math.floor((ms%60000)/1000);
+      if (cd) cd.textContent = `${m}:${String(s).padStart(2,'0')}`;
+    }, 1000);
+  },
+
+  extendSession() {
+    document.getElementById('session-warning').style.display = 'none';
+    this._resetActivity();
+    Audit.log('SESSION_EXTENDED', 'User extended session', this.S.user?.id, 'low');
+  },
+
+  _lockSession() {
+    this._sessionLocked = true;
+    document.getElementById('lock-screen').classList.add('active');
+    document.getElementById('session-warning').style.display = 'none';
+    Audit.log('SESSION_LOCKED', 'Auto-locked after inactivity', this.S.user?.id, 'medium');
+  },
+
+  unlockSession() {
+    const passEl = document.getElementById('lock-pass');
+    const pass = (passEl.value || '').trim();
+    if (!pass) { this.showToast('Please enter your password', 'warn'); return; }
+    const storedHash = sessionStorage.getItem('mms_lock_hash');
+    const userEmail = this.S.user && this.S.user.email ? this.S.user.email.toLowerCase() : '';
+    if (storedHash) {
+      const entered = hashPw(userEmail, pass);
+      if (entered !== storedHash) {
+        passEl.value = '';
+        passEl.placeholder = 'Incorrect password — try again';
+        passEl.style.borderColor = '#EF4444';
+        setTimeout(() => { passEl.placeholder = 'Re-enter your password'; passEl.style.borderColor = ''; }, 2500);
+        Audit.log('UNLOCK_FAILED', 'Lock screen: wrong password', this.S.user?.id, 'high');
+        return;
+      }
+    } else {
+      // No stored hash — force logout for security
+      Audit.log('UNLOCK_NO_HASH', 'No session hash found — forcing logout', this.S.user?.id, 'high');
+      this.logout();
+      return;
+    }
+    document.getElementById('lock-screen').classList.remove('active');
+    passEl.value = '';
+    this._sessionLocked = false;
+    this._resetActivity();
+    Audit.log('SESSION_UNLOCKED', 'Session unlocked successfully', this.S.user?.id, 'medium');
+  },
+
+  // ── PRIVACY NOTICE (HIPAA §164.520) ──────────────────────
+  _checkPrivacyNotice() {
+    if (!this.S.user) return false;
+    const k = SEC.PRIVACY_PFX + fnv32(this.S.user.email || this.S.user.id);
+    if (!localStorage.getItem(k)) {
+      document.getElementById('modal-privacy').classList.add('open');
+      return false;
+    }
+    return true;
+  },
+
+  acceptPrivacyNotice() {
+    if (!document.getElementById('privacy-agree').checked) return;
+    const k = SEC.PRIVACY_PFX + fnv32(this.S.user.email || this.S.user.id);
+    localStorage.setItem(k, '1');
+    document.getElementById('modal-privacy').classList.remove('open');
+    Audit.log('PRIVACY_ACCEPTED', 'HIPAA privacy notice accepted', this.S.user?.id, 'low');
+    this._startSessionTimer();
+  },
+
+  // ── AUDIT LOG VIEWER (admin/superadmin only) ─────────────
+  openAuditLog() {
+    if (!['admin','superadmin'].includes(this.S.user?.role)) return;
+    const entries = Audit.all();
+    const rows = entries.length === 0
+      ? '<div style="padding:32px;text-align:center;color:var(--g400)">No audit entries yet.</div>'
+      : entries.map(e => `<div class="audit-row">
+          <div class="audit-ts">${sanitize(e.ts.replace('T',' ').slice(0,19))}</div>
+          <div class="audit-action" style="flex:1">
+            <span class="audit-user">${sanitize(e.userId||'system')}</span>
+            <span> · ${sanitize(e.action)}</span>
+            ${e.detail ? `<div style="color:var(--g400);font-size:11px;margin-top:1px">${sanitize(e.detail)}</div>` : ''}
+          </div>
+          <span class="audit-risk risk-${sanitize(e.risk||'low')}">${sanitize((e.risk||'low').toUpperCase())}</span>
+        </div>`).join('');
+    document.getElementById('audit-log-list').innerHTML = rows;
+    Audit.log('AUDIT_VIEWED', 'Audit log accessed', this.S.user?.id, 'low');
+    this.openModal('modal-audit');
+  },
+
+  exportAuditLog() {
+    const entries = Audit.all();
+    const csv = ['Timestamp,UserID,Action,Detail,Risk',
+      ...entries.map(e => `"${e.ts}","${e.userId||''}","${e.action}","${(e.detail||'').replace(/"/g,'""')}","${e.risk}"`)
+    ].join('\n');
+    const url = URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8;'}));
+    const a = document.createElement('a'); a.href=url; a.download=`hipaa-audit-${new Date().toISOString().slice(0,10)}.csv`; a.click();
+    URL.revokeObjectURL(url);
+    Audit.log('AUDIT_EXPORTED', 'Audit log exported CSV', this.S.user?.id, 'medium');
+  },
+
+  goHome() {
+    if (this.S.user?.role === 'superadmin') this.render();
+  },
+
+  render() {
+    this.renderHeader();
+    const u = this.S.user;
+    if (u.role === 'superadmin') {
+      document.getElementById('sidebar').style.display = 'none';
+      document.getElementById('main').className = 'main main-full';
+      this.renderSuperAdmin();
+    } else {
+      document.getElementById('sidebar').style.display = 'block';
+      document.getElementById('main').className = 'main' + (this.S.panelOpen ? ' panel-open' : '');
+      this.renderSidebar();
+      this.renderMain();
+    }
+    this.updateMonthLabel();
+  },
+
+  // ── HEADER ─────────────────────────────────────────────────
+  renderHeader() {
+    const u = this.S.user;
+    const initials = sanitize(u.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase());
+    const roleBadge = u.role === 'superadmin'
+      ? '<span class="role-badge role-super">Super Admin</span>'
+      : u.role === 'admin'
+      ? '<span class="role-badge role-admin">Admin</span>'
+      : `<span class="role-badge role-emp">${sanitize(u.group)}</span>`;
+
+    // Month nav only for non-superadmin
+    const nav = u.role === 'superadmin' ? '' : `
+      <div class="month-nav">
+        <button onclick="App.navMonth(-1)">&#8249;</button>
+        <h2 id="month-label"></h2>
+        <button onclick="App.navMonth(1)">&#8250;</button>
+      </div>`;
+    document.getElementById('header-nav').innerHTML = nav;
+
+    let adminBtns = '';
+    if (u.role === 'superadmin') {
+      adminBtns = `
+        <button class="btn btn-ghost btn-sm" onclick="App.openAuditLog()" title="HIPAA Audit Log" style="display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg> Audit</button>
+        <button class="btn btn-primary btn-sm" onclick="App.openModal('modal-building')">+ Add Building</button>`;
+    } else if (u.role === 'admin') {
+      const backBtn = this.S._prevUser
+        ? `<button class="btn btn-ghost btn-sm" onclick="App.backToPlatform()" style="color:var(--blue-d);border:1.5px solid var(--blue-m)">← Platform</button>`
+        : '';
+      adminBtns = `
+        ${backBtn}
+        <button class="btn btn-ghost btn-sm" onclick="App.openAuditLog()" style="display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg> Audit</button>
+        <button class="btn btn-ghost btn-sm" onclick="App.openPPDCalc()" style="display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg> PPD</button>
+        <button class="btn btn-ghost btn-sm" onclick="App.openRoster()" style="display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg> Roster</button>
+        <button class="btn btn-secondary btn-sm" onclick="App.openAlertModal()" style="display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> Alert</button>
+        <button class="btn btn-secondary btn-sm" onclick="App.openPatternModal()" style="display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg> Rotation</button>
+        <button class="btn btn-primary btn-sm" onclick="App.openModal('modal-add-emp')">+ Add Employee</button>`;
+    }
+
+    document.getElementById('header-actions').innerHTML = `
+      ${adminBtns} ${roleBadge}
+      <div class="avatar-menu">
+        <div class="avatar">${initials}</div>
+        <div class="avatar-dropdown">
+          <div class="avatar-dd-name">${sanitize(u.name)}</div>
+          <div class="avatar-dd-sub">${sanitize(u.email)}</div>
+          <div class="avatar-dd-divider"></div>
+          ${u.role === 'admin' ? `<div class="avatar-dd-item" onclick="App.openManageAdmins()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg> Manage Admins</div>` : ''}
+          ${['admin','superadmin'].includes(u.role) ? `<div class="avatar-dd-item" onclick="App.openAuditLog()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8"/></svg> HIPAA Audit Log</div>` : ''}
+          <div class="avatar-dd-divider"></div>
+          <div class="avatar-dd-item" onclick="App.logout()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> Sign Out</div>
+        </div>
+      </div>`;
+  },
+
+  // ── SUPER ADMIN PAGE ────────────────────────────────────────
+  renderSuperAdmin() {
+    const buildings = this.S.buildings;
+    const totalStaff = this.S.employees.length;
+    const totalAdmins = this.S.accounts.filter(a => a.role === 'admin').length;
+    const totalOpen = this.S.shifts.filter(s => s.status === 'open' && s.date.startsWith('2026-04')).length;
+
+    let cards = '';
+    buildings.forEach(b => {
+      const admins = this.S.accounts.filter(a => a.buildingId === b.id && a.role === 'admin');
+      const staff = this.S.employees.filter(e => e.buildingId === b.id);
+      const openShifts = this.S.shifts.filter(s => s.buildingId === b.id && s.status === 'open' && s.date.startsWith('2026-04')).length;
+      const primaryAdmin = admins[0];
+      const bInitials = primaryAdmin ? sanitize(primaryAdmin.name.split(' ').map(w=>w[0]).join('').slice(0,2)) : '';
+      cards += `
+        <div class="building-card" style="--accent:${b.color}">
+          <div style="position:absolute;top:0;left:0;right:0;height:4px;background:${b.color}"></div>
+          <div class="building-name">${sanitize(b.name)}</div>
+          <div class="building-addr"><svg viewBox="0 0 16 20" width="11" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M8 1C4.69 1 2 3.69 2 7c0 4.5 6 12 6 12s6-7.5 6-12c0-3.31-2.69-6-6-6z"/><circle cx="8" cy="7" r="2"/></svg> ${sanitize(b.address)}</div>
+          <div class="building-stats">
+            <div class="building-stat"><div class="building-stat-val">${staff.length}</div><div class="building-stat-label">Staff</div></div>
+            <div class="building-stat"><div class="building-stat-val">${admins.length}</div><div class="building-stat-label">Admins</div></div>
+            <div class="building-stat"><div class="building-stat-val" style="color:var(--g600)">${openShifts}</div><div class="building-stat-label">Open</div></div>
+            <div class="building-stat"><div class="building-stat-val">${b.beds || '—'}</div><div class="building-stat-label">Beds</div></div>
+          </div>
+          ${primaryAdmin ? `
+            <div class="building-admin">
+              <div class="building-admin-avatar">${bInitials}</div>
+              <div class="building-admin-info">
+                <div class="building-admin-name">${sanitize(primaryAdmin.name)}</div>
+                <div class="building-admin-email">${sanitize(primaryAdmin.email)}</div>
+              </div>
+              <span class="tag tag-blue" style="font-size:11px">Admin</span>
+            </div>
+          ` : '<div style="font-size:13px;color:var(--g400);padding:8px 0;margin-bottom:8px">No admin assigned</div>'}
+          <div class="building-actions">
+            <button class="btn btn-secondary btn-sm" onclick="App.enterBuilding('${b.id}')">Enter Dashboard →</button>
+            <button class="btn btn-ghost btn-sm" onclick="App.addAdminToBuilding('${b.id}')">+ Add Admin</button>
+          </div>
+        </div>`;
+    });
+
+    document.getElementById('main').innerHTML = `
+      <div class="sa-page">
+        <div class="sa-hero">
+          <h1>Platform Overview</h1>
+          <p>Manage all facilities and administrator accounts from one place.</p>
+        </div>
+        <div class="sa-stats-row">
+          <div class="sa-stat-card"><div class="sa-stat-val">${buildings.length}</div><div class="sa-stat-label">Buildings</div></div>
+          <div class="sa-stat-card"><div class="sa-stat-val">${totalAdmins}</div><div class="sa-stat-label">Admins</div></div>
+          <div class="sa-stat-card"><div class="sa-stat-val">${totalStaff}</div><div class="sa-stat-label">Total Staff</div></div>
+          <div class="sa-stat-card"><div class="sa-stat-val" style="color:var(--g600)">${totalOpen}</div><div class="sa-stat-label">Open Shifts (Apr)</div></div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <h2 style="font-size:18px;font-weight:700">Facilities</h2>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary btn-sm" onclick="App.openModal('modal-building')">+ Add Building</button>
+          </div>
+        </div>
+        <div class="buildings-grid">${cards}</div>
+        <div style="margin-top:32px;padding:16px 20px;background:var(--g50);border:1px solid var(--g200);border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:16px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--g400)" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>
+            <div>
+              <div style="font-size:13px;font-weight:600;color:var(--g700)">Persistent Data Storage</div>
+              <div style="font-size:12px;color:var(--g400);margin-top:1px">All facility data is saved locally and survives code updates. Last saved: ${(() => { try { const d=JSON.parse(localStorage.getItem(SEC.DATA_KEY)||'{}'); return d.savedAt ? new Date(d.savedAt).toLocaleString() : 'Never'; } catch(e){return 'Unknown';} })()}</div>
+            </div>
+          </div>
+          <button class="btn btn-ghost btn-sm" style="color:var(--red);border:1.5px solid var(--g200)" onclick="App.resetAllData()">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>
+            Reset to Demo Data
+          </button>
+        </div>
+      </div>`;
+  },
+
+  enterBuilding(buildingId) {
+    Audit.log('BUILDING_ENTER', 'Super admin entered building '+sanitize(buildingId), this.S.user?.id, 'medium');
+    const admin = this.S.accounts.find(a => a.buildingId === buildingId && a.role === 'admin');
+    if (admin) {
+      this.S._prevUser = this.S.user;
+      this.S.user = {...admin};
+      this.S.selectedGroup = 'CNA';
+      document.getElementById('sidebar').style.display = 'block';
+      document.getElementById('main').className = 'main';
+      this.render();
+      this.showToast(`Viewing ${this.S.buildings.find(b=>b.id===buildingId)?.name}`);
+    }
+  },
+
+  backToPlatform() {
+    if (this.S._prevUser) {
+      this.S.user = this.S._prevUser;
+      this.S._prevUser = null;
+      this.S.panelOpen = false;
+      document.getElementById('right-panel').classList.remove('open');
+      this.render();
+    }
+  },
+
+  addAdminToBuilding(buildingId) {
+    this.S._addingAdminToBuildingId = buildingId;
+    document.getElementById('emp-role').value = 'admin';
+    this.openModal('modal-add-emp');
+  },
+
+  // ── SIDEBAR ─────────────────────────────────────────────────
+  renderSidebar() {
+    const u = this.S.user;
+    const building = this.S.buildings.find(b => b.id === (u.buildingId || 'b1'));
+
+    // ── EMPLOYEE: personal sidebar ───────────────────────────
+    if (u.role === 'employee') {
+      const emp = this.S.employees.find(e => e.id === u.id);
+      const col = G_COLORS[u.group] || 'var(--blue)';
+      const todayShift = this.S.shifts.find(s => s.date === TODAY && s.employeeId === u.id);
+      const shiftTypes = SHIFT_TYPES(u.group);
+      const todayLabel = todayShift ? (shiftTypes.find(s=>s.type===todayShift.type)?.start + '–' + shiftTypes.find(s=>s.type===todayShift.type)?.end) : null;
+      // Count this month's shifts for this employee
+      const myShifts = this.S.shifts.filter(s => s.employeeId === u.id && s.date.startsWith(`${this.S.viewYear}-${String(this.S.viewMonth+1).padStart(2,'0')}`));
+      // Open shifts available to claim
+      const openCount = this.S.shifts.filter(s => s.status==='open' && s.group===u.group && s.buildingId===(u.buildingId||'b1')).length;
+      const bname = building ? `<div style="padding:12px 16px 4px;font-size:12px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;display:flex;align-items:center;gap:5px"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="14" height="11" rx="1"/><path d="M5 15V9h6v6"/><path d="M1 8l7-6 7 6"/></svg>${sanitize(building.name)}</div>` : '';
+      document.getElementById('sidebar').innerHTML = `
+        ${bname}
+        <div style="padding:16px">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+            <div class="emp-avatar" style="background:${col};width:44px;height:44px;font-size:16px;flex-shrink:0">${sanitize(u.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase())}</div>
+            <div>
+              <div style="font-weight:700;font-size:15px;color:var(--g900)">${sanitize(u.name)}</div>
+              <div style="display:flex;align-items:center;gap:5px;margin-top:2px">${G_ICONS[u.group]}<span style="font-size:12px;color:${col};font-weight:600">${sanitize(u.group)}</span></div>
+            </div>
+          </div>
+          <div style="background:${todayShift?'var(--blue-l)':'var(--g50)'};border:1.5px solid ${todayShift?'var(--blue-m)':'var(--g200)'};border-radius:10px;padding:12px;margin-bottom:12px">
+            <div style="font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Today</div>
+            ${todayShift
+              ? `<div style="font-weight:700;color:var(--blue-d);font-size:13px;display:flex;align-items:center;gap:6px"><svg viewBox="0 0 8 8" width="8" height="8"><circle cx="4" cy="4" r="4" fill="var(--blue)"/></svg> Working</div><div style="font-size:12px;color:var(--g600);margin-top:2px">${todayShift.type} · ${todayLabel}</div>`
+              : `<div style="font-weight:600;color:var(--g500);font-size:13px;display:flex;align-items:center;gap:6px"><svg viewBox="0 0 8 8" width="8" height="8"><circle cx="4" cy="4" r="4" fill="none" stroke="var(--g400)" stroke-width="1.5"/></svg> Day Off</div>`}
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+            <div style="background:var(--g50);border-radius:8px;padding:10px;text-align:center">
+              <div style="font-size:20px;font-weight:800;color:var(--g900)">${myShifts.length}</div>
+              <div style="font-size:11px;color:var(--g500);font-weight:600">This Month</div>
+            </div>
+            <div style="background:var(--g50);border-radius:8px;padding:10px;text-align:center;cursor:pointer" onclick="App.setEmpView('open')">
+              <div style="font-size:20px;font-weight:800;color:var(--g900)">${openCount}</div>
+              <div style="font-size:11px;color:var(--g500);font-weight:600">Open to Claim</div>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <button class="btn btn-secondary btn-sm btn-full" onclick="App.setEmpView('my')" style="justify-content:flex-start;gap:8px">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+              My Schedule
+            </button>
+            <button class="btn btn-secondary btn-sm btn-full" onclick="App.setEmpView('open')" style="justify-content:flex-start;gap:8px">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+              Available Shifts
+              ${openCount > 0 ? `<span style="margin-left:auto;background:var(--blue);color:#fff;border-radius:10px;padding:1px 7px;font-size:11px">${openCount}</span>` : ''}
+            </button>
+          </div>
+        </div>`;
+      return;
+    }
+
+    // ── ADMIN: standard group sidebar ───────────────────────
+    const sel = this.S.selectedGroup;
+    const groups = DISPLAY_GROUPS;
+    let groupItems = '';
+    groups.forEach(g => {
+      const count = this.S.employees.filter(e => getActualGroups(g).includes(e.group) && e.buildingId === (u.buildingId||'b1') && !e.inactive).length;
+      const col = G_COLORS[g];
+      groupItems += `<div class="group-item ${sel===g?'active':''}" onclick="App.selectGroup('${g}')">
+        <div class="group-icon" style="background:${col}22;color:${col}">${G_ICONS[g]}</div>${g}
+        <span class="group-badge">${count}</span></div>`;
+    });
+
+    let empList = '';
+    if (sel) {
+      const emps = this.S.employees.filter(e => getActualGroups(sel).includes(e.group) && e.buildingId === (u.buildingId||'b1') && !e.inactive);
+      emps.forEach(emp => {
+        const working = this.S.shifts.some(s => s.date === TODAY && s.employeeId === emp.id);
+        empList += `<div class="emp-item">
+          <div class="emp-avatar" style="background:${G_COLORS[emp.group]}">${sanitize(emp.initials)}</div>
+          <div style="flex:1;min-width:0">
+            <div class="emp-name">${sanitize(emp.name)}</div>
+            <div class="emp-status" style="display:flex;align-items:center;gap:5px">${working?`<svg viewBox="0 0 8 8" width="7" height="7"><circle cx="4" cy="4" r="4" fill="var(--blue)"/></svg><span>Working today</span>`:`<svg viewBox="0 0 8 8" width="7" height="7"><circle cx="4" cy="4" r="4" fill="none" stroke="var(--g300)" stroke-width="1.5"/></svg><span>Off today</span>`}</div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="App.openPatternForEmp('${emp.id}')" title="Set rotation" style="padding:4px 6px"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></button>
+        </div>`;
+      });
+    }
+
+    const bname = building ? `<div style="padding:12px 16px 4px;font-size:12px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;display:flex;align-items:center;gap:5px"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="14" height="11" rx="1"/><path d="M5 15V9h6v6"/><path d="M1 8l7-6 7 6"/></svg>${sanitize(building.name)}</div>` : '';
+    document.getElementById('sidebar').innerHTML = `
+      ${bname}
+      <div class="sidebar-section-title">Staff Groups</div>
+      ${groupItems}
+      ${sel ? `<div class="sidebar-divider"></div><div class="sidebar-section-title">${sel==='Dietary'?'Dietary Staff':sel+'s'}</div><div class="emp-list">${empList}</div>` : ''}`;
+  },
+
+  setEmpView(view) {
+    this.S.empView = view;
+    this.renderMain();
+    this.renderSidebar();
+  },
+
+  openPPDCalc() {
+    this.S.ppdView = true;
+    this.S.panelOpen = false;
+    document.getElementById('right-panel').classList.remove('open');
+    document.getElementById('main').classList.remove('panel-open');
+    if (!this.S.ppdDate) this.S.ppdDate = TODAY;
+    if (!this.S.ppdCensus) this.S.ppdCensus = this.S.buildings.find(b=>b.id===(this.S.user.buildingId||'b1'))?.beds || 80;
+    this.renderMain();
+  },
+
+  closePPDCalc() {
+    this.S.ppdView = false;
+    this.renderMain();
+  },
+
+  // ── ROSTER ──────────────────────────────────────────────────
+  openRoster() {
+    this.S.rosterView = true;
+    this.S.ppdView = false;
+    this.S.panelOpen = false;
+    document.getElementById('right-panel').classList.remove('open');
+    document.getElementById('main').classList.remove('panel-open');
+    this.renderMain();
+  },
+
+  closeRoster() {
+    this.S.rosterView = false;
+    this.renderMain();
+  },
+
+  renderRoster() {
+    const u = this.S.user;
+    const bId = u.buildingId || 'b1';
+    const building = this.S.buildings.find(b => b.id === bId);
+    const allEmps = this.S.employees.filter(e => e.buildingId === bId);
+    const active   = allEmps.filter(e => !e.inactive);
+    const inactive = allEmps.filter(e => e.inactive);
+
+    const empRow = (emp, isActive) => {
+      const col = G_COLORS[emp.group] || 'var(--blue)';
+      const termLog = (emp.terminationLog || []);
+      const termHtml = termLog.length ? `
+        <div class="roster-term-log">
+          <div style="font-size:11px;font-weight:700;color:var(--g500);margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em">Termination History</div>
+          ${termLog.map(t=>`<div class="roster-term-entry">
+            <span style="font-weight:600;color:var(--g700)">${sanitize(t.date)}</span>
+            <span style="color:var(--g400);margin:0 6px">·</span>
+            <span style="color:var(--g600)">${sanitize(t.reason||'No reason provided')}</span>
+            ${t.by?`<span style="color:var(--g400);margin-left:6px;font-size:11px">by ${sanitize(t.by)}</span>`:''}
+          </div>`).join('')}
+        </div>` : '';
+
+      const actionBtn = isActive
+        ? `<button class="btn btn-ghost btn-sm" style="color:var(--red);border:1.5px solid var(--g200)" onclick="App.showInactivateForm('${emp.id}')">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> Inactivate
+           </button>`
+        : `<button class="btn btn-ghost btn-sm" style="color:var(--blue-d);border:1.5px solid var(--blue-m)" onclick="App.reactivateEmp('${emp.id}')">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg> Reactivate
+           </button>`;
+
+      return `<tr class="${isActive?'':'inactive-row'}" id="roster-row-${emp.id}">
+        <td>
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="roster-row-avatar" style="background:${isActive?col:'var(--g300)'}">${sanitize(emp.initials)}</div>
+            <div>
+              <div style="font-weight:600;color:${isActive?'var(--g900)':'var(--g500)'}">${sanitize(emp.name)}</div>
+              <div style="font-size:11px;color:var(--g400);margin-top:1px">${sanitize(emp.email||'')}</div>
+              ${termHtml}
+              <div id="inactivate-form-${emp.id}" style="display:none"></div>
+            </div>
+          </div>
+        </td>
+        <td><span style="display:flex;align-items:center;gap:5px">${G_ICONS[emp.group]||''}<span style="color:${isActive?col:'var(--g400)'};font-weight:500">${sanitize(emp.group)}</span></span></td>
+        <td>${sanitize(emp.phone||'—')}</td>
+        <td><span class="${isActive?'tag-active':'tag-inactive'}">${isActive?'Active':'Inactive'}</span></td>
+        <td style="text-align:right">${actionBtn}</td>
+      </tr>`;
+    };
+
+    const activeRows   = active.map(e => empRow(e, true)).join('');
+    const inactiveRows = inactive.map(e => empRow(e, false)).join('');
+
+    const tableHdr = `<tr>
+      <th>Employee</th><th>Position</th><th>Phone</th><th>Status</th><th></th>
+    </tr>`;
+
+    return `<div style="padding:20px;max-width:900px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div>
+          <div style="font-size:20px;font-weight:800;color:var(--g900)">Staff Roster</div>
+          <div style="font-size:13px;color:var(--g500);margin-top:2px">${sanitize(building?.name||'')} · ${active.length} active · ${inactive.length} inactive</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="App.openModal('modal-add-emp')">+ Add Employee</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.closeRoster()">← Back to Calendar</button>
+        </div>
+      </div>
+
+      <!-- ACTIVE -->
+      <div style="background:#fff;border:1.5px solid var(--g200);border-radius:12px;overflow:hidden;margin-bottom:16px">
+        <div style="padding:12px 16px;background:var(--g50);border-bottom:1px solid var(--g200);display:flex;align-items:center;justify-content:space-between">
+          <div style="font-size:13px;font-weight:800;color:var(--g900);text-transform:uppercase;letter-spacing:.06em">Active Staff</div>
+          <span class="tag-active">${active.length} employees</span>
+        </div>
+        <table class="roster-table">
+          <thead>${tableHdr}</thead>
+          <tbody>${activeRows || '<tr><td colspan="5" style="text-align:center;color:var(--g400);padding:20px">No active employees</td></tr>'}</tbody>
+        </table>
+      </div>
+
+      ${inactive.length ? `
+      <!-- INACTIVE -->
+      <div style="background:#fff;border:1.5px solid var(--g200);border-radius:12px;overflow:hidden">
+        <div style="padding:12px 16px;background:var(--g50);border-bottom:1px solid var(--g200);display:flex;align-items:center;justify-content:space-between">
+          <div style="font-size:13px;font-weight:800;color:var(--g500);text-transform:uppercase;letter-spacing:.06em">Inactive / Former Staff</div>
+          <span class="tag-inactive">${inactive.length} employees</span>
+        </div>
+        <table class="roster-table">
+          <thead>${tableHdr}</thead>
+          <tbody>${inactiveRows}</tbody>
+        </table>
+      </div>` : ''}
+    </div>`;
+  },
+
+  showInactivateForm(empId) {
+    const container = document.getElementById(`inactivate-form-${empId}`);
+    if (!container) return;
+    // Toggle — if already open, close it
+    if (container.style.display !== 'none') { container.style.display = 'none'; return; }
+    container.style.display = 'block';
+    container.innerHTML = `
+      <div class="inactivate-form">
+        <div style="font-size:12px;font-weight:700;color:var(--g700);margin-bottom:6px">Reason for inactivation</div>
+        <textarea id="term-reason-${empId}" rows="3" placeholder="e.g. Voluntary resignation, end of contract, performance..."
+          style="width:100%;padding:8px 10px;border:1.5px solid var(--g200);border-radius:6px;font-family:inherit;font-size:13px;resize:vertical;color:var(--g800)"></textarea>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn btn-sm" style="background:var(--red);color:#fff;flex:1" onclick="App.confirmInactivate('${empId}')">
+            Confirm Inactivation
+          </button>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('inactivate-form-${empId}').style.display='none'">Cancel</button>
+        </div>
+      </div>`;
+  },
+
+  confirmInactivate(empId) {
+    const emp = this.S.employees.find(e => e.id === empId);
+    if (!emp) return;
+    const reason = (document.getElementById(`term-reason-${empId}`)?.value || '').trim();
+    if (!reason) {
+      const ta = document.getElementById(`term-reason-${empId}`);
+      if (ta) { ta.style.borderColor = 'var(--red)'; ta.placeholder = 'Please enter a reason before confirming'; }
+      return;
+    }
+    if (!emp.terminationLog) emp.terminationLog = [];
+    emp.terminationLog.push({
+      date: new Date().toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'}),
+      reason,
+      by: this.S.user?.name || 'Admin'
+    });
+    emp.inactive = true;
+    Audit.log('EMP_INACTIVATED', `${sanitize(emp.name)} inactivated: ${sanitize(reason)}`, this.S.user?.id, 'high');
+    this.persistData();
+    this.showToast(`${sanitize(emp.name)} has been inactivated`, '');
+    this.renderMain();
+    this.renderSidebar();
+  },
+
+  reactivateEmp(empId) {
+    const emp = this.S.employees.find(e => e.id === empId);
+    if (!emp) return;
+    emp.inactive = false;
+    Audit.log('EMP_REACTIVATED', `${sanitize(emp.name)} reactivated`, this.S.user?.id, 'medium');
+    this.persistData();
+    this.showToast(`${sanitize(emp.name)} is now active again`, '');
+    this.renderMain();
+    this.renderSidebar();
+  },
+
+  recalcPPD() {
+    const census = parseFloat(document.getElementById('ppd-census')?.value) || 0;
+    const nmHrs  = parseFloat(document.getElementById('ppd-nm-hrs')?.value)  || 0;
+    const rnHrs  = parseFloat(document.getElementById('ppd-rn-hrs')?.value)  || 0;
+    const lpnHrs = parseFloat(document.getElementById('ppd-lpn-hrs')?.value) || 0;
+    const cnaHrs = parseFloat(document.getElementById('ppd-cna-hrs')?.value) || 0;
+    const cmaHrs = parseFloat(document.getElementById('ppd-cma-hrs')?.value) || 0;
+    const hkHrs  = parseFloat(document.getElementById('ppd-hk-hrs')?.value)  || 0;
+    const ldHrs  = parseFloat(document.getElementById('ppd-ld-hrs')?.value)  || 0;
+    const dtHrs  = parseFloat(document.getElementById('ppd-dt-hrs')?.value)  || 0;
+    this.S.ppdCensus = census;
+    const fmt = (h) => census > 0 ? (h/census).toFixed(2) : '—';
+    const nursingTotal = nmHrs + rnHrs + lpnHrs + cnaHrs + cmaHrs;
+    const combinedTotal = nursingTotal + hkHrs + ldHrs + dtHrs;
+    const set = (id, val, benchmark) => {
+      const el = document.getElementById(id); if (!el) return;
+      el.textContent = val;
+      if (benchmark !== undefined && census > 0) {
+        const num = parseFloat(val);
+        el.style.color = isNaN(num) ? 'var(--g600)' : num >= benchmark ? 'var(--blue-d)' : 'var(--g500)';
+        el.style.fontWeight = '700';
+      }
+    };
+    set('ppd-nm-result',  fmt(nmHrs));
+    set('ppd-rn-result',  fmt(rnHrs),  0.55);
+    set('ppd-lpn-result', fmt(lpnHrs));
+    set('ppd-cna-result', fmt(cnaHrs), 2.45);
+    set('ppd-cma-result', fmt(cmaHrs));
+    set('ppd-nursing-total', fmt(nursingTotal), 3.48);
+    set('ppd-hk-result',  fmt(hkHrs));
+    set('ppd-ld-result',  fmt(ldHrs));
+    set('ppd-dt-result',  fmt(dtHrs));
+    set('ppd-combined-total', fmt(combinedTotal));
+    const totalEl = document.getElementById('ppd-combined-total');
+    if (totalEl) { totalEl.style.fontSize='22px'; totalEl.style.fontWeight='800'; }
+    const nursingEl = document.getElementById('ppd-nursing-total');
+    if (nursingEl) { nursingEl.style.fontSize='16px'; nursingEl.style.fontWeight='800'; }
+  },
+
+  loadPPDDate() {
+    const date = document.getElementById('ppd-date')?.value || TODAY;
+    this.S.ppdDate = date;
+    const bId = this.S.user.buildingId || 'b1';
+    const dayShifts = this.S.shifts.filter(s => s.date === date && s.status === 'scheduled' && (s.buildingId===bId||!s.buildingId));
+    const hrsFor = (grp) => dayShifts.filter(s=>s.group===grp).length * 8;
+    const setField = (id, val) => { const el=document.getElementById(id); if(el) el.value=val; };
+    setField('ppd-nm-hrs',  hrsFor('Nurse Management'));
+    setField('ppd-lpn-hrs', hrsFor('Charge Nurse'));
+    setField('ppd-cna-hrs', hrsFor('CNA'));
+    setField('ppd-cma-hrs', hrsFor('CMA'));
+    setField('ppd-hk-hrs',  hrsFor('Housekeeping'));
+    setField('ppd-ld-hrs',  hrsFor('Laundry'));
+    setField('ppd-dt-hrs',  hrsFor('Cook') + hrsFor('Dietary Aid'));
+    this.recalcPPD();
+  },
+
+  // ── MAIN AREA ───────────────────────────────────────────────
+  renderMain() {
+    const u = this.S.user;
+
+    // ── EMPLOYEE: personal schedule view ────────────────────
+    if (u.role === 'employee') {
+      document.getElementById('main').innerHTML = this.renderMySchedule();
+      return;
+    }
+
+    // ── PPD CALCULATOR ───────────────────────────────────────
+    if (this.S.ppdView) {
+      document.getElementById('main').innerHTML = this.renderPPDCalc();
+      this.loadPPDDate();
+      return;
+    }
+
+    // ── ROSTER ───────────────────────────────────────────────
+    if (this.S.rosterView) {
+      document.getElementById('main').innerHTML = this.renderRoster();
+      return;
+    }
+
+    // ── ADMIN: standard calendar view ───────────────────────
+    const g = this.S.selectedGroup;
+    const isClinical = CLINICAL.includes(g);
+
+    let viewTabs = '';
+    if (u.role === 'admin') {
+      viewTabs = `<div class="view-tabs">
+        ${['month','day','shift'].map(v=>`<div class="view-tab ${this.S.calView===v?'active':''}" onclick="App.setCalView('${v}')">${v==='shift'?'Week':v.charAt(0).toUpperCase()+v.slice(1)}</div>`).join('')}
+      </div>`;
+    }
+    const groupPill = g ? `<div class="group-pill" style="background:${G_COLORS[g]}11;border:1.5px solid ${G_COLORS[g]}33;color:${G_COLORS[g]}">${G_ICONS[g]} ${g}</div>` : '';
+    const filterTabs = `<div class="filter-tabs" style="margin-left:auto">
+      <div class="filter-tab ${this.S.filter==='scheduled'?'active scheduled':''}" onclick="App.setFilter('scheduled')">All Shifts</div>
+      <div class="filter-tab ${this.S.filter==='open'?'active open':''}" onclick="App.setFilter('open')">Open Only</div>
+    </div>`;
+
+    const bId = u.buildingId || 'b1';
+    const ms = this.getMonthShifts().filter(s=>s.buildingId===bId||!s.buildingId);
+    const open = ms.filter(s=>s.status==='open').length;
+    const sched = ms.filter(s=>s.status==='scheduled').length;
+    const pct = sched+open > 0 ? Math.round(sched/(sched+open)*100) : 0;
+    const stats = `<div class="stat-row">
+      <div class="stat-card"><div class="stat-value">${sched}</div><div class="stat-label">Scheduled Shifts</div><div class="stat-change" style="color:var(--blue)">↑ ${pct}% coverage</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:var(--g600)">${open}</div><div class="stat-label">Open Shifts</div><div class="stat-change" style="color:var(--g500)">Need coverage</div></div>
+      <div class="stat-card"><div class="stat-value">${this.S.employees.filter(e=>e.buildingId===(u.buildingId||'b1')&&!e.inactive).length}</div><div class="stat-label">Total Staff</div><div class="stat-change" style="color:var(--g400)">${DISPLAY_GROUPS.length} departments</div></div>
+    </div>`;
+
+    let calHtml = '';
+    if (this.S.calView === 'month') calHtml = this.renderMonthCal();
+    else if (this.S.calView === 'day') calHtml = this.renderDayView();
+    else calHtml = this.renderShiftView();
+
+    document.getElementById('main').innerHTML = `${stats}
+      <div class="cal-toolbar">${viewTabs}${groupPill}${filterTabs}</div>${calHtml}`;
+  },
+
+  // ── PPD CALCULATOR ──────────────────────────────────────────
+  renderPPDCalc() {
+    const bId = this.S.user.buildingId || 'b1';
+    const building = this.S.buildings.find(b=>b.id===bId);
+    const census = this.S.ppdCensus || '';
+    const date = this.S.ppdDate || TODAY;
+    const dayShifts = this.S.shifts.filter(s => s.date===date && s.status==='scheduled' && (s.buildingId===bId||!s.buildingId));
+    const hrsFor = (grp) => dayShifts.filter(s=>s.group===grp).length * 8;
+    const nmHrs  = hrsFor('Nurse Management');
+    const lpnHrs = hrsFor('Charge Nurse');
+    const cnaHrs = hrsFor('CNA');
+    const cmaHrs = hrsFor('CMA');
+    const hkHrs  = hrsFor('Housekeeping');
+    const ldHrs  = hrsFor('Laundry');
+    const dtHrs  = hrsFor('Cook') + hrsFor('Dietary Aid');
+
+    const row = (id, label, hrs, benchmark, note='') => `
+      <tr>
+        <td style="padding:11px 14px;font-size:13px;font-weight:600;color:var(--g800)">${label}${note?`<div style="font-size:10px;font-weight:400;color:var(--g400);margin-top:1px">${note}</div>`:''}</td>
+        <td style="padding:11px 14px;text-align:center">
+          <input id="ppd-${id}-hrs" type="number" min="0" step="0.5" value="${hrs}"
+            oninput="App.recalcPPD()"
+            style="width:70px;padding:5px 8px;border:1.5px solid var(--g200);border-radius:6px;font-size:13px;font-weight:600;text-align:center;color:var(--g800)">
+        </td>
+        <td style="padding:11px 14px;text-align:center;font-size:15px;font-weight:700;color:var(--g600)" id="ppd-${id}-result">—</td>
+        ${benchmark!==undefined ? `<td style="padding:11px 14px;text-align:center;font-size:11px;color:var(--g400)">≥ ${benchmark}</td>` : '<td></td>'}
+      </tr>`;
+
+    return `<div style="padding:20px;max-width:760px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div>
+          <div style="font-size:20px;font-weight:800;color:var(--g900)">PPD Calculator</div>
+          <div style="font-size:13px;color:var(--g500);margin-top:2px">${sanitize(building?.name||'')} · Per Patient Day staffing analysis</div>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="App.closePPDCalc()">← Back to Calendar</button>
+      </div>
+
+      <div style="display:flex;align-items:flex-end;gap:16px;background:var(--g50);border:1.5px solid var(--g200);border-radius:12px;padding:16px;margin-bottom:20px">
+        <div>
+          <label style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Census (Residents)</label>
+          <input id="ppd-census" type="number" min="1" max="500" value="${census}" placeholder="e.g. 80"
+            oninput="App.recalcPPD()"
+            style="width:120px;padding:9px 12px;border:1.5px solid var(--g300);border-radius:8px;font-size:18px;font-weight:800;color:var(--g900);text-align:center">
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Date</label>
+          <input id="ppd-date" type="date" value="${date}" onchange="App.loadPPDDate()"
+            style="padding:9px 12px;border:1.5px solid var(--g300);border-radius:8px;font-size:13px;font-weight:600;color:var(--g800)">
+        </div>
+        <div style="font-size:12px;color:var(--g400);padding-bottom:10px">Hours auto-filled from<br>scheduled shifts · editable</div>
+      </div>
+
+      <!-- NURSING -->
+      <div style="background:#fff;border:1.5px solid var(--g200);border-radius:12px;overflow:hidden;margin-bottom:16px">
+        <div style="padding:12px 16px;background:var(--g50);border-bottom:1px solid var(--g200);display:flex;align-items:center;justify-content:space-between">
+          <div style="font-size:13px;font-weight:800;color:var(--g900);text-transform:uppercase;letter-spacing:.06em">Nursing Department</div>
+          <div style="font-size:11px;color:var(--g400)">CMS minimum benchmarks shown</div>
+        </div>
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr style="border-bottom:1px solid var(--g100)">
+            <th style="padding:8px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase">Position</th>
+            <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase">Hours / Day</th>
+            <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase">PPD</th>
+            <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase">Min.</th>
+          </tr></thead>
+          <tbody style="divide-y:var(--g100)">
+            ${row('nm',  'Nurse Management', nmHrs, undefined, 'From scheduled Nurse Management shifts')}
+            ${row('rn',  'RN', 0, 0.55, 'Enter manually')}
+            ${row('lpn', 'LPN / Charge Nurse', lpnHrs, undefined, 'From scheduled Charge Nurse shifts')}
+            ${row('cna', 'CNA', cnaHrs, 2.45, 'From scheduled CNA shifts')}
+            ${row('cma', 'CMA', cmaHrs, undefined, 'From scheduled CMA shifts')}
+          </tbody>
+          <tfoot>
+            <tr style="background:var(--blue-l);border-top:2px solid var(--blue-m)">
+              <td style="padding:13px 14px;font-size:13px;font-weight:800;color:var(--blue-d)">Total Nursing PPD</td>
+              <td></td>
+              <td style="padding:13px 14px;text-align:center;font-size:16px;font-weight:800;color:var(--blue-d)" id="ppd-nursing-total">—</td>
+              <td style="padding:13px 14px;text-align:center;font-size:11px;color:var(--g500)">≥ 3.48</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <!-- SUPPORT -->
+      <div style="background:#fff;border:1.5px solid var(--g200);border-radius:12px;overflow:hidden;margin-bottom:16px">
+        <div style="padding:12px 16px;background:var(--g50);border-bottom:1px solid var(--g200)">
+          <div style="font-size:13px;font-weight:800;color:var(--g900);text-transform:uppercase;letter-spacing:.06em">Support Departments</div>
+        </div>
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr style="border-bottom:1px solid var(--g100)">
+            <th style="padding:8px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase">Department</th>
+            <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase">Hours / Day</th>
+            <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase">PPD</th>
+            <th></th>
+          </tr></thead>
+          <tbody>
+            ${row('hk', 'Housekeeping', hkHrs)}
+            ${row('ld', 'Laundry',      ldHrs)}
+            ${row('dt', 'Dietary',      dtHrs, undefined, 'Cook + Dietary Aid shifts combined')}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- COMBINED TOTAL -->
+      <div style="background:var(--blue-l);border:2px solid var(--blue-m);border-radius:12px;padding:20px;display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--blue-d);text-transform:uppercase;letter-spacing:.06em">Total Combined Staffing PPD</div>
+          <div style="font-size:12px;color:var(--g500);margin-top:3px">All nursing + all support departments</div>
+        </div>
+        <div id="ppd-combined-total" style="font-size:28px;font-weight:800;color:var(--blue-d)">—</div>
+      </div>
+    </div>`;
+  },
+
+  // ── MY SCHEDULE (Employee view) ──────────────────────────────
+  renderMySchedule() {
+    const u = this.S.user;
+    const {viewYear, viewMonth} = this.S;
+    const col = G_COLORS[u.group] || 'var(--blue)';
+    const shiftTypes = SHIFT_TYPES(u.group);
+    const monthKey = `${viewYear}-${String(viewMonth+1).padStart(2,'0')}`;
+    const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+    const isMyView = !this.S.empView || this.S.empView === 'my';
+
+    if (!isMyView) {
+      // ── Available Open Shifts ────────────────────────────
+      const openShifts = this.S.shifts.filter(s =>
+        s.status === 'open' && s.group === u.group && s.buildingId === (u.buildingId||'b1')
+      ).sort((a,b) => a.date.localeCompare(b.date));
+
+      let rows = '';
+      if (!openShifts.length) {
+        rows = `<div class="empty-state"><div class="empty-icon"><svg viewBox="0 0 32 32" width="36" height="36" fill="none" stroke="var(--blue)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="16" cy="16" r="13"/><polyline points="10,16 14,20 22,12"/></svg></div><div style="font-weight:700;color:var(--g700)">No Open Shifts</div><div style="font-size:13px;color:var(--g400)">All shifts are covered right now.</div></div>`;
+      } else {
+        openShifts.forEach(slot => {
+          const d = new Date(slot.date+'T12:00:00');
+          const dl = d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+          const isPast = slot.date < TODAY;
+          const sh = shiftTypes.find(s=>s.type===slot.type);
+          rows += `<div style="display:flex;align-items:center;gap:14px;padding:14px 16px;border-bottom:1px solid var(--g100)${isPast?';opacity:.45':''}">
+            <div style="min-width:90px">
+              <div style="font-weight:700;font-size:13px;color:var(--g900)">${dl}</div>
+              <div style="font-size:11px;color:var(--g400)">${slot.date < TODAY ? 'Past' : slot.date === TODAY ? 'Today' : ''}</div>
+            </div>
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:13px;color:var(--g800)">${slot.type} Shift</div>
+              <div style="font-size:12px;color:var(--g500)">${sh ? sh.start+'–'+sh.end : ''}</div>
+            </div>
+            ${!isPast ? `<button class="btn btn-primary btn-sm" onclick="App.confirmClaim('${slot.id}')">Claim Shift</button>` : '<span style="font-size:12px;color:var(--g400)">Expired</span>'}
+          </div>`;
+        });
+      }
+
+      return `<div style="padding:0 0 16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 16px 12px">
+          <div>
+            <div style="font-size:18px;font-weight:800;color:var(--g900)">Available Shifts</div>
+            <div style="font-size:13px;color:var(--g500);margin-top:2px">${sanitize(u.group)} openings at your facility</div>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="App.setEmpView('my')">← My Schedule</button>
+        </div>
+        <div class="cal-grid" style="overflow:hidden">${rows}</div>
+      </div>`;
+    }
+
+    // ── My Schedule: personal month calendar ─────────────────
+    const firstDay = new Date(viewYear, viewMonth, 1).getDay();
+    const daysInMonth = new Date(viewYear, viewMonth+1, 0).getDate();
+    const prevDays = new Date(viewYear, viewMonth, 0).getDate();
+
+    // My shifts this month
+    const myShifts = this.S.shifts.filter(s => s.employeeId === u.id && s.date.startsWith(monthKey));
+    const myShiftDates = {};
+    myShifts.forEach(s => { myShiftDates[s.date] = s; });
+
+    let cells = '';
+    for (let i=firstDay-1;i>=0;i--) {
+      cells += `<div class="cal-cell other-month"><div class="cal-date">${prevDays-i}</div></div>`;
+    }
+    for (let d=1;d<=daysInMonth;d++) {
+      const ds = `${viewYear}-${String(viewMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const isToday = ds === TODAY;
+      const shift = myShiftDates[ds];
+      const sh = shift ? shiftTypes.find(s=>s.type===shift.type) : null;
+      cells += `<div class="cal-cell ${isToday?'today':''} ${shift?'selected':''}" style="cursor:${shift?'pointer':'default'}" ${shift?`onclick="App.empSelectDay('${ds}')"`:''}}>
+        <div class="cal-date">${d}</div>
+        ${shift ? `<div style="margin-top:4px"><div style="font-size:10px;font-weight:700;color:${col};background:${col}18;border-radius:4px;padding:2px 5px;display:inline-block">${shift.type}</div>${sh?`<div style="font-size:10px;color:var(--g500);margin-top:2px">${sh.start}</div>`:''}</div>` : ''}
+      </div>`;
+    }
+    const total = Math.ceil((firstDay+daysInMonth)/7)*7;
+    for (let i=1;i<=total-(firstDay+daysInMonth);i++) {
+      cells += `<div class="cal-cell other-month"><div class="cal-date">${i}</div></div>`;
+    }
+
+    // Upcoming shifts list (next 5)
+    const upcoming = this.S.shifts.filter(s => s.employeeId===u.id && s.date >= TODAY)
+      .sort((a,b)=>a.date.localeCompare(b.date)).slice(0,5);
+    let upcomingRows = upcoming.length ? upcoming.map(s => {
+      const d = new Date(s.date+'T12:00:00');
+      const dl = d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+      const sh = shiftTypes.find(x=>x.type===s.type);
+      const isToday = s.date===TODAY;
+      return `<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--g100)">
+        <div style="width:8px;height:8px;border-radius:50%;background:${isToday?'var(--blue)':'var(--g300)'};flex-shrink:0"></div>
+        <div style="flex:1">
+          <div style="font-weight:700;font-size:13px;color:var(--g900)">${dl}${isToday?' <span style="font-size:11px;color:var(--blue);font-weight:600">· Today</span>':''}</div>
+          <div style="font-size:12px;color:var(--g500)">${s.type}${sh?' · '+sh.start+'–'+sh.end:''}</div>
+        </div>
+      </div>`;
+    }).join('') : `<div style="font-size:13px;color:var(--g400);padding:12px 0">No upcoming shifts scheduled.</div>`;
+
+    return `<div style="padding:0 0 16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 16px 12px">
+        <div>
+          <div style="font-size:18px;font-weight:800;color:var(--g900)">My Schedule</div>
+          <div style="font-size:13px;color:var(--g500);margin-top:2px">${myShifts.length} shifts in ${MONTH_NAMES[viewMonth]}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="btn btn-secondary btn-sm" onclick="App.navMonth(-1)">‹</button>
+          <span style="font-size:14px;font-weight:700">${MONTH_NAMES[viewMonth]} ${viewYear}</span>
+          <button class="btn btn-secondary btn-sm" onclick="App.navMonth(1)">›</button>
+        </div>
+      </div>
+      <div class="cal-grid" style="margin-bottom:20px">
+        <div class="cal-header-row">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cal-dow">${d}</div>`).join('')}</div>
+        <div class="cal-days">${cells}</div>
+      </div>
+      <div style="padding:0 16px">
+        <div style="font-size:13px;font-weight:700;color:var(--g700);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">Upcoming Shifts</div>
+        ${upcomingRows}
+      </div>
+    </div>`;
+  },
+
+  empSelectDay(dateStr) {
+    // Show a simple shift detail for the employee's own shift on that day
+    const u = this.S.user;
+    const shift = this.S.shifts.find(s => s.employeeId === u.id && s.date === dateStr);
+    if (!shift) return;
+    const d = new Date(dateStr+'T12:00:00');
+    const dl = d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+    const shiftTypes = SHIFT_TYPES(u.group);
+    const sh = shiftTypes.find(s=>s.type===shift.type);
+    const col = G_COLORS[u.group] || 'var(--blue)';
+    this.S.panelOpen = true;
+    document.getElementById('main').classList.add('panel-open');
+    document.getElementById('right-panel').classList.add('open');
+    document.getElementById('rp-content').innerHTML = `
+      <div class="rp-header">
+        <div><div class="rp-title">${dl}</div><div class="rp-sub">My Shift</div></div>
+        <button class="rp-close" onclick="App.closePanel()">✕</button>
+      </div>
+      <div class="rp-body">
+        <div class="shift-block">
+          <div class="shift-block-header">
+            <div class="shift-time"><span class="shift-type-badge badge-${shift.type.toLowerCase()}">${shift.type}</span><span style="font-size:12px;color:var(--g500);font-weight:400">${sh?sh.start+'–'+sh.end:''}</span></div>
+          </div>
+          <div class="emp-slot">
+            <div class="emp-slot-avatar" style="background:${col}">${sanitize(u.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase())}</div>
+            <div style="flex:1"><div class="emp-slot-name">${sanitize(u.name)}</div><div style="font-size:11px;color:var(--g400)">${sanitize(u.group)}</div></div>
+          </div>
+        </div>
+      </div>`;
+  },
+
+  // ── MONTH CALENDAR ──────────────────────────────────────────
+  renderMonthCal() {
+    const {viewYear,viewMonth,selectedDate,filter} = this.S;
+    const firstDay = new Date(viewYear,viewMonth,1).getDay();
+    const daysInMonth = new Date(viewYear,viewMonth+1,0).getDate();
+    const prevDays = new Date(viewYear,viewMonth,0).getDate();
+
+    let cells = '';
+    for (let i=firstDay-1;i>=0;i--) {
+      cells += `<div class="cal-cell other-month"><div class="cal-date">${prevDays-i}</div></div>`;
+    }
+    for (let d=1;d<=daysInMonth;d++) {
+      const ds = `${viewYear}-${String(viewMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const isToday = ds === TODAY;
+      const isSel = ds === selectedDate;
+      const dayShifts = this.getDayShifts(ds);
+      const open = dayShifts.filter(s=>s.status==='open');
+      const sched = dayShifts.filter(s=>s.status==='scheduled');
+      const g = this.S.selectedGroup;
+
+      let content = '';
+      if (g) {
+        const ag = getActualGroups(g);
+        const shiftDefs = SHIFT_TYPES(g);
+        shiftDefs.forEach(sh => {
+          const slots = dayShifts.filter(s=>ag.includes(s.group)&&s.type===sh.type);
+          slots.forEach(slot => {
+            if (filter==='open'&&slot.status==='scheduled') return;
+            // filter==='scheduled' shows ALL shifts (open + filled)
+            if (slot.status==='open') {
+              content += `<div class="shift-row"><span class="shift-label">${sh.type.slice(0,3)}</span><span class="shift-open-tag">OPEN</span></div>`;
+            } else {
+              const emp = this.S.employees.find(e=>e.id===slot.employeeId);
+              if (emp) content += `<div class="shift-row"><span class="shift-label">${sh.type.slice(0,3)}</span><span class="shift-emp">${emp.initials}</span></div>`;
+            }
+          });
+        });
+        if (!content) content = `<div style="font-size:11px;color:var(--g300)">${filter==='open'?'No open':'All covered'}</div>`;
+      } else {
+        content = `<div class="cal-summary">
+          ${sched.length?`<div class="cal-chip sched"><svg viewBox="0 0 10 10" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1,5 4,8 9,2"/></svg> ${sched.length}</div>`:''}
+          ${open.length?`<div class="cal-chip open"><svg viewBox="0 0 10 10" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="5" r="4"/><line x1="5" y1="3.5" x2="5" y2="5.5"/><circle cx="5" cy="7" r=".5" fill="currentColor"/></svg> ${open.length}</div>`:''}
+        </div>`;
+      }
+      cells += `<div class="cal-cell ${isToday?'today':''} ${isSel?'selected':''} ${open.length&&!isSel?'has-open':''}" onclick="App.selectDay('${ds}')">
+        <div class="cal-date">${d}</div>${content}</div>`;
+    }
+    const total = Math.ceil((firstDay+daysInMonth)/7)*7;
+    for (let i=1;i<=total-(firstDay+daysInMonth);i++) {
+      cells += `<div class="cal-cell other-month"><div class="cal-date">${i}</div></div>`;
+    }
+    return `<div class="cal-grid">
+      <div class="cal-month-banner">
+        <div class="cal-month-title">${MONTHS[viewMonth]} ${viewYear}</div>
+        <div class="cal-month-nav">
+          <button class="cal-month-btn" onclick="App.navMonth(-1)" title="Previous month">&#8249;</button>
+          <button class="cal-month-btn" onclick="App.goToToday()" title="Today" style="font-size:11px;font-weight:700;width:auto;padding:0 8px">Today</button>
+          <button class="cal-month-btn" onclick="App.navMonth(1)" title="Next month">&#8250;</button>
+        </div>
+      </div>
+      <div class="cal-header-row">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cal-dow">${d}</div>`).join('')}</div>
+      <div class="cal-days">${cells}</div>
+    </div>`;
+  },
+
+  // ── DAY VIEW ────────────────────────────────────────────────
+  renderDayView() {
+    const date = this.S.selectedDate || TODAY;
+    const dayShifts = this.getDayShifts(date);
+    const d = new Date(date+'T12:00:00');
+    const label = d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
+    const colStyle = `grid-template-columns:100px repeat(3,1fr)`;
+    const grps = ['Charge Nurse','CNA','CMA'];
+
+    let hdr = `<div style="padding:12px 16px;background:var(--g50);font-size:12px;font-weight:700;color:var(--g400)">SHIFT</div>`;
+    grps.forEach(g => hdr += `<div style="padding:12px 16px;border-left:3px solid ${G_COLORS[g]};background:${G_COLORS[g]}09;font-weight:700;font-size:13px;color:${G_COLORS[g]}">${G_ICONS[g]} ${g}</div>`);
+
+    let rows = '';
+    CLINICAL_SHIFTS.forEach(sh => {
+      let row = `<div style="padding:12px 16px;background:var(--g50)"><div style="font-size:12px;font-weight:700;color:var(--g700)">${sh.type}</div><div style="font-size:11px;color:var(--g400)">${sh.start}–${sh.end}</div></div>`;
+      grps.forEach(g => {
+        const slots = dayShifts.filter(s=>s.group===g&&s.type===sh.type);
+        let cell = '';
+        slots.forEach(slot => {
+          if (slot.status==='open') {
+            const opts = this.S.employees.filter(e=>e.group===g&&!e.inactive).map(e=>`<option value="${e.id}">${sanitize(e.name)}</option>`).join('');
+            cell += `<div class="emp-slot-open" style="margin-bottom:4px"><span class="emp-slot-open-label">OPEN</span><select class="assign-select" onchange="App.assignShift('${slot.id}',this.value)"><option value="">Assign...</option>${opts}</select></div>`;
+          } else {
+            const emp = this.S.employees.find(e=>e.id===slot.employeeId);
+            if (emp) cell += `<div class="emp-slot" style="margin-bottom:4px"><div class="emp-slot-avatar" style="background:${G_COLORS[g]}">${sanitize(emp.initials)}</div><span style="font-size:12px;font-weight:600">${sanitize(emp.name)}</span></div>`;
+          }
+        });
+        row += `<div style="padding:12px">${cell||'<span style="font-size:11px;color:var(--g300)">—</span>'}</div>`;
+      });
+      rows += `<div style="display:grid;${colStyle};border-bottom:1px solid var(--g100)">${row}</div>`;
+    });
+
+    return `<div style="margin-bottom:12px;display:flex;align-items:center;gap:12px">
+        <div style="font-size:16px;font-weight:700">${label}</div>
+        <button class="btn btn-secondary btn-sm" onclick="App.navDay(-1)">&#8249; Prev</button>
+        <button class="btn btn-secondary btn-sm" onclick="App.navDay(1)">Next &#8250;</button>
+      </div>
+      <div class="cal-grid" style="overflow:hidden">
+        <div style="display:grid;${colStyle};border-bottom:1px solid var(--g200)">${hdr}</div>
+        ${rows}
+      </div>`;
+  },
+
+  // ── 14-DAY WEEK VIEW ────────────────────────────────────────
+  renderShiftView() {
+    const g = this.S.selectedGroup;
+    const filter = this.S.filter;
+    const actualGroups = getActualGroups(g);
+    const shiftDefs = SHIFT_TYPES(g);
+    const col = G_COLORS[g] || 'var(--blue)';
+    const u = this.S.user;
+    const bId = u.buildingId || 'b1';
+
+    // Determine start of 14-day window — default to Monday of current week
+    let startDate;
+    if (this.S.week14Start) {
+      startDate = new Date(this.S.week14Start+'T12:00:00');
+    } else {
+      startDate = new Date(TODAY+'T12:00:00');
+      const dow = startDate.getDay();
+      startDate.setDate(startDate.getDate() - (dow===0?6:dow-1)); // back to Monday
+      this.S.week14Start = startDate.toISOString().slice(0,10);
+    }
+
+    // Build array of 14 date strings
+    const dates = [];
+    for (let i=0;i<14;i++) {
+      const d = new Date(startDate);
+      d.setDate(d.getDate()+i);
+      dates.push(d.toISOString().slice(0,10));
+    }
+
+    const weekLabel = (start, end) => {
+      const s = new Date(start+'T12:00:00');
+      const e = new Date(end+'T12:00:00');
+      return s.toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' – ' +
+             e.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+    };
+
+    const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+    const renderCell = (ds) => {
+      const d = new Date(ds+'T12:00:00');
+      const dayShifts = this.S.shifts.filter(s=>s.date===ds&&actualGroups.includes(s.group)&&(s.buildingId===bId||!s.buildingId));
+      const isToday = ds===TODAY;
+      const isSel = ds===this.S.selectedDate;
+      const hasOpen = dayShifts.some(s=>s.status==='open');
+      let content = '';
+      shiftDefs.forEach(sh => {
+        const slots = dayShifts.filter(s=>s.type===sh.type);
+        slots.forEach(slot => {
+          if (filter==='open'&&slot.status==='scheduled') return;
+          if (slot.status==='open') {
+            content += `<div class="shift-row"><span class="shift-label">${sh.type.slice(0,3)}</span><span class="shift-open-tag">OPEN</span></div>`;
+          } else {
+            const emp = this.S.employees.find(e=>e.id===slot.employeeId);
+            if (emp) content += `<div class="shift-row"><span class="shift-label">${sh.type.slice(0,3)}</span><span class="shift-emp">${sanitize(emp.initials)}</span></div>`;
+          }
+        });
+      });
+      if (!content) content = `<div style="font-size:10px;color:var(--g300);margin-top:4px">${filter==='open'?'No open':'Covered'}</div>`;
+      const cls = `week14-cell${isToday?' today':''}${isSel?' selected':''}${hasOpen&&!isSel?' has-open':''}`;
+      return `<div class="${cls}" onclick="App.selectDay('${ds}')">
+        <div class="week14-date">${DOW[d.getDay()]} ${d.getDate()}</div>
+        ${content}
+      </div>`;
+    };
+
+    const week1 = dates.slice(0,7);
+    const week2 = dates.slice(7,14);
+
+    const openTotal = dates.reduce((n,ds)=>{
+      return n + this.S.shifts.filter(s=>s.date===ds&&actualGroups.includes(s.group)&&s.status==='open'&&(s.buildingId===bId||!s.buildingId)).length;
+    },0);
+
+    return `<div class="week14-grid">
+      <div class="week14-nav">
+        <button class="cal-month-btn" onclick="App.navWeek14(-1)" style="width:28px">&#8249;</button>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:13px;font-weight:700;color:var(--g700)">14-Day Rotation View</span>
+          <span style="font-size:12px;color:var(--g400)">${weekLabel(dates[0],dates[13])}</span>
+          ${openTotal>0?`<span style="background:var(--blue-l);color:var(--blue-d);border:1px solid var(--blue-m);border-radius:10px;font-size:11px;font-weight:600;padding:1px 8px">${openTotal} open</span>`:''}
+        </div>
+        <button class="cal-month-btn" onclick="App.navWeek14(1)" style="width:28px">&#8250;</button>
+      </div>
+      <div class="week14-week-hdr">
+        <span class="week14-week-label">Week 1</span>
+        <span style="font-size:12px;color:var(--blue-d)">${weekLabel(dates[0],dates[6])}</span>
+      </div>
+      <div class="week14-row">${week1.map(renderCell).join('')}</div>
+      <div class="week14-week-hdr" style="border-top:2px solid var(--blue-m)">
+        <span class="week14-week-label">Week 2</span>
+        <span style="font-size:12px;color:var(--blue-d)">${weekLabel(dates[7],dates[13])}</span>
+      </div>
+      <div class="week14-row">${week2.map(renderCell).join('')}</div>
+    </div>`;
+  },
+
+  // ── RIGHT PANEL ─────────────────────────────────────────────
+  selectDay(dateStr) {
+    this.S.selectedDate = dateStr;
+    if (this.S.calView === 'month' || this.S.calView === 'shift') this.openPanel(dateStr);
+    this.renderMain();
+  },
+
+  openPanel(dateStr) {
+    this.S.panelOpen = true;
+    this.S.selectedDate = dateStr;
+    document.getElementById('main').classList.add('panel-open');
+    document.getElementById('right-panel').classList.add('open');
+    this.renderPanel(dateStr);
+  },
+
+  closePanel() {
+    this.S.panelOpen = false;
+    this.S.selectedDate = null;
+    document.getElementById('main').classList.remove('panel-open');
+    document.getElementById('right-panel').classList.remove('open');
+    this.renderMain();
+  },
+
+  renderPanel(dateStr) {
+    const d = new Date(dateStr+'T12:00:00');
+    const u = this.S.user;
+    const g = this.S.selectedGroup;
+    const dayShifts = this.getDayShifts(dateStr);
+    const groups = g ? getActualGroups(g) : (u.role==='admin' ? GROUPS : [u.group]);
+
+    let blocksHtml = '';
+    groups.forEach(grp => {
+      SHIFT_TYPES(grp).forEach(sh => {
+        const slots = dayShifts.filter(s=>s.group===grp&&s.type===sh.type);
+        if (!slots.length) return;
+        let slotsHtml = '';
+        slots.forEach(slot => {
+          if (slot.status==='open') {
+            if (u.role==='admin') {
+              const opts = this.S.employees.filter(e=>e.group===grp&&!e.inactive).map(e=>`<option value="${e.id}">${sanitize(e.name)}</option>`).join('');
+              slotsHtml += `<div class="emp-slot-open"><span class="emp-slot-open-label" style="display:flex;align-items:center;gap:4px"><svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 1L1 13h12z"/><line x1="7" y1="6" x2="7" y2="9"/></svg>OPEN</span><select class="assign-select" onchange="App.assignShift('${slot.id}',this.value)"><option value="">Assign to...</option>${opts}</select></div>`;
+            } else if (!u.group || u.group === grp) {
+              slotsHtml += `<div class="emp-slot-open"><span class="emp-slot-open-label" style="display:flex;align-items:center;gap:4px"><svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 1L1 13h12z"/><line x1="7" y1="6" x2="7" y2="9"/></svg>OPEN SHIFT</span><button class="btn-claim-sm" onclick="App.confirmClaim('${slot.id}')">Claim</button></div>`;
+            }
+          } else {
+            const emp = this.S.employees.find(e=>e.id===slot.employeeId);
+            if (emp) slotsHtml += `<div class="emp-slot">
+              <div class="emp-slot-avatar" style="background:${G_COLORS[grp]}">${sanitize(emp.initials)}</div>
+              <div style="flex:1"><div class="emp-slot-name">${sanitize(emp.name)}</div><div style="font-size:11px;color:var(--g400)">${sanitize(grp)}</div></div>
+              ${u.role==='admin'?`<button class="btn btn-ghost btn-sm" onclick="App.removeEmpFromShift('${slot.id}')" style="color:var(--red);padding:4px 6px">✕</button>`:''}
+            </div>`;
+          }
+        });
+        blocksHtml += `<div class="shift-block">
+          <div class="shift-block-header">
+            <div class="shift-time">${groups.length>1?`<span>${G_ICONS[grp]}</span>`:''}<span class="shift-type-badge badge-${sh.type.toLowerCase()}">${sh.type}</span><span style="font-size:12px;color:var(--g500);font-weight:400">${sh.start}–${sh.end}</span></div>
+          </div>${slotsHtml}</div>`;
+      });
+    });
+
+    document.getElementById('rp-content').innerHTML = `
+      <div class="rp-header">
+        <div><div class="rp-title">${d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})}</div>
+        <div class="rp-sub">${d.getFullYear()} · ${g||'All Departments'}</div></div>
+        <button class="rp-close" onclick="App.closePanel()">✕</button>
+      </div>
+      <div class="rp-body">${blocksHtml||'<div class="empty-state"><div class="empty-icon"><svg viewBox="0 0 32 32" width="36" height="36" fill="none" stroke="var(--blue)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="6" width="24" height="22" rx="2.5"/><path d="M10 3v6M22 3v6M4 14h24"/><rect x="10" y="18" width="4" height="4" rx="0.5" fill="var(--blue)" stroke="none"/><rect x="18" y="18" width="4" height="4" rx="0.5" fill="var(--blue)" stroke="none"/></svg></div><div class="empty-text">No shifts found</div></div>'}</div>`;
+  },
+
+  // ── PATTERN BUILDER ─────────────────────────────────────────
+  openPatternForEmp(empId) {
+    this.S.patPattern = [1,1,0,0];
+    this.S.patDuration = 1;
+    this.S.patPreset = null;
+    const patStartEl = document.getElementById('pat-start');
+    if (patStartEl) patStartEl.value = TODAY;
+    const emp = this.S.employees.find(e=>e.id===empId);
+    const sel = document.getElementById('pat-emp');
+    const allEmps = this.S.employees.filter(e=>e.buildingId===(this.S.user.buildingId||'b1'));
+    sel.innerHTML = allEmps.map(e=>`<option value="${e.id}" ${e.id===empId?'selected':''}>${sanitize(e.name)} (${sanitize(e.group)})</option>`).join('');
+
+    const shiftSel = document.getElementById('pat-shift');
+    shiftSel.innerHTML = '';
+    if (emp) {
+      SHIFT_TYPES(emp.group).forEach(sh => {
+        const opt = document.createElement('option');
+        opt.value = sh.type; opt.textContent = `${sh.type} (${sh.start} – ${sh.end})`;
+        shiftSel.appendChild(opt);
+      });
+    }
+    sel.onchange = () => {
+      const e2 = this.S.employees.find(x=>x.id===sel.value);
+      if (!e2) return;
+      shiftSel.innerHTML = SHIFT_TYPES(e2.group).map(sh=>`<option value="${sh.type}">${sh.type} (${sh.start} – ${sh.end})</option>`).join('');
+    };
+    this.openModal('modal-pattern');
+    this.renderPatternTiles();
+    this.renderPatternPreview();
+  },
+
+  openPatternModal() {
+    this.S.patPattern = [1,1,0,0];
+    this.S.patDuration = 1;
+    const patStartEl = document.getElementById('pat-start');
+    if (patStartEl) patStartEl.value = TODAY;
+    const allEmps = this.S.employees.filter(e=>e.buildingId===(this.S.user.buildingId||'b1'));
+    const sel = document.getElementById('pat-emp');
+    sel.innerHTML = allEmps.map(e=>`<option value="${e.id}">${sanitize(e.name)} (${sanitize(e.group)})</option>`).join('');
+    const first = allEmps[0];
+    const shiftSel = document.getElementById('pat-shift');
+    if (first) shiftSel.innerHTML = SHIFT_TYPES(first.group).map(sh=>`<option value="${sh.type}">${sh.type} (${sh.start} – ${sh.end})</option>`).join('');
+    sel.onchange = () => {
+      const e2 = this.S.employees.find(x=>x.id===sel.value);
+      if (!e2) return;
+      shiftSel.innerHTML = SHIFT_TYPES(e2.group).map(sh=>`<option value="${sh.type}">${sh.type} (${sh.start} – ${sh.end})</option>`).join('');
+    };
+    this.openModal('modal-pattern');
+    this.renderPatternTiles();
+    this.renderPatternPreview();
+  },
+
+  applyPreset(name) {
+    this.S.patPattern = [...PRESETS[name]];
+    this.S.patPreset = name;
+    document.querySelectorAll('.preset-btn').forEach(b => b.classList.toggle('active', b.textContent.includes(name)||b.getAttribute('onclick').includes(name)));
+    this.renderPatternTiles();
+    this.renderPatternPreview();
+  },
+
+  addPatternDay(val) {
+    this.S.patPattern.push(val);
+    this.S.patPreset = null;
+    this.renderPatternTiles();
+    this.renderPatternPreview();
+  },
+
+  clearPattern() {
+    this.S.patPattern = [];
+    this.S.patPreset = null;
+    this.renderPatternTiles();
+    this.renderPatternPreview();
+  },
+
+  togglePatternDay(idx) {
+    this.S.patPattern[idx] = this.S.patPattern[idx] === 1 ? 0 : 1;
+    this.renderPatternTiles();
+    this.renderPatternPreview();
+  },
+
+  removePatternDay(idx) {
+    this.S.patPattern.splice(idx, 1);
+    this.renderPatternTiles();
+    this.renderPatternPreview();
+  },
+
+  renderPatternTiles() {
+    const pat = this.S.patPattern;
+    const container = document.getElementById('pattern-tiles');
+    if (!container) return;
+    container.innerHTML = pat.map((v,i) => `
+      <div class="pattern-tile ${v?'on':'off'}" onclick="App.togglePatternDay(${i})" title="Click to toggle">
+        <button class="pattern-tile-del" onclick="event.stopPropagation();App.removePatternDay(${i})">✕</button>
+        ${v?'<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,8 6,12 14,4"/></svg>':'<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="8" x2="12" y2="8"/></svg>'}
+        <span class="pattern-tile-label">Day ${i+1}</span>
+      </div>`).join('');
+    if (!pat.length) container.innerHTML = '<div style="color:var(--g400);font-size:13px;font-style:italic">No days in pattern. Add days or choose a preset above.</div>';
+
+    const onDays = pat.filter(v=>v===1).length;
+    const offDays = pat.filter(v=>v===0).length;
+    const lbl = document.getElementById('cycle-label');
+    if (lbl) lbl.textContent = pat.length ? `${pat.length}-day cycle · ${onDays} on, ${offDays} off` : '';
+  },
+
+  renderPatternPreview() {
+    const container = document.getElementById('pattern-preview');
+    if (!container) return;
+    const pat = this.S.patPattern;
+    if (!pat.length) { container.innerHTML = '<div style="color:var(--g400);font-size:13px;font-style:italic;grid-column:span 7">Set a pattern to see preview</div>'; return; }
+
+    const startInput = document.getElementById('pat-start');
+    const startDate = startInput ? new Date(startInput.value+'T12:00:00') : new Date(TODAY+'T12:00:00');
+    let html = '';
+    for (let i = 0; i < 28; i++) {
+      const d = new Date(startDate);
+      d.setDate(d.getDate() + i);
+      const isOn = pat[i % pat.length] === 1;
+      const dl = d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+      const isToday = d.toISOString().slice(0,10) === TODAY;
+      html += `<div class="preview-day ${isOn?'on':'off'} ${isToday?'today-marker':''}">
+        <div style="font-size:10px;color:inherit;opacity:.7">${['Su','Mo','Tu','We','Th','Fr','Sa'][d.getDay()]}</div>
+        <div style="font-size:11px;font-weight:700">${d.getDate()}</div>
+        <div>${isOn?'<svg viewBox="0 0 10 10" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1,5 4,8 9,2"/></svg>':'<svg viewBox="0 0 10 10" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="2" y1="5" x2="8" y2="5"/></svg>'}</div>
+      </div>`;
+    }
+    container.innerHTML = html;
+  },
+
+  selectDuration(months) {
+    this.S.patDuration = months;
+    document.querySelectorAll('.duration-tab').forEach(t => {
+      t.classList.toggle('active', parseInt(t.dataset.months) === months);
+    });
+  },
+
+  applyPattern() {
+    const empId = document.getElementById('pat-emp')?.value;
+    const shiftType = document.getElementById('pat-shift')?.value;
+    const startStr = document.getElementById('pat-start')?.value;
+    const pat = this.S.patPattern;
+    if (!empId || !shiftType || !startStr || !pat.length) {
+      this.showToast('Please fill in all fields and set a pattern','warn'); return;
+    }
+    const emp = this.S.employees.find(e=>e.id===empId);
+    if (!emp) return;
+
+    const shiftDef = SHIFT_TYPES(emp.group).find(s=>s.type===shiftType);
+    if (!shiftDef) return;
+
+    const start = new Date(startStr+'T12:00:00');
+    const end = new Date(start);
+    end.setMonth(end.getMonth() + this.S.patDuration);
+
+    // Remove existing pattern-generated shifts for this employee in this range
+    this.S.shifts = this.S.shifts.filter(s => !(s.employeeId === empId && s.patternGenerated && new Date(s.date+'T12:00:00') >= start && new Date(s.date+'T12:00:00') < end));
+
+    let generated = 0;
+    let dayOffset = 0;
+    let cur = new Date(start);
+    while (cur < end) {
+      const patIdx = dayOffset % pat.length;
+      if (pat[patIdx] === 1) {
+        const dateStr = cur.toISOString().slice(0,10);
+        // Find or create a slot for this employee on this date+group+type
+        const existing = this.S.shifts.find(s => s.date===dateStr && s.group===emp.group && s.type===shiftType && (s.employeeId===empId || s.status==='open'));
+        if (existing) {
+          existing.employeeId = empId;
+          existing.status = 'scheduled';
+          existing.patternGenerated = true;
+        } else {
+          this.S.shifts.push({
+            id:`pat_${empId}_${dateStr}_${shiftType}`,
+            date:dateStr, group:emp.group, type:shiftType,
+            start:shiftDef.start, end:shiftDef.end,
+            slot:0, employeeId:empId, status:'scheduled',
+            buildingId:emp.buildingId, patternGenerated:true
+          });
+        }
+        generated++;
+      }
+      cur.setDate(cur.getDate()+1);
+      dayOffset++;
+    }
+
+    // Save pattern record
+    this.S.schedulePatterns.push({empId, pattern:[...pat], startDate:startStr, shiftType, months:this.S.patDuration, appliedAt:TODAY});
+    this.persistData();
+    this.closeModal('modal-pattern');
+    this.showToast(`Rotation applied — ${generated} shifts scheduled for ${emp.name}`);
+    this.renderMain();
+    this.renderSidebar();
+  },
+
+  // ── ADMIN MANAGEMENT ─────────────────────────────────────────
+  openManageAdmins() {
+    const u = this.S.user;
+    const bId = u.buildingId || 'b1';
+    const building = this.S.buildings.find(b=>b.id===bId);
+    const admins = this.S.accounts.filter(a=>a.buildingId===bId&&a.role==='admin');
+    let rows = admins.map(a=>`
+      <tr>
+        <td><div style="display:flex;align-items:center;gap:8px">
+          <div class="emp-avatar" style="background:var(--blue);width:30px;height:30px;font-size:11px">${sanitize(a.name.split(' ').map(w=>w[0]).join('').slice(0,2))}</div>
+          <div><div style="font-weight:600">${sanitize(a.name)}</div></div>
+        </div></td>
+        <td style="color:var(--g600)">${sanitize(a.email)}</td>
+        <td><span class="tag tag-blue">Admin</span></td>
+        <td>${a.id!==u.id?`<button class="btn btn-ghost btn-sm" onclick="App.removeAdmin('${a.id}')" style="color:var(--red)">Remove</button>`:''}</td>
+      </tr>`).join('');
+
+    const div = document.createElement('div');
+    div.className = 'modal-overlay open';
+    div.id = 'modal-manage-admins';
+    div.innerHTML = `<div class="modal modal-lg">
+      <div class="modal-header"><span class="modal-title"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px;color:var(--blue)"><circle cx="7" cy="7" r="3"/><path d="M2 17c0-3 2.24-5 5-5"/><circle cx="14" cy="9" r="2.5"/><path d="M11 17c0-2.2 1.35-4 3-4s3 1.8 3 4"/></svg>Manage Admins — ${sanitize(building?.name||'')}</span><button class="modal-close" onclick="document.getElementById('modal-manage-admins').remove()">✕</button></div>
+      <div class="modal-body">
+        <div class="info-box">Admins can add/remove employees, assign shifts, and send alerts for this building.</div>
+        <table class="admin-table"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+        <div style="margin-top:16px"><button class="btn btn-primary btn-sm" onclick="document.getElementById('modal-manage-admins').remove();App.S._addingAdminToBuildingId=App.S.user.buildingId;document.getElementById('emp-role').value='admin';App.openModal('modal-add-emp')">+ Add Admin</button></div>
+      </div>
+      <div class="modal-footer"><button class="btn btn-secondary" onclick="document.getElementById('modal-manage-admins').remove()">Close</button></div>
+    </div>`;
+    document.body.appendChild(div);
+  },
+
+  removeAdmin(id) {
+    this.S.accounts = this.S.accounts.filter(a=>a.id!==id);
+    this.persistData();
+    document.getElementById('modal-manage-admins')?.remove();
+    this.showToast('Admin removed');
+    this.openManageAdmins();
+  },
+
+  // ── ACTIONS ─────────────────────────────────────────────────
+  selectGroup(g) { this.S.selectedGroup=g; this.S.calView='month'; this.render(); },
+  setCalView(v) { this.S.calView=v; if(v==='day'&&!this.S.selectedDate) this.S.selectedDate=TODAY; this.renderMain(); },
+  setFilter(f) { this.S.filter=f; this.renderMain(); },
+  navMonth(dir) {
+    this.S.viewMonth+=dir;
+    if(this.S.viewMonth>11){this.S.viewMonth=0;this.S.viewYear++;}
+    if(this.S.viewMonth<0){this.S.viewMonth=11;this.S.viewYear--;}
+    this.S.selectedDate=null;
+    if(this.S.panelOpen) this.closePanel();
+    this.updateMonthLabel();
+    this.renderMain();
+  },
+  goToToday() {
+    const t = new Date(TODAY+'T12:00:00');
+    this.S.viewMonth = t.getMonth();
+    this.S.viewYear = t.getFullYear();
+    this.S.selectedDate = TODAY;
+    this.updateMonthLabel();
+    this.renderMain();
+  },
+  navWeek14(dir) {
+    // Advance or retreat the 14-day window by 14 days
+    const cur = new Date((this.S.week14Start||TODAY)+'T12:00:00');
+    cur.setDate(cur.getDate() + dir*14);
+    this.S.week14Start = cur.toISOString().slice(0,10);
+    this.renderMain();
+  },
+  navDay(dir) {
+    const d = new Date((this.S.selectedDate||TODAY)+'T12:00:00');
+    d.setDate(d.getDate()+dir);
+    this.S.selectedDate=d.toISOString().slice(0,10);
+    this.renderMain();
+  },
+  updateMonthLabel() {
+    const el=document.getElementById('month-label');
+    if(el) el.textContent=`${MONTHS[this.S.viewMonth]} ${this.S.viewYear}`;
+  },
+
+  assignShift(shiftId, empId) {
+    if(!empId) return;
+    if(this.S.user?.role !== 'admin' && this.S.user?.role !== 'superadmin') { this.showToast('Unauthorized','warn'); return; }
+    const shift=this.S.shifts.find(s=>s.id===shiftId);
+    if(!shift) return;
+    shift.employeeId=empId; shift.status='scheduled';
+    const emp=this.S.employees.find(e=>e.id===empId);
+    Audit.log('SHIFT_ASSIGNED', `Shift ${sanitize(shiftId)} assigned to ${sanitize(emp?.name||empId)}`, this.S.user?.id, 'low');
+    this.persistData();
+    this.showToast(`Assigned to ${sanitize(emp?.name||'')}`);
+    if(this.S.panelOpen&&this.S.selectedDate) this.renderPanel(this.S.selectedDate);
+    this.renderMain();
+  },
+
+  removeEmpFromShift(shiftId) {
+    if(this.S.user?.role !== 'admin' && this.S.user?.role !== 'superadmin') { this.showToast('Unauthorized','warn'); return; }
+    const shift=this.S.shifts.find(s=>s.id===shiftId);
+    if(!shift) return;
+    Audit.log('SHIFT_UNASSIGNED', `Shift ${sanitize(shiftId)} opened`, this.S.user?.id, 'low');
+    shift.employeeId=null; shift.status='open';
+    this.persistData();
+    this.showToast('Shift opened');
+    if(this.S.panelOpen&&this.S.selectedDate) this.renderPanel(this.S.selectedDate);
+    this.renderMain();
+  },
+
+  confirmClaim(shiftId) {
+    const shift=this.S.shifts.find(s=>s.id===shiftId);
+    if(!shift) return;
+    const d=new Date(shift.date+'T12:00:00');
+    document.getElementById('claim-body').innerHTML=`
+      <div style="background:var(--g50);border-radius:8px;padding:16px;margin-bottom:16px">
+        <div style="font-size:16px;font-weight:700">${shift.type} Shift</div>
+        <div style="font-size:14px;color:var(--g600);margin-top:4px">${d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})}</div>
+        <div style="font-size:14px;color:var(--g600)">${shift.start} – ${shift.end}</div>
+        <div style="font-size:13px;color:var(--g500);margin-top:4px">${shift.group}</div>
+      </div>
+      <p style="font-size:13px;color:var(--g500)">Confirming will assign this shift to you and notify your supervisor.</p>`;
+    document.getElementById('claim-confirm-btn').onclick=()=>this.claimShift(shiftId);
+    this.openModal('modal-claim');
+  },
+
+  claimShift(shiftId) {
+    const u=this.S.user;
+    const shift=this.S.shifts.find(s=>s.id===shiftId);
+    if(!shift) return;
+    // Employees can only claim shifts in their own group
+    if(u.role==='employee' && u.group !== shift.group) { this.showToast('Not authorized for this shift group','warn'); return; }
+    shift.employeeId=u.id; shift.status='scheduled';
+    Audit.log('SHIFT_CLAIMED', `Shift ${sanitize(shiftId)} claimed by ${sanitize(u.name)}`, u.id, 'low');
+    this.persistData();
+    this.closeModal('modal-claim');
+    this.showToast('Shift claimed!');
+    if(this.S.panelOpen&&this.S.selectedDate) this.renderPanel(this.S.selectedDate);
+    this.renderMain(); this.renderSidebar();
+  },
+
+  // ── SAVE EMPLOYEE ────────────────────────────────────────────
+  saveEmployee() {
+    if(this.S.user?.role !== 'admin' && this.S.user?.role !== 'superadmin') { this.showToast('Unauthorized','warn'); return; }
+    const name=sanitizeInput(document.getElementById('emp-name').value.trim(), 100);
+    const pos=document.getElementById('emp-position').value;
+    const email=sanitizeInput(document.getElementById('emp-email').value.trim().toLowerCase(), 254);
+    const phone=sanitizeInput(document.getElementById('emp-phone').value.trim(), 20);
+    const role=document.getElementById('emp-role').value;
+    if(!name||!pos||!email){this.showToast('Name, position, and email are required','warn');return;}
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){this.showToast('Invalid email address','warn');return;}
+    if(!['Nurse Management','Charge Nurse','CNA','CMA','Housekeeping','Laundry','Cook','Dietary Aid'].includes(pos)){this.showToast('Invalid position','warn');return;}
+    if(!['employee','admin'].includes(role)){this.showToast('Invalid role','warn');return;}
+
+    const initials=name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+    const chk=id=>(document.getElementById(id)||{}).checked||false;
+    const prefs=[];
+    if(chk('notif-immediate')) prefs.push('immediate');
+    if(chk('notif-day')) prefs.push('day');
+    if(chk('notif-week')) prefs.push('week');
+    if(chk('notif-daily')) prefs.push('daily');
+    // Derive notifEmail/notifSMS from per-row channel selections
+    const notifEmail = chk('notif-immediate-email')||chk('notif-day-email')||chk('notif-week-email')||chk('notif-daily-email');
+    const notifSMS   = chk('notif-immediate-sms') ||chk('notif-day-sms') ||chk('notif-week-sms') ||chk('notif-daily-sms');
+    const notifChannels = {
+      immediate:{email:chk('notif-immediate-email'),sms:chk('notif-immediate-sms')},
+      day:      {email:chk('notif-day-email'),      sms:chk('notif-day-sms')},
+      week:     {email:chk('notif-week-email'),     sms:chk('notif-week-sms')},
+      daily:    {email:chk('notif-daily-email'),    sms:chk('notif-daily-sms')},
+    };
+    const bId=this.S._addingAdminToBuildingId||this.S.user.buildingId||'b1';
+    this.S._addingAdminToBuildingId=null;
+
+    // Check for prior termination history on this email
+    const prior = this.S.employees.find(e => e.email === email && e.inactive);
+    if (prior && prior.terminationLog?.length) {
+      const latest = prior.terminationLog[prior.terminationLog.length - 1];
+      this.showToast(`Prior termination on record (${sanitize(latest.date)}): "${sanitize(latest.reason)}"`, '');
+    }
+
+    if(role==='admin') {
+      this.S.accounts.push({id:`a${Date.now()}`,name,email,role:'admin',buildingId:bId});
+    } else {
+      const termLog = prior?.terminationLog || [];
+      this.S.employees.push({id:`e${Date.now()}`,name,group:pos,email,phone,buildingId:bId,notifEmail,notifSMS,notifPrefs:prefs,notifChannels,initials,terminationLog:termLog,inactive:false});
+    }
+    Audit.log('EMPLOYEE_ADDED', `Added ${sanitize(name)} (${sanitize(pos)})`, this.S.user?.id, 'medium');
+    this.persistData();
+    this.closeModal('modal-add-emp');
+    this.showToast(`${sanitize(name)} added as ${role==='admin'?'Admin':sanitize(pos)}`);
+    ['emp-name','emp-email','emp-phone'].forEach(id=>document.getElementById(id).value='');
+    document.getElementById('emp-position').value='';
+    this.render();
+  },
+
+  // ── SAVE BUILDING ────────────────────────────────────────────
+  saveBuilding() {
+    if(this.S.user?.role !== 'superadmin') { this.showToast('Unauthorized','warn'); return; }
+    const name=sanitizeInput(document.getElementById('b-name').value.trim(), 120);
+    const addr=sanitizeInput(document.getElementById('b-addr').value.trim(), 200);
+    const phone=sanitizeInput(document.getElementById('b-phone').value.trim(), 20);
+    const beds=document.getElementById('b-beds').value;
+    const adminName=sanitizeInput(document.getElementById('b-admin-name').value.trim(), 100);
+    const adminEmail=sanitizeInput(document.getElementById('b-admin-email').value.trim().toLowerCase(), 254);
+    if(!name||!adminName||!adminEmail){this.showToast('Building name and admin info are required','warn');return;}
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail)){this.showToast('Invalid admin email','warn');return;}
+    const colors=['#2563EB','#7C3AED','#059669','#D97706','#DC2626','#DB2777','#0891B2'];
+    const bId=`b${Date.now()}`;
+    this.S.buildings.push({id:bId,name,address:addr,phone,beds:parseInt(beds)||0,color:colors[this.S.buildings.length%colors.length]});
+    this.S.accounts.push({id:`a${Date.now()}`,name:adminName,email:adminEmail,role:'admin',buildingId:bId});
+    Audit.log('BUILDING_CREATED', `Created building ${sanitize(name)} admin ${sanitize(adminEmail)}`, this.S.user?.id, 'high');
+    this.persistData();
+    this.closeModal('modal-building');
+    this.showToast(`${sanitize(name)} created — invite sent to ${sanitize(adminEmail)}`);
+    ['b-name','b-addr','b-phone','b-beds','b-admin-name','b-admin-email'].forEach(id=>document.getElementById(id).value='');
+    document.getElementById('b-admin-pass').value=genTempPw();
+    this.renderSuperAdmin();
+  },
+
+  // ── SEND ALERT ───────────────────────────────────────────────
+  openAlertModal() {
+    const list=document.getElementById('alert-group-list');
+    list.innerHTML=DISPLAY_GROUPS.map(g=>{
+      const ag=getActualGroups(g);
+      const cnt=this.S.employees.filter(e=>ag.includes(e.group)&&e.notifSMS&&!e.inactive).length;
+      return `<label class="checkbox-item"><input type="checkbox" value="${g}" class="alert-grp" onchange="App.updateAlertPreview()"><div class="checkbox-label">${G_ICONS[g]} ${g}<div class="checkbox-desc">${cnt} with SMS enabled</div></div></label>`;
+    }).join('');
+    this.updateAlertPreview();
+    this.openModal('modal-alert');
+  },
+
+  updateAlertPreview() {
+    const type=document.querySelector('input[name="alert-type"]:checked')?.value||'open';
+    const cw=document.getElementById('custom-msg-wrap');
+    if(cw) cw.style.display=type==='custom'?'block':'none';
+    const displayGroups=[...document.querySelectorAll('.alert-grp:checked')].map(c=>c.value);
+    const actualGroups=displayGroups.flatMap(g=>getActualGroups(g));
+    const openCnt=this.getMonthShifts().filter(s=>s.status==='open'&&(!actualGroups.length||actualGroups.includes(s.group))).length;
+    let msg='';
+    if(type==='open') msg=`Hi [Name], there ${openCnt===1?'is':'are'} currently ${openCnt} open shift${openCnt!==1?'s':''} available${displayGroups.length?' for '+displayGroups.join(', '):''}.
+
+Tap the link below to view and claim:\nhttps://managemystaffing.com/claim?token=[token]\n\n— ManageMyStaffing`;
+    else if(type==='urgent') msg=`⚠️ URGENT COVERAGE NEEDED\n\nWe need someone to cover a shift starting soon. Please claim immediately:\nhttps://managemystaffing.com/claim?token=[token]\n\nThank you!`;
+    else msg=document.getElementById('custom-msg')?.value||'[Enter custom message above]';
+    const el=document.getElementById('alert-preview-text');
+    if(el) el.textContent=msg;
+  },
+
+  sendAlert() {
+    const displayGroups=[...document.querySelectorAll('.alert-grp:checked')].map(c=>c.value);
+    const viaSMS=document.getElementById('send-sms').checked;
+    const viaEmail=document.getElementById('send-email').checked;
+    if(!displayGroups.length){this.showToast('Select at least one group','warn');return;}
+    // Expand display groups (e.g. 'Dietary' → ['Cook','Dietary Aid'])
+    const actualGroups=displayGroups.flatMap(g=>getActualGroups(g));
+    const recipients=this.S.employees.filter(e=>actualGroups.includes(e.group)&&((viaSMS&&e.notifSMS)||(viaEmail&&e.notifEmail)));
+    this.closeModal('modal-alert');
+    this.showToast(`Alert sent to ${recipients.length} staff member${recipients.length!==1?'s':''}`);
+  },
+
+  // ── HELPERS ──────────────────────────────────────────────────
+  getMonthShifts() {
+    const {viewYear,viewMonth}=this.S;
+    const prefix=`${viewYear}-${String(viewMonth+1).padStart(2,'0')}`;
+    return this.S.shifts.filter(s=>s.date.startsWith(prefix));
+  },
+
+  getDayShifts(dateStr) {
+    const g=this.S.selectedGroup;
+    const u=this.S.user;
+    const bId=u.buildingId||'b1';
+    const ag=g?getActualGroups(g):null;
+    return this.S.shifts.filter(s=>s.date===dateStr&&(!ag||ag.includes(s.group))&&(s.buildingId===bId||!s.buildingId));
+  },
+
+  // ── DATA PERSISTENCE ─────────────────────────────────────
+  // Saves all user-created data to localStorage. Called after
+  // every mutation. Code updates never touch localStorage, so
+  // facility data (employees, buildings, shifts) is never lost.
+  persistData() {
+    const payload = {
+      v:1, savedAt:Date.now(),
+      buildings:this.S.buildings, accounts:this.S.accounts,
+      employees:this.S.employees, shifts:this.S.shifts,
+      schedulePatterns:this.S.schedulePatterns,
+    };
+    if (IS_SERVER_MODE && _authToken) {
+      fetch('/api/data',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},body:JSON.stringify(payload)})
+        .catch(()=>{});
+      return;
+    }
+    try { localStorage.setItem(SEC.DATA_KEY, JSON.stringify(payload)); } catch(e) {
+      if (!this._persistWarnShown) { this._persistWarnShown=true; this.showToast('Storage limit reached — data may not save','warn'); }
+    }
+  },
+
+  // Loads persisted data. Returns true if data was found and restored,
+  // false if this is a first run (seed data will be used instead).
+  loadPersistedData() {
+    try {
+      const raw = localStorage.getItem(SEC.DATA_KEY);
+      if (!raw) return false;
+      const d = JSON.parse(raw);
+      if (!d || d.v !== 1) return false;
+      // Restore each collection — only overwrite if saved data exists
+      if (Array.isArray(d.buildings) && d.buildings.length)        this.S.buildings        = d.buildings;
+      if (Array.isArray(d.accounts)  && d.accounts.length)         this.S.accounts         = d.accounts;
+      if (Array.isArray(d.employees) && d.employees.length)        this.S.employees        = d.employees;
+      if (Array.isArray(d.shifts)    && d.shifts.length)           this.S.shifts           = d.shifts;
+      if (Array.isArray(d.schedulePatterns))                        this.S.schedulePatterns = d.schedulePatterns;
+      return true;
+    } catch(e) { return false; }
+  },
+
+  applyServerData(data) {
+    if (!data) return;
+    if (Array.isArray(data.buildings)        && data.buildings.length)        this.S.buildings        = data.buildings;
+    if (Array.isArray(data.accounts)         && data.accounts.length)         this.S.accounts         = data.accounts;
+    if (Array.isArray(data.employees)        && data.employees.length)        this.S.employees        = data.employees;
+    if (Array.isArray(data.shifts)           && data.shifts.length)           this.S.shifts           = data.shifts;
+    if (Array.isArray(data.schedulePatterns))                                  this.S.schedulePatterns = data.schedulePatterns;
+  },
+
+  // Super-admin only: wipe all persisted data and reload with seed data.
+  // Shown in the Super Admin dashboard for testing / initial setup.
+  resetAllData() {
+    if (this.S.user?.role !== 'superadmin') return;
+    if (!confirm('Reset ALL facility data to demo seed? This will erase all employees, buildings, and shifts entered by admins. This cannot be undone.')) return;
+    localStorage.removeItem(SEC.DATA_KEY);
+    // Re-seed
+    this.S.buildings        = [...SEED_BUILDINGS];
+    this.S.accounts         = [...SEED_ACCOUNTS];
+    this.S.employees        = [...SEED_EMPLOYEES];
+    this.S.schedulePatterns = [];
+    this.S.shifts           = generateShifts(this.S.employees);
+    this.persistData();
+    Audit.log('DATA_RESET', 'All facility data reset to seed by super admin', this.S.user?.id, 'high');
+    this.showToast('Data reset to demo defaults');
+    this.render();
+  },
+
+  openModal(id) {
+    document.getElementById(id)?.classList.add('open');
+    if (id === 'modal-building') {
+      const passEl = document.getElementById('b-admin-pass');
+      if (passEl && !passEl.value) passEl.value = genTempPw();
+    }
+  },
+  closeModal(id) { document.getElementById(id)?.classList.remove('open'); },
+
+  showToast(msg, type) {
+    document.getElementById('toast-msg').textContent=msg;
+    const isWarn = type === 'warn';
+    document.getElementById('toast-icon').innerHTML = isWarn
+      ? '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2L1 14h14z"/><line x1="8" y1="7" x2="8" y2="10"/><circle cx="8" cy="12.5" r="0.5" fill="currentColor"/></svg>'
+      : '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,8 6,12 14,4"/></svg>';
+    const t=document.getElementById('toast');
+    t.classList.add('show');
+    clearTimeout(this._toastTimer);
+    this._toastTimer=setTimeout(()=>t.classList.remove('show'),3200);
+  },
+};
+
+// Ensure App is accessible from inline onclick attributes in all browser contexts
+window.App = App;
+App.init().catch(e => {
+  console.error('ManageMyStaffing init error:', e);
+  document.getElementById('login-page').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+});
+</script>
+
+<!-- DEMO MODE BANNER -->
+<div id="demo-mode-banner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:99998;background:#FEF3C7;border-bottom:2px solid #F59E0B;color:#92400E;font-size:12px;font-weight:700;letter-spacing:.04em;padding:6px 16px;align-items:center;justify-content:center;gap:8px;text-align:center" role="alert">
+  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+  DEMO MODE — SIMULATED DATA ONLY · No real PHI · Session not persisted
+  <button onclick="App.logout()" style="margin-left:12px;padding:2px 10px;background:#F59E0B;color:#fff;border:none;border-radius:4px;font-size:11px;font-weight:700;cursor:pointer">Exit Demo</button>
+</div>
+
+<!-- SESSION WARNING BANNER -->
+<div id="session-warning" class="session-warning" role="alert" aria-live="assertive">
+  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+  Session expires in <strong id="warning-countdown">2:00</strong>
+  <button class="btn btn-sm btn-primary" style="padding:4px 12px;font-size:12px" onclick="App.extendSession()">Stay Logged In</button>
+</div>
+
+<!-- LOCK SCREEN -->
+<div id="lock-screen" class="lock-screen" role="dialog" aria-modal="true" aria-label="Session Locked">
+  <div class="lock-card">
+    <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="#6B9E7A" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+    <h2>Session Locked</h2>
+    <p>Your session was automatically locked due to 15 minutes of inactivity (HIPAA §164.312(a)(2)(iii)).</p>
+    <input type="password" id="lock-pass" class="lock-input" placeholder="Re-enter your password" maxlength="128"
+      onkeydown="if(event.key==='Enter')App.unlockSession()" autocomplete="current-password">
+    <button class="btn btn-primary btn-full" onclick="App.unlockSession()">Unlock Session</button>
+    <button class="btn btn-ghost btn-sm" onclick="App.logout()" style="color:#6B7280;font-size:12px">Sign out instead</button>
+  </div>
+</div>
+
+<!-- PRIVACY NOTICE MODAL -->
+<div class="modal-overlay" id="modal-privacy" style="z-index:99990" role="dialog" aria-modal="true" aria-label="HIPAA Privacy Notice">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header" style="background:#1F2937;border-radius:12px 12px 0 0">
+      <span class="modal-title" style="color:#F9FAFB;display:flex;align-items:center;gap:8px"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#6B9E7A" stroke-width="2" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> HIPAA Notice of Privacy Practices &amp; System Authorization</span>
+    </div>
+    <div class="modal-body" style="max-height:60vh;overflow-y:auto;font-size:13px;color:var(--g700);line-height:1.7">
+      <div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:14px;margin-bottom:16px;color:#1E40AF;font-size:12px">
+        <strong>ManageMyStaffing.com</strong> is a Business Associate under HIPAA (45 CFR Parts 160 &amp; 164) and processes Protected Health Information (PHI) on behalf of covered healthcare entities. Access to this system constitutes agreement to all terms below.
+      </div>
+      <p><strong>1. Authorized Personnel Only</strong><br>This system is restricted to authorized workforce members. Unauthorized access violates HIPAA 45 CFR §164.308(a)(3) and may result in civil penalties up to $1.9M per violation category and criminal prosecution under 18 U.S.C. §1347.</p>
+      <br><p><strong>2. Minimum Necessary Standard (45 CFR §164.502(b))</strong><br>You may access and use only the minimum PHI necessary to perform your assigned job functions. Do not access records outside your role scope.</p>
+      <br><p><strong>3. Audit &amp; Monitoring (45 CFR §164.312(b))</strong><br>All activity on this system — including every login, data access, modification, and export — is continuously logged. Audit logs are retained for a minimum of 6 years. You have no expectation of privacy on this system.</p>
+      <br><p><strong>4. Automatic Session Lock (45 CFR §164.312(a)(2)(iii))</strong><br>Sessions automatically lock after 15 minutes of inactivity. Never leave a session unattended. Do not share credentials.</p>
+      <br><p><strong>5. Prohibition on Unauthorized Disclosure (45 CFR §164.502)</strong><br>PHI accessed through this system may not be disclosed to unauthorized parties. Screenshots, exports, and copies of PHI must be handled per your facility's HIPAA policies.</p>
+      <br><p><strong>6. Breach Reporting Obligation (45 CFR §164.400)</strong><br>Any actual or suspected breach of PHI must be reported immediately to your facility Privacy Officer. Failure to report is itself a HIPAA violation.</p>
+      <br><p><strong>7. Business Associate Agreement</strong><br>This platform operates under executed Business Associate Agreements with all covered-entity facilities. Facility administrators are responsible for HIPAA workforce training and sanction policies.</p>
+      <div style="background:var(--g50);border:1.5px solid var(--g200);border-radius:8px;padding:16px;margin-top:20px">
+        <label style="display:flex;gap:12px;align-items:flex-start;cursor:pointer">
+          <input type="checkbox" id="privacy-agree" style="margin-top:3px;width:16px;height:16px;flex-shrink:0" onchange="document.getElementById('privacy-confirm-btn').disabled=!this.checked">
+          <span style="font-size:13px"><strong>I have read, understand, and agree</strong> to the above HIPAA Notice of Privacy Practices. I acknowledge that my access to PHI is authorized, limited to minimum necessary, and fully monitored and audited.</span>
+        </label>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="App.logout()">Decline &amp; Sign Out</button>
+      <button class="btn btn-primary" id="privacy-confirm-btn" disabled onclick="App.acceptPrivacyNotice()">Accept &amp; Continue</button>
+    </div>
+  </div>
+</div>
+
+<!-- AUDIT LOG MODAL -->
+<div class="modal-overlay" id="modal-audit" role="dialog" aria-modal="true" aria-label="HIPAA Audit Log">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title" style="display:flex;align-items:center;gap:8px">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+        HIPAA Audit Log
+      </span>
+      <button class="modal-close" onclick="App.closeModal('modal-audit')">✕</button>
+    </div>
+    <div style="padding:10px 16px;background:var(--g50);border-bottom:1px solid var(--g200);font-size:12px;color:var(--g500);display:flex;justify-content:space-between;align-items:center">
+      <span>All access to PHI is logged per HIPAA 45 CFR §164.312(b). Retention: 6 years minimum.</span>
+      <span class="hipaa-badge-sm">HIPAA §164.312(b)</span>
+    </div>
+    <div id="audit-log-list" style="max-height:55vh;overflow-y:auto"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="App.exportAuditLog()">⬇ Export CSV</button>
+      <button class="btn btn-primary" onclick="App.closeModal('modal-audit')">Close</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

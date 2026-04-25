@@ -1,0 +1,4 @@
+node_modules/
+.env
+mms-data.json
+mms-data.json.tmp
