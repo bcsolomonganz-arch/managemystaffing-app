@@ -71,6 +71,15 @@ function writeAtomic(filePath, data) {
   fs.renameSync(tmp, filePath);
 }
 
+// ── SEED IDs THAT MUST NEVER APPEAR IN REAL DATA ─────────────────────────────
+// These are the client-side demo seed IDs. If they exist in the server data file
+// (e.g. from an early session where demo data was accidentally persisted), they
+// are stripped out on every load so real users never see demo content.
+const SEED_BUILDING_IDS = new Set(['b1','b2','b3','b4',
+  'sunrise-snf','willowbrook','golden-acres','harmony-hills',
+  'linwood','cross-timbers','north-county','meadowbrook']);
+const SEED_EMPLOYEE_IDS_PREFIX = 'e0'; // all seed employees start with 'e0'
+
 // ── LOAD OR INITIALIZE DATA FILE ─────────────────────────────────────────────
 function loadData() {
   let data;
@@ -86,9 +95,32 @@ function loadData() {
     console.error('[mms] Failed to parse data file:', e.message);
     throw e;
   }
-  // Ensure seed accounts always exist and up-to-date (migration for existing data files)
+
   if (!Array.isArray(data.accounts)) data.accounts = [];
   let dirty = false;
+
+  // ── Migration: strip any seed buildings / employees / shifts that were
+  //    accidentally persisted by a demo or early-setup session.
+  if (!data._seedStripped) {
+    const beforeB = (data.buildings || []).length;
+    const beforeE = (data.employees || []).length;
+    data.buildings = (data.buildings || []).filter(b => !SEED_BUILDING_IDS.has(b.id));
+    data.employees = (data.employees || []).filter(e => !e.id.startsWith(SEED_EMPLOYEE_IDS_PREFIX));
+    // Also strip shifts and patterns that reference removed employees/buildings
+    const keepBIds = new Set((data.buildings || []).map(b => b.id));
+    const keepEIds = new Set((data.employees || []).map(e => e.id));
+    data.shifts           = (data.shifts           || []).filter(s => keepBIds.has(s.buildingId) || keepEIds.has(s.employeeId));
+    data.schedulePatterns = (data.schedulePatterns || []).filter(p => keepEIds.has(p.empId));
+    const strippedB = beforeB - data.buildings.length;
+    const strippedE = beforeE - data.employees.length;
+    if (strippedB || strippedE) {
+      console.log(`[mms] Migration: stripped ${strippedB} seed buildings and ${strippedE} seed employees from data file.`);
+    }
+    data._seedStripped = true;
+    dirty = true;
+  }
+
+  // Ensure seed accounts always exist and are up-to-date
   for (const seed of [SEED_SA, SEED_DEMO]) {
     const existing = data.accounts.find(a => a.id === seed.id);
     if (!existing) {
@@ -96,12 +128,12 @@ function loadData() {
       dirty = true;
       console.log(`[mms] Seeded missing account: ${seed.email}`);
     } else if (existing.email !== seed.email) {
-      // Email changed in seed — update the stored record
       existing.email = seed.email;
       dirty = true;
       console.log(`[mms] Updated email for account ${seed.id}: ${seed.email}`);
     }
   }
+
   if (dirty) writeAtomic(DATA_FILE, data);
   return data;
 }

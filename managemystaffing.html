@@ -1168,9 +1168,9 @@ const RateLimit = {
 const App = {
   S: {
     user: null,
-    buildings: [...SEED_BUILDINGS],
-    accounts: [...SEED_ACCOUNTS],
-    employees: [...SEED_EMPLOYEES],
+    buildings: [],
+    accounts: [],
+    employees: [],
     shifts: [],
     schedulePatterns: [],
     // calendar state
@@ -1251,9 +1251,13 @@ const App = {
           if (vResp.ok) {
             const {user} = await vResp.json();
             if (user.demo) {
-              // Demo session — use seed data only
+              // Demo session — always use seed data only
               _authToken = sessionToken;
-              this.S.shifts = generateShifts(this.S.employees);
+              this.S.buildings = [...SEED_BUILDINGS];
+              this.S.accounts  = [...SEED_ACCOUNTS];
+              this.S.employees = [...SEED_EMPLOYEES];
+              this.S.shifts    = generateShifts(this.S.employees);
+              this.S.schedulePatterns = [];
               this.S.user = user;
               this.showApp();
               return;
@@ -1287,9 +1291,13 @@ const App = {
     }
 
     // ── LOCAL FILE / DEMO MODE ────────────────────────────
+    // In local file mode only: seed data if nothing is persisted yet
     const loaded = this.loadPersistedData();
     if (!loaded) {
-      this.S.shifts = generateShifts(this.S.employees);
+      this.S.buildings = [...SEED_BUILDINGS];
+      this.S.accounts  = [...SEED_ACCOUNTS];
+      this.S.employees = [...SEED_EMPLOYEES];
+      this.S.shifts    = generateShifts(this.S.employees);
       this.persistData();
     }
     ['mms_user','mms_session','mms_sess_v1','mms_sess_v2'].forEach(k => localStorage.removeItem(k));
@@ -1369,19 +1377,19 @@ const App = {
         _authToken = token;
         // Demo accounts use seed data only — nothing is read from or written to the server
         if (user.demo) {
-          this.S.shifts = generateShifts(this.S.employees);
+          this.S.buildings = [...SEED_BUILDINGS];
+          this.S.accounts  = [...SEED_ACCOUNTS];
+          this.S.employees = [...SEED_EMPLOYEES];
+          this.S.shifts    = generateShifts(this.S.employees);
+          this.S.schedulePatterns = [];
           // Don't persist the token for demo sessions (sessionStorage only)
           try { sessionStorage.setItem('mms_demo_token', token); } catch(e2) {}
         } else {
           localStorage.setItem('mms_token', token);
-          // Load real facility data from server
+          // Load real facility data from server — empty arrays = fresh account, that's correct
           const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${token}`}});
           if (dResp.ok) this.applyServerData(await dResp.json());
-          else {
-            // Fresh server with no data yet — seed and save
-            this.S.shifts = generateShifts(this.S.employees);
-            this.persistData();
-          }
+          // If fetch fails, stay with empty state — do not seed
         }
         if (errEl) errEl.style.display = 'none';
         this.S.user = user;
@@ -5172,15 +5180,17 @@ Tap the link below to view and claim:\nhttps://managemystaffing.com/claim?token=
   },
 
   applyServerData(data) {
+    // Always apply whatever the server sends — empty arrays are valid (fresh account = blank slate).
+    // Never fall back to seed data for real users.
     if (!data) return;
-    if (Array.isArray(data.buildings)        && data.buildings.length)        this.S.buildings        = data.buildings;
-    if (Array.isArray(data.accounts)         && data.accounts.length)         this.S.accounts         = data.accounts;
-    if (Array.isArray(data.employees)        && data.employees.length)        this.S.employees        = data.employees;
-    if (Array.isArray(data.shifts)           && data.shifts.length)           this.S.shifts           = data.shifts;
-    if (Array.isArray(data.schedulePatterns))                                  this.S.schedulePatterns = data.schedulePatterns;
-    if (Array.isArray(data.jobPostings))                                       this.S.jobPostings      = data.jobPostings;
-    if (Array.isArray(data.demos))                                             this.S.demos            = data.demos;
-    if (data.billingData && typeof data.billingData === 'object')              this.S.billingData      = data.billingData;
+    if (Array.isArray(data.buildings))        this.S.buildings        = data.buildings;
+    if (Array.isArray(data.accounts))         this.S.accounts         = data.accounts;
+    if (Array.isArray(data.employees))        this.S.employees        = data.employees;
+    if (Array.isArray(data.shifts))           this.S.shifts           = data.shifts;
+    if (Array.isArray(data.schedulePatterns)) this.S.schedulePatterns = data.schedulePatterns;
+    if (Array.isArray(data.jobPostings))      this.S.jobPostings      = data.jobPostings;
+    if (Array.isArray(data.demos))            this.S.demos            = data.demos;
+    if (data.billingData && typeof data.billingData === 'object') this.S.billingData = data.billingData;
   },
 
   // Super-admin only: wipe all persisted data and reload with seed data.
