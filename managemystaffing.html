@@ -96,6 +96,18 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .group-item.active .group-badge{background:var(--blue-m);color:var(--blue-d)}
 .sidebar-divider{height:1px;background:var(--g100);margin:8px 16px}
 .emp-list{padding:0 8px 16px}
+/* Mode toggle */
+.mode-toggle{display:flex;align-items:center;background:var(--g100);border-radius:10px;padding:3px;margin:12px 12px 4px;gap:2px}
+.mode-toggle-btn{flex:1;padding:6px 0;border:none;background:transparent;border-radius:8px;font-size:12px;font-weight:600;color:var(--g500);cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:center;gap:5px}
+.mode-toggle-btn.active{background:#fff;color:var(--blue);box-shadow:0 1px 4px rgba(0,0,0,.12)}
+.mode-toggle-btn:hover:not(.active){color:var(--g700)}
+/* HR iframe view */
+#hr-view{display:none;position:fixed;top:var(--header);left:var(--sidebar);right:0;bottom:0;z-index:50;background:#f5f5f5;flex-direction:column;align-items:stretch}
+#hr-view.visible{display:flex}
+#hr-view iframe{flex:1;border:none;width:100%;height:100%}
+#hr-view-banner{height:36px;background:var(--blue-l);border-bottom:1px solid var(--blue-m);display:flex;align-items:center;padding:0 16px;gap:10px;font-size:12px;color:var(--blue-d);font-weight:600;flex-shrink:0}
+#hr-view-banner a{color:var(--blue);text-decoration:none;margin-left:auto;font-size:11px;display:flex;align-items:center;gap:4px}
+#hr-view-banner a:hover{text-decoration:underline}
 .emp-item{display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;cursor:pointer;transition:background .15s}
 .emp-item:hover{background:var(--g50)}
 .emp-avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0}
@@ -422,6 +434,18 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
     <aside class="sidebar" id="sidebar" style="display:none"></aside>
     <main class="main" id="main"></main>
     <div class="right-panel" id="right-panel"><div id="rp-content"></div></div>
+    <!-- HR Platform View -->
+    <div id="hr-view">
+      <div id="hr-view-banner">
+        <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="16" height="14" rx="2"/><path d="M7 3v14M2 8h5M2 12h5"/></svg>
+        Manage Census — Referral &amp; Census Platform
+        <a href="https://managecensus.azurewebsites.net" target="_blank">
+          <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V9"/><path d="M10 2h4v4"/><path d="M14 2L8 8"/></svg>
+          Open in new tab
+        </a>
+      </div>
+      <iframe id="hr-iframe" src="" title="Manage Census HR Platform" allow="same-origin"></iframe>
+    </div>
   </div>
   <footer class="hipaa-footer no-print">
     <span><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:3px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> HIPAA Compliant</span>
@@ -924,6 +948,8 @@ const App = {
     patPattern: [1,1,0,0],
     patDuration: 1,
     patPreset: null,
+    // app mode toggle
+    appMode: 'schedule',
   },
 
   // ── TIMERS & INTERNAL STATE ───────────────────────────────
@@ -1125,6 +1151,9 @@ const App = {
     sessionStorage.removeItem(SEC.SESSION_KEY+'_demo');
     sessionStorage.removeItem('mms_lock_hash');
     this.S.user = null; this.S.panelOpen = false; this._sessionLocked = false;
+    this.S.appMode = 'schedule';
+    const hrViewEl = document.getElementById('hr-view');
+    if (hrViewEl) { hrViewEl.classList.remove('visible'); document.getElementById('hr-iframe').src = ''; }
     document.getElementById('lock-screen').classList.remove('active');
     document.getElementById('session-warning').style.display = 'none';
     const demoBanner = document.getElementById('demo-mode-banner');
@@ -1481,7 +1510,19 @@ const App = {
       // Open shifts available to claim
       const openCount = this.S.shifts.filter(s => s.status==='open' && s.group===u.group && s.buildingId===(u.buildingId||'b1')).length;
       const bname = building ? `<div style="padding:12px 16px 4px;font-size:12px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;display:flex;align-items:center;gap:5px"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="14" height="11" rx="1"/><path d="M5 15V9h6v6"/><path d="M1 8l7-6 7 6"/></svg>${sanitize(building.name)}</div>` : '';
+      const isHREmp = this.S.appMode === 'hr';
+      const empModeToggle = `<div class="mode-toggle">
+        <button class="mode-toggle-btn${!isHREmp?' active':''}" onclick="App.switchMode('schedule')">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 6h14"/><path d="M5 2v4"/><path d="M11 2v4"/></svg>
+          Schedule
+        </button>
+        <button class="mode-toggle-btn${isHREmp?' active':''}" onclick="App.switchMode('hr')">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5"/><path d="M11 9v6M8 12h6"/></svg>
+          HR
+        </button>
+      </div>`;
       document.getElementById('sidebar').innerHTML = `
+        ${empModeToggle}
         ${bname}
         <div style="padding:16px">
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
@@ -1551,11 +1592,44 @@ const App = {
     }
 
     const bname = building ? `<div style="padding:12px 16px 4px;font-size:12px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;display:flex;align-items:center;gap:5px"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="14" height="11" rx="1"/><path d="M5 15V9h6v6"/><path d="M1 8l7-6 7 6"/></svg>${sanitize(building.name)}</div>` : '';
+    const isHR = this.S.appMode === 'hr';
+    const modeToggle = `<div class="mode-toggle">
+      <button class="mode-toggle-btn${!isHR?' active':''}" onclick="App.switchMode('schedule')">
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 6h14"/><path d="M5 2v4"/><path d="M11 2v4"/></svg>
+        Schedule
+      </button>
+      <button class="mode-toggle-btn${isHR?' active':''}" onclick="App.switchMode('hr')">
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5"/><path d="M11 9v6M8 12h6"/></svg>
+        HR
+      </button>
+    </div>`;
     document.getElementById('sidebar').innerHTML = `
+      ${modeToggle}
       ${bname}
       <div class="sidebar-section-title">Staff Groups</div>
       ${groupItems}
       ${sel ? `<div class="sidebar-divider"></div><div class="sidebar-section-title">${sel==='Dietary'?'Dietary Staff':sel+'s'}</div><div class="emp-list">${empList}</div>` : ''}`;
+  },
+
+  switchMode(mode) {
+    this.S.appMode = mode;
+    const hrView = document.getElementById('hr-view');
+    const mainEl = document.getElementById('main');
+    const rpEl   = document.getElementById('right-panel');
+    if (mode === 'hr') {
+      const iframe = document.getElementById('hr-iframe');
+      if (!iframe.src || iframe.src === window.location.href) {
+        iframe.src = 'https://managecensus.azurewebsites.net';
+      }
+      hrView.classList.add('visible');
+      mainEl.style.display = 'none';
+      rpEl.style.display   = 'none';
+    } else {
+      hrView.classList.remove('visible');
+      mainEl.style.display = '';
+      rpEl.style.display   = '';
+    }
+    this.renderSidebar();
   },
 
   setEmpView(view) {
