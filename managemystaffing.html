@@ -884,6 +884,45 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
   </div>
 </div>
 
+<!-- Add Shifts Modal -->
+<div class="modal-overlay" id="modal-add-shifts" role="dialog" aria-modal="true" aria-label="Add Shifts">
+  <div class="modal" style="max-width:600px;width:96%;max-height:90vh;display:flex;flex-direction:column">
+    <div class="modal-header" style="flex-shrink:0">
+      <span class="modal-title">
+        <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px;color:var(--blue)"><rect x="2" y="3" width="16" height="14" rx="1.5"/><path d="M2 7h16M6 3v4M14 3v4M10 10v5M7.5 12.5h5"/></svg>
+        Add Shifts
+      </span>
+      <button class="modal-close" onclick="App.closeModal('modal-add-shifts')">✕</button>
+    </div>
+    <div style="padding:6px 20px 2px;background:var(--blue-l);border-bottom:1px solid var(--blue-m);flex-shrink:0">
+      <p style="font-size:12px;color:var(--blue-d);margin:8px 0">Choose a shift type, how many slots are needed each day, then select which days repeat every two weeks.</p>
+    </div>
+    <div id="modal-add-shifts-body" style="overflow-y:auto;flex:1;padding:20px"></div>
+    <div class="modal-footer" style="flex-shrink:0">
+      <button class="btn btn-secondary" onclick="App.closeModal('modal-add-shifts')">Cancel</button>
+      <button class="btn btn-primary" onclick="App.saveAddShifts()">Add to Calendar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Assign Shift Modal -->
+<div class="modal-overlay" id="modal-assign-shift" role="dialog" aria-modal="true" aria-label="Assign Employee">
+  <div class="modal" style="max-width:600px;width:96%;max-height:90vh;display:flex;flex-direction:column">
+    <div class="modal-header" style="flex-shrink:0">
+      <span class="modal-title">
+        <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px;color:var(--blue)"><circle cx="8" cy="6" r="3"/><path d="M2 18v-2a5 5 0 0 1 8.2-3.8M15 12v6M12 15h6"/></svg>
+        Assign Employee
+      </span>
+      <button class="modal-close" onclick="App.closeModal('modal-assign-shift')">✕</button>
+    </div>
+    <div id="modal-assign-shift-body" style="overflow-y:auto;flex:1;padding:20px"></div>
+    <div class="modal-footer" style="flex-shrink:0">
+      <button class="btn btn-secondary" onclick="App.closeModal('modal-assign-shift')">Cancel</button>
+      <button class="btn btn-primary" onclick="App.saveAssignShift()">Assign &amp; Apply Rotation</button>
+    </div>
+  </div>
+</div>
+
 <!-- Staffing Requirements Modal -->
 <div class="modal-overlay" id="modal-slots" role="dialog" aria-modal="true" aria-label="Staffing Requirements">
   <div class="modal" style="max-width:680px;width:96%">
@@ -3867,6 +3906,273 @@ const App = {
     }
   },
 
+  // ── ADD SHIFTS (14-day rotation picker) ─────────────────────
+  openAddShiftsModal() {
+    const g = this.S.selectedGroup;
+    if (!g) { this.showToast('Select a department from the sidebar first', 'warn'); return; }
+    const bId = this.S.user?.buildingId || 'b1';
+    // Start on Monday of current week
+    const startD = new Date(TODAY + 'T12:00:00');
+    const dow = startD.getDay();
+    startD.setDate(startD.getDate() - (dow === 0 ? 6 : dow - 1));
+    const dates = [];
+    for (let i = 0; i < 14; i++) {
+      const d = new Date(startD); d.setDate(d.getDate() + i);
+      dates.push(d.toISOString().slice(0, 10));
+    }
+    this.S._addShiftState = {
+      group: g, buildingId: bId,
+      shiftType: SHIFT_TYPES(g)[0].type,
+      slots: 1, selectedDays: [], dates,
+    };
+    this._renderAddShiftsBody();
+    this.openModal('modal-add-shifts');
+  },
+
+  _renderAddShiftsBody() {
+    const st = this.S._addShiftState;
+    const g = st.group;
+    const col = G_COLORS[g] || 'var(--blue)';
+    const shiftDefs = SHIFT_TYPES(g);
+    const DOW = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+    const typeTabs = shiftDefs.map(sd =>
+      `<button onclick="App.S._addShiftState.shiftType='${sd.type}';App._renderAddShiftsBody()"
+        style="padding:7px 14px;border-radius:8px;border:2px solid ${sd.type===st.shiftType?col:'var(--g200)'};
+          background:${sd.type===st.shiftType?col+'18':'#fff'};color:${sd.type===st.shiftType?col:'var(--g600)'};
+          font-size:13px;font-weight:${sd.type===st.shiftType?'700':'500'};cursor:pointer">
+        ${sd.type} <span style="font-size:10px;opacity:.75">${sd.start}</span>
+      </button>`
+    ).join('');
+
+    const makeDay = (idx) => {
+      const d = new Date(st.dates[idx] + 'T12:00:00');
+      const sel = st.selectedDays.includes(idx);
+      return `<button onclick="App.toggleShiftDay('add',${idx})"
+        style="flex:1;padding:9px 3px;border-radius:8px;border:2px solid ${sel?col:'var(--g200)'};
+          background:${sel?col+'1A':'#fff'};cursor:pointer;min-width:0;transition:all .12s">
+        <div style="font-size:10px;font-weight:700;color:${sel?col:'var(--g400)'}">${DOW[idx%7]}</div>
+        <div style="font-size:15px;font-weight:800;color:${sel?col:'var(--g800)'};margin:2px 0">${d.getDate()}</div>
+        <div style="font-size:9px;color:${sel?col:'var(--g400)'}">${d.toLocaleDateString('en-US',{month:'short'})}</div>
+      </button>`;
+    };
+
+    const week1 = `<div style="display:flex;gap:5px">${[0,1,2,3,4,5,6].map(makeDay).join('')}</div>`;
+    const week2 = `<div style="display:flex;gap:5px">${[7,8,9,10,11,12,13].map(makeDay).join('')}</div>`;
+
+    document.getElementById('modal-add-shifts-body').innerHTML = `
+      <div style="margin-bottom:16px">
+        <div class="form-lbl">Shift Type</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">${typeTabs}</div>
+      </div>
+      <div style="margin-bottom:20px">
+        <div class="form-lbl">Open slots per selected day</div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
+          <button onclick="if(App.S._addShiftState.slots>1){App.S._addShiftState.slots--;App._renderAddShiftsBody()}"
+            style="width:32px;height:32px;border:1.5px solid var(--g200);border-radius:8px;background:#fff;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1">−</button>
+          <span style="font-size:22px;font-weight:800;color:var(--g900);width:28px;text-align:center">${st.slots}</span>
+          <button onclick="App.S._addShiftState.slots++;App._renderAddShiftsBody()"
+            style="width:32px;height:32px;border:1.5px solid var(--g200);border-radius:8px;background:#fff;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1">+</button>
+          <span style="font-size:12px;color:var(--g500)">open position${st.slots===1?'':'s'} per day</span>
+        </div>
+      </div>
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div class="form-lbl" style="margin:0">
+            Select rotation days
+            ${st.selectedDays.length?`<span style="color:${col};font-size:12px;font-weight:700;margin-left:6px">${st.selectedDays.length} selected</span>`:''}
+          </div>
+          <div style="display:flex;gap:4px">
+            <button class="btn btn-ghost btn-sm" onclick="App._selectPreset('add','weekdays')">Weekdays</button>
+            <button class="btn btn-ghost btn-sm" onclick="App._selectPreset('add','all')">All</button>
+            <button class="btn btn-ghost btn-sm" onclick="App.S._addShiftState.selectedDays=[];App._renderAddShiftsBody()">Clear</button>
+          </div>
+        </div>
+        <div style="font-size:11px;font-weight:600;color:var(--g400);margin-bottom:6px">Week 1</div>
+        ${week1}
+        <div style="font-size:11px;font-weight:600;color:var(--g400);margin:10px 0 6px">Week 2</div>
+        ${week2}
+        <div style="font-size:11px;color:var(--g400);margin-top:12px">
+          Selected days repeat every 2 weeks for the next 90 days.
+        </div>
+      </div>`;
+  },
+
+  toggleShiftDay(mode, idx) {
+    const st = mode === 'add' ? this.S._addShiftState : this.S._assignShiftState;
+    const arr = st.selectedDays;
+    const pos = arr.indexOf(idx);
+    if (pos >= 0) arr.splice(pos, 1); else arr.push(idx);
+    if (mode === 'add') this._renderAddShiftsBody();
+    else this._renderAssignShiftBody();
+  },
+
+  _selectPreset(mode, preset) {
+    const st = mode === 'add' ? this.S._addShiftState : this.S._assignShiftState;
+    if (preset === 'weekdays') st.selectedDays = [0,1,2,3,4,7,8,9,10,11];
+    else if (preset === 'all') st.selectedDays = [0,1,2,3,4,5,6,7,8,9,10,11,12,13];
+    if (mode === 'add') this._renderAddShiftsBody();
+    else this._renderAssignShiftBody();
+  },
+
+  saveAddShifts() {
+    const st = this.S._addShiftState;
+    if (!st?.selectedDays?.length) { this.showToast('Select at least one day', 'warn'); return; }
+    const { group: g, buildingId: bId, shiftType, slots } = st;
+    const shiftDef = SHIFT_TYPES(g).find(s => s.type === shiftType) || {};
+    const pickerStart = new Date(st.dates[0] + 'T12:00:00');
+    const end = new Date(TODAY + 'T12:00:00');
+    end.setDate(end.getDate() + 90);
+    let added = 0;
+    for (let cur = new Date(TODAY + 'T12:00:00'); cur <= end; cur.setDate(cur.getDate() + 1)) {
+      const ds = cur.toISOString().slice(0, 10);
+      const diff = Math.round((cur - pickerStart) / 86400000);
+      const cyclePos = ((diff % 14) + 14) % 14;
+      if (!st.selectedDays.includes(cyclePos)) continue;
+      for (let s = 0; s < slots; s++) {
+        this.S.shifts.push({
+          id: 'sh' + Date.now() + Math.random().toString(36).slice(2, 5),
+          date: ds, group: g, type: shiftType,
+          start: shiftDef.start || '', end: shiftDef.end || '',
+          status: 'open', buildingId: bId, employeeId: null,
+        });
+        added++;
+      }
+    }
+    Audit.log('SHIFTS_ADDED', `Added ${added} open ${shiftType} shifts for ${g}`, this.S.user?.id, 'medium');
+    this.persistData();
+    this.closeModal('modal-add-shifts');
+    this.renderMain();
+    this.showToast(`${added} open shift${added===1?'':'s'} added to calendar`);
+  },
+
+  // ── ASSIGN SHIFT (14-day rotation picker) ───────────────────
+  openAssignShiftModal(date, group, shiftType) {
+    const bId = this.S.user?.buildingId || 'b1';
+    // Start on Monday of the week containing the clicked date
+    const startD = new Date(date + 'T12:00:00');
+    const dow = startD.getDay();
+    startD.setDate(startD.getDate() - (dow === 0 ? 6 : dow - 1));
+    const dates = [];
+    for (let i = 0; i < 14; i++) {
+      const d = new Date(startD); d.setDate(d.getDate() + i);
+      dates.push(d.toISOString().slice(0, 10));
+    }
+    const clickedIdx = dates.indexOf(date);
+    this.S._assignShiftState = {
+      date, group, shiftType, buildingId: bId, empId: null,
+      selectedDays: clickedIdx >= 0 ? [clickedIdx] : [],
+      dates,
+    };
+    this._renderAssignShiftBody();
+    this.openModal('modal-assign-shift');
+  },
+
+  _renderAssignShiftBody() {
+    const st = this.S._assignShiftState;
+    const g = st.group;
+    const col = G_COLORS[g] || 'var(--blue)';
+    const DOW = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    const shiftDef = SHIFT_TYPES(g).find(s => s.type === st.shiftType) || {};
+    const ag = getActualGroups(g);
+    const emps = this.S.employees.filter(e =>
+      e.buildingId === st.buildingId && ag.includes(e.group) && !e.inactive
+    );
+
+    const empOpts = `<option value="">Select employee…</option>` +
+      emps.map(e => `<option value="${e.id}"${e.id===st.empId?' selected':''}>${sanitize(e.name)}</option>`).join('');
+
+    const makeDay = (idx) => {
+      const d = new Date(st.dates[idx] + 'T12:00:00');
+      const sel = st.selectedDays.includes(idx);
+      return `<button onclick="App.toggleShiftDay('assign',${idx})"
+        style="flex:1;padding:9px 3px;border-radius:8px;border:2px solid ${sel?col:'var(--g200)'};
+          background:${sel?col+'1A':'#fff'};cursor:pointer;min-width:0;transition:all .12s">
+        <div style="font-size:10px;font-weight:700;color:${sel?col:'var(--g400)'}">${DOW[idx%7]}</div>
+        <div style="font-size:15px;font-weight:800;color:${sel?col:'var(--g800)'};margin:2px 0">${d.getDate()}</div>
+        <div style="font-size:9px;color:${sel?col:'var(--g400)'}">${d.toLocaleDateString('en-US',{month:'short'})}</div>
+      </button>`;
+    };
+
+    const clickedD = new Date(st.date + 'T12:00:00');
+    const dateLabel = clickedD.toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric'});
+
+    document.getElementById('modal-assign-shift-body').innerHTML = `
+      <div style="background:var(--g50);border:1px solid var(--g200);border-radius:10px;padding:12px 16px;margin-bottom:18px;display:flex;align-items:center;gap:10px">
+        <div style="width:36px;height:36px;border-radius:9px;background:${col}22;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:${col}">${G_ICONS[g]||''}</div>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:var(--g900)">${sanitize(g)} · ${st.shiftType}</div>
+          <div style="font-size:12px;color:var(--g500)">${dateLabel} · ${shiftDef.start||''}–${shiftDef.end||''}</div>
+        </div>
+      </div>
+      <div style="margin-bottom:18px">
+        <div class="form-lbl">Employee</div>
+        <select class="form-inp" style="margin-top:6px" onchange="App.S._assignShiftState.empId=this.value;App._renderAssignShiftBody()">
+          ${empOpts}
+        </select>
+      </div>
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div class="form-lbl" style="margin:0">
+            Working days (2-week rotation)
+            ${st.selectedDays.length?`<span style="color:${col};font-size:12px;font-weight:700;margin-left:6px">${st.selectedDays.length} days</span>`:''}
+          </div>
+          <div style="display:flex;gap:4px">
+            <button class="btn btn-ghost btn-sm" onclick="App._selectPreset('assign','weekdays')">Weekdays</button>
+            <button class="btn btn-ghost btn-sm" onclick="App._selectPreset('assign','all')">All</button>
+            <button class="btn btn-ghost btn-sm" onclick="App.S._assignShiftState.selectedDays=[];App._renderAssignShiftBody()">Clear</button>
+          </div>
+        </div>
+        <div style="font-size:11px;font-weight:600;color:var(--g400);margin-bottom:6px">Week 1</div>
+        <div style="display:flex;gap:5px">${[0,1,2,3,4,5,6].map(makeDay).join('')}</div>
+        <div style="font-size:11px;font-weight:600;color:var(--g400);margin:10px 0 6px">Week 2</div>
+        <div style="display:flex;gap:5px">${[7,8,9,10,11,12,13].map(makeDay).join('')}</div>
+        <div style="font-size:11px;color:var(--g400);margin-top:12px">
+          This rotation repeats every 2 weeks for the next 90 days. Fills existing open slots first.
+        </div>
+      </div>`;
+  },
+
+  saveAssignShift() {
+    const st = this.S._assignShiftState;
+    if (!st) return;
+    if (!st.empId) { this.showToast('Select an employee', 'warn'); return; }
+    if (!st.selectedDays.length) { this.showToast('Select at least one working day', 'warn'); return; }
+    const emp = this.S.employees.find(e => e.id === st.empId);
+    if (!emp) { this.showToast('Employee not found', 'warn'); return; }
+    const { group: g, buildingId: bId, shiftType } = st;
+    const shiftDef = SHIFT_TYPES(g).find(s => s.type === shiftType) || {};
+    const pickerStart = new Date(st.dates[0] + 'T12:00:00');
+    const end = new Date(TODAY + 'T12:00:00');
+    end.setDate(end.getDate() + 90);
+    let assigned = 0;
+    for (let cur = new Date(TODAY + 'T12:00:00'); cur <= end; cur.setDate(cur.getDate() + 1)) {
+      const ds = cur.toISOString().slice(0, 10);
+      const diff = Math.round((cur - pickerStart) / 86400000);
+      const cyclePos = ((diff % 14) + 14) % 14;
+      if (!st.selectedDays.includes(cyclePos)) continue;
+      // Skip if employee already scheduled this shift that day
+      if (this.S.shifts.find(s => s.date===ds && s.group===g && s.type===shiftType && s.buildingId===bId && s.employeeId===emp.id)) continue;
+      const openSlot = this.S.shifts.find(s => s.date===ds && s.group===g && s.type===shiftType && s.buildingId===bId && s.status==='open' && !s.employeeId);
+      if (openSlot) {
+        openSlot.status = 'scheduled'; openSlot.employeeId = emp.id;
+      } else {
+        this.S.shifts.push({
+          id: 'sh' + Date.now() + Math.random().toString(36).slice(2, 5),
+          date: ds, group: g, type: shiftType,
+          start: shiftDef.start || '', end: shiftDef.end || '',
+          status: 'scheduled', buildingId: bId, employeeId: emp.id,
+        });
+      }
+      assigned++;
+    }
+    Audit.log('SHIFT_ASSIGNED', `Assigned ${sanitize(emp.name)} to ${assigned} ${shiftType} ${g} shifts`, this.S.user?.id, 'medium');
+    this.persistData();
+    this.closeModal('modal-assign-shift');
+    this.renderMain();
+    this.showToast(`${sanitize(emp.name.split(' ')[0])} assigned to ${assigned} shift${assigned===1?'':'s'}`);
+  },
+
   // ── REMOVE FROM DAY ─────────────────────────────────────────
   openRemoveShiftModal(date, shiftId, shiftType, empId) {
     const emp = this.S.employees.find(e => e.id === empId);
@@ -6205,6 +6511,10 @@ const App = {
     }
     const groupPill = g ? `<div class="group-pill" style="background:${G_COLORS[g]}11;border:1.5px solid ${G_COLORS[g]}33;color:${G_COLORS[g]}">${G_ICONS[g]} ${g}</div>` : '';
     const hasSlots = g && Object.keys(((this.S.staffingSlots||{})[bId]||{})[g]||{}).some(k=>((this.S.staffingSlots||{})[bId]||{})[g][k]>0);
+    const addShiftsBtn = `<button class="btn btn-primary btn-sm" onclick="App.openAddShiftsModal()" style="display:flex;align-items:center;gap:6px;font-weight:600">
+      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/></svg>
+      Add Shifts
+    </button>`;
     const slotsBtn = `<button class="btn btn-secondary btn-sm" onclick="App.openShiftManagerModal()" style="display:flex;align-items:center;gap:6px;font-weight:600">
       <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 6h14M5 2v4M11 2v4M4 10h3M9 10h3"/></svg>
       Manage Shifts
@@ -6231,7 +6541,7 @@ const App = {
     else calHtml = this.renderShiftView();
 
     document.getElementById('main').innerHTML = `${stats}
-      <div class="cal-toolbar">${viewTabs}${groupPill}${g?slotsBtn:''}${filterTabs}</div>${calHtml}`;
+      <div class="cal-toolbar">${viewTabs}${groupPill}${g?addShiftsBtn:''}${g?slotsBtn:''}${filterTabs}</div>${calHtml}`;
   },
 
   // ── PPD CALCULATOR ──────────────────────────────────────────
@@ -6637,9 +6947,9 @@ const App = {
               pills += `<span class="shift-emp" title="${sanitize(emp.name)} — click to manage" style="max-width:54px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer" onclick="event.stopPropagation();App.openRemoveShiftModal('${ds}','${slot.id}','${sh.type}','${emp.id}')">${sanitize(firstName)}</span>`;
             }
           });
-          // Empty slot indicators
+          // Empty slot indicators — clickable to assign
           for (let i = 0; i < numEmpty; i++) {
-            pills += `<span class="shift-open-tag" style="opacity:.8">OPEN</span>`;
+            pills += `<span class="shift-open-tag" style="opacity:.8;cursor:pointer" title="Click to assign" onclick="event.stopPropagation();App.openAssignShiftModal('${ds}','${g}','${sh.type}')">OPEN</span>`;
           }
 
           content += `<div class="shift-row" style="flex-wrap:wrap;gap:2px;row-gap:2px">
@@ -6838,9 +7148,9 @@ const App = {
           return `<span class="shift-emp" title="${sanitize(emp.name)}" style="display:block;width:100%;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px">${sanitize(firstName)} ${emp.name.split(' ').slice(1).map(w=>w[0]).join('.')}.</span>`;
         }).join('');
 
-        // Empty slot placeholders
+        // Empty slot placeholders — clickable to assign
         for (let i = 0; i < numEmpty; i++) {
-          pills += `<div style="border:1.5px dashed #FCA5A5;border-radius:5px;padding:2px 5px;font-size:10px;font-weight:700;color:#DC2626;text-align:center;margin-top:1px">OPEN</div>`;
+          pills += `<div style="border:1.5px dashed #FCA5A5;border-radius:5px;padding:2px 5px;font-size:10px;font-weight:700;color:#DC2626;text-align:center;margin-top:1px;cursor:pointer" title="Click to assign" onclick="event.stopPropagation();App.openAssignShiftModal('${ds}','${g}','${sh.type}')">OPEN</div>`;
         }
 
         const badge = hasReqs && req > 0
