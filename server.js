@@ -54,12 +54,23 @@ const SEED_SA = {
   ph: null   // ph:null = any password on first login becomes permanent
 };
 
-// ── DEMO ACCOUNT (any password, admin view of Harmony Hills) ─────────────────
+// ── DEMO ACCOUNT (any password, admin view of building b1) ───────────────────
 const SEED_DEMO = {
   id: 'sa-demo',
   name: 'Demo Admin',
   email: 'demo@demo.com',
   role: 'admin',
+  buildingId: 'b1',
+  ph: null   // always accepts any password (demo mode)
+};
+
+// ── DEMO NURSE ACCOUNT (any password, employee/CNA view) ─────────────────────
+const SEED_DEMO_NURSE = {
+  id: 'demo-nurse',
+  name: 'Demo Nurse',
+  email: 'nurse@demo.com',
+  role: 'employee',
+  group: 'CNA',
   buildingId: 'b1',
   ph: null   // always accepts any password (demo mode)
 };
@@ -156,7 +167,7 @@ function loadData() {
   }
 
   // Ensure seed accounts always exist and have the correct immutable fields
-  for (const seed of [SEED_SA, SEED_DEMO]) {
+  for (const seed of [SEED_SA, SEED_DEMO, SEED_DEMO_NURSE]) {
     const existing = data.accounts.find(a => a.id === seed.id);
     if (!existing) {
       data.accounts.push(seed);
@@ -246,8 +257,8 @@ app.post('/api/auth/login', (req, res) => {
     return res.status(401).json({ error: 'Invalid email or password' });
   }
 
-  if (acct.id === SEED_DEMO.id) {
-    // Demo account — always accepts any password, never persists it
+  if (acct.id === SEED_DEMO.id || acct.id === SEED_DEMO_NURSE.id) {
+    // Demo accounts — always accept any password, never persist it
   } else if (acct.ph === null || acct.ph === undefined) {
     // First login — any password becomes permanent
     acct.ph = passwordHash;
@@ -270,7 +281,8 @@ app.post('/api/auth/login', (req, res) => {
     role:       acct.role,
     buildingId: acct.buildingId || null,
     // Demo accounts use seed data client-side; nothing is persisted server-side
-    demo:       (acct.id === SEED_DEMO.id) || undefined,
+    demo:       (acct.id === SEED_DEMO.id || acct.id === SEED_DEMO_NURSE.id) || undefined,
+    group:      acct.group || undefined,
   };
   const token = jwt.sign(userPayload, JWT_SECRET, { expiresIn: '7d' });
 
