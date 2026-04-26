@@ -1040,28 +1040,39 @@ const SEED_HR_ACCOUNTS = [
   {id:'ha2',initials:'MP',name:'Michael Park',email:'michael.p@facility.com',role:'Admin',status:'active'},
 ];
 function generateHRTimeClock() {
-  const recs=[]; const names=['Maria Santos','James Wilson','David Chen','Tom Rivera'];
-  const roles=['CNA','RN','CNA','CMA'];
-  const now=new Date(); let id=1;
-  for(let d=0;d<14;d++){
-    const dt=new Date(now); dt.setDate(dt.getDate()-d);
-    const ds=dt.toISOString().slice(0,10);
-    names.forEach((nm,i)=>{
-      const missed=Math.random()<0.08;
-      const late=Math.random()<0.07;
-      const inH=missed?8:(late?8:7+Math.round(Math.random()));
-      const inM=late?Math.floor(Math.random()*30)+1:0;
-      const outH=missed?null:inH+8+Math.round(Math.random()*1.5);
-      const outM=missed?null:Math.floor(Math.random()*60);
-      const hrs=missed?null:((outH-inH)+(outM-inM)/60).toFixed(1);
-      const status=missed?'missed':(late?'late':'normal');
-      recs.push({id:id++,name:nm,role:roles[i],date:ds,
-        in:missed?'08:00':`${String(inH).padStart(2,'0')}:${String(inM).padStart(2,'0')}`,
-        out:missed?null:`${String(Math.min(outH,23)).padStart(2,'0')}:${String(outM).padStart(2,'0')}`,
-        hours:hrs,status});
+  // Per-employee punch reliability profile (missed-in%, no-out%, late%)
+  const employees = [
+    {id:'tc-ms', name:'Maria Santos', role:'CNA',  pMiss:0.05, pNoOut:0.06, pLate:0.10},
+    {id:'tc-jw', name:'James Wilson', role:'RN',   pMiss:0.02, pNoOut:0.03, pLate:0.05},
+    {id:'tc-dc', name:'David Chen',   role:'CNA',  pMiss:0.10, pNoOut:0.08, pLate:0.15},
+    {id:'tc-tr', name:'Tom Rivera',   role:'CMA',  pMiss:0.03, pNoOut:0.04, pLate:0.08},
+  ];
+  const recs = []; const now = new Date(); let id = 1;
+  for (let d = 0; d < 30; d++) {
+    const dt = new Date(now); dt.setDate(dt.getDate() - d);
+    const ds = dt.toISOString().slice(0, 10);
+    employees.forEach(emp => {
+      const r = Math.random();
+      const missedIn = r < emp.pMiss;
+      const noOut    = !missedIn && r < emp.pMiss + emp.pNoOut;
+      const late     = !missedIn && !noOut && r < emp.pMiss + emp.pNoOut + emp.pLate;
+      const baseH    = 7 + Math.round(Math.random());
+      const inH      = missedIn ? null : baseH;
+      const inM      = late ? (Math.floor(Math.random() * 27) + 5) : Math.floor(Math.random() * 5);
+      const outH     = (missedIn || noOut) ? null : (inH + 8 + Math.round(Math.random() * 1.5));
+      const outM     = (missedIn || noOut) ? null : Math.floor(Math.random() * 60);
+      const hours    = (inH != null && outH != null)
+        ? ((outH - inH) + (outM - inM) / 60).toFixed(1) : null;
+      const status   = missedIn ? 'missed' : noOut ? 'no-out' : late ? 'late' : 'normal';
+      recs.push({
+        id: id++, empId: emp.id, name: emp.name, role: emp.role, date: ds,
+        in:  inH  != null ? `${String(inH).padStart(2,'0')}:${String(inM).padStart(2,'0')}` : null,
+        out: outH != null ? `${String(Math.min(outH,23)).padStart(2,'0')}:${String(outM).padStart(2,'0')}` : null,
+        hours, status,
+      });
     });
   }
-  return recs.sort((a,b)=>b.date.localeCompare(a.date)||a.name.localeCompare(b.name));
+  return recs.sort((a,b) => b.date.localeCompare(a.date) || a.name.localeCompare(b.name));
 }
 function generateHRAuditLog() {
   const actions=['edit_punch','approve_doc','export_data','view_phi','add_employee','sync_adp','edit_schedule','approve_timeoff','generate_pbj','login'];
@@ -1250,6 +1261,9 @@ const App = {
     pccLastSync: null,   // ISO timestamp of last census sync
     pccLastCensus: null, // number — most recent synced census count
     pccSyncing: false,
+    // Time Clock
+    tcSort: {col:'date', dir:-1},
+    tcMissedPeriod: null,
   },
 
   // ── TIMERS & INTERNAL STATE ───────────────────────────────
@@ -2777,40 +2791,189 @@ const App = {
 
   renderHRTimeClock() {
     if (!this.S.hrTimeClock) this.S.hrTimeClock = generateHRTimeClock();
-    const recs = this.S.hrTimeClock;
-    const statusColor = {normal:'var(--green)',late:'var(--amber)',missed:'var(--red)'};
-    const rows = recs.slice(0,50).map(r=>`
-      <tr style="border-bottom:1px solid var(--g100)">
+    if (!this.S.tcSort) this.S.tcSort = {col:'date', dir:-1};
+    const recs   = this.S.hrTimeClock;
+    const sort   = this.S.tcSort;
+    const period = this.S.tcMissedPeriod || null;
+
+    // ── Sorting ──────────────────────────────────────────────
+    const sorted = [...recs].sort((a, b) => {
+      const statusOrder = {missed:0,'no-out':1,late:2,normal:3};
+      let va, vb;
+      if      (sort.col === 'name')   { va = a.name;   vb = b.name; }
+      else if (sort.col === 'role')   { va = a.role;   vb = b.role; }
+      else if (sort.col === 'date')   { va = a.date;   vb = b.date; }
+      else if (sort.col === 'hours')  { va = parseFloat(a.hours)||0; vb = parseFloat(b.hours)||0; }
+      else if (sort.col === 'status') { va = statusOrder[a.status]??9; vb = statusOrder[b.status]??9; }
+      else                            { va = a.date;   vb = b.date; }
+      if (typeof va === 'string') return va.localeCompare(vb) * sort.dir;
+      return (va - vb) * sort.dir;
+    });
+
+    // ── Punch scores (cached per session data) ────────────────
+    const empIds = [...new Set(recs.map(r => r.empId))];
+    const scores = {};
+    empIds.forEach(eid => { scores[eid] = this._tcPunchScore(eid, recs); });
+
+    // ── Sortable column header helper ─────────────────────────
+    const SH = (col, label) => {
+      const active = sort.col === col;
+      const arrow  = active ? (sort.dir === 1 ? ' ▲' : ' ▼') : ' <span style="opacity:.2;font-size:9px">↕</span>';
+      return `<th onclick="App.tcSetSort('${col}')" style="padding:9px 14px;text-align:left;font-size:11px;font-weight:700;color:${active?'var(--blue)':'var(--g400)'};text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;cursor:pointer;user-select:none;transition:color .15s">${label}${arrow}</th>`;
+    };
+
+    // ── Status display config ─────────────────────────────────
+    const statusCfg = {
+      normal: {label:'normal',  color:'var(--green)', bg:'var(--green-l)'},
+      late:   {label:'late',    color:'var(--amber)', bg:'var(--amber-l)'},
+      missed: {label:'missed',  color:'var(--red)',   bg:'var(--red-l)'},
+      'no-out':{label:'no out', color:'#7C3AED',      bg:'#F5F3FF'},
+    };
+
+    // ── Table rows ────────────────────────────────────────────
+    const rows = sorted.slice(0, 50).map(r => {
+      const sc  = scores[r.empId] || {score:100,late:0,missed:0,noOut:0};
+      const scColor = sc.score >= 90 ? 'var(--green)' : sc.score >= 70 ? 'var(--amber)' : 'var(--red)';
+      const scBg    = sc.score >= 90 ? 'var(--green-l)' : sc.score >= 70 ? 'var(--amber-l)' : 'var(--red-l)';
+      const scTip   = `${sc.score}/100 — ${sc.late} late, ${sc.missed} missed, ${sc.noOut} no clock-out (30 days)`;
+      const cfg     = statusCfg[r.status] || statusCfg.normal;
+      const inDisp  = r.in  ? `<span style="font-family:monospace">${r.in}</span>`  : `<span style="color:var(--red);font-weight:700">—</span>`;
+      const outDisp = r.out ? `<span style="font-family:monospace">${r.out}</span>` : `<span style="color:var(--red);font-weight:700">—</span>`;
+      return `<tr style="border-bottom:1px solid var(--g100)">
         <td style="padding:9px 14px;font-size:13px;font-weight:600;color:var(--g900)">${sanitize(r.name)}</td>
         <td style="padding:9px 14px;font-size:12px;color:var(--g500)">${sanitize(r.role)}</td>
         <td style="padding:9px 14px;font-size:12px;color:var(--g600)">${r.date}</td>
-        <td style="padding:9px 14px;font-size:12px;font-family:'JetBrains Mono',monospace">${r.in}</td>
-        <td style="padding:9px 14px;font-size:12px;font-family:'JetBrains Mono',monospace">${r.out||'—'}</td>
-        <td style="padding:9px 14px;font-size:12px;font-weight:600;color:var(--g700)">${r.hours?r.hours+'h':'—'}</td>
-        <td style="padding:9px 14px"><span style="font-size:11px;font-weight:700;color:${statusColor[r.status]};background:${r.status==='normal'?'var(--green-l)':r.status==='late'?'var(--amber-l)':'var(--red-l)'};padding:2px 8px;border-radius:6px">${r.status}</span></td>
+        <td style="padding:9px 14px;font-size:12px">${inDisp}</td>
+        <td style="padding:9px 14px;font-size:12px">${outDisp}</td>
+        <td style="padding:9px 14px;font-size:12px;font-weight:600;color:var(--g700)">${r.hours ? r.hours+'h' : '—'}</td>
+        <td style="padding:9px 14px"><span style="font-size:11px;font-weight:700;color:${cfg.color};background:${cfg.bg};padding:2px 8px;border-radius:6px">${cfg.label}</span></td>
+        <td style="padding:9px 14px">
+          <span title="${scTip}" style="display:inline-flex;align-items:center;font-size:12px;font-weight:800;color:${scColor};background:${scBg};padding:2px 9px;border-radius:6px;cursor:help;min-width:30px;justify-content:center">${sc.score}</span>
+        </td>
         <td style="padding:9px 14px"><button class="btn btn-ghost btn-sm" onclick="App.showToast('Punch edit — coming soon','warn')">Edit</button></td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
+
+    // ── Missed punch panel ────────────────────────────────────
+    let missedPanel = '';
+    if (period) {
+      const cutoff = period === 'day'   ? TODAY
+        : period === 'week'  ? new Date(Date.now() - 6 *86400000).toISOString().slice(0,10)
+        : new Date(Date.now() - 29*86400000).toISOString().slice(0,10);
+
+      const issueRecs = recs.filter(r => r.date >= cutoff && r.status !== 'normal');
+      const byEmp = {};
+      issueRecs.forEach(r => {
+        if (!byEmp[r.empId]) byEmp[r.empId] = {empId:r.empId, name:r.name, role:r.role, missed:0, noOut:0, late:0};
+        if (r.status==='missed')  byEmp[r.empId].missed++;
+        else if (r.status==='no-out') byEmp[r.empId].noOut++;
+        else if (r.status==='late')   byEmp[r.empId].late++;
+      });
+      const empArr = Object.values(byEmp).sort((a,b)=>(b.missed+b.noOut)-(a.missed+a.noOut));
+      const pTabs  = ['day','week','month'].map(p => `
+        <button onclick="App.tcShowMissed('${p}')" style="padding:3px 11px;border-radius:6px;border:none;font-size:11px;font-weight:700;cursor:pointer;transition:all .15s;background:${period===p?'#fff':'transparent'};color:${period===p?'var(--red)':'var(--g500)'};box-shadow:${period===p?'var(--shadow)':'none'}">${p==='day'?'Today':p==='week'?'This Week':'This Month'}</button>`
+      ).join('');
+      const empRows = empArr.map(e => {
+        const sc = scores[e.empId] || {score:100};
+        const scColor = sc.score>=90?'var(--green)':sc.score>=70?'var(--amber)':'var(--red)';
+        return `<tr style="border-bottom:1px solid var(--g100)">
+          <td style="padding:8px 14px;font-size:13px;font-weight:600;color:var(--g900)">${sanitize(e.name)}</td>
+          <td style="padding:8px 14px;font-size:12px;color:var(--g500)">${sanitize(e.role)}</td>
+          <td style="padding:8px 14px;text-align:center">${e.missed?`<span style="font-size:11px;font-weight:700;color:var(--red);background:var(--red-l);padding:2px 8px;border-radius:6px">${e.missed} missed</span>`:'<span style="color:var(--g300)">—</span>'}</td>
+          <td style="padding:8px 14px;text-align:center">${e.noOut?`<span style="font-size:11px;font-weight:700;color:#7C3AED;background:#F5F3FF;padding:2px 8px;border-radius:6px">${e.noOut} no&nbsp;out</span>`:'<span style="color:var(--g300)">—</span>'}</td>
+          <td style="padding:8px 14px;text-align:center">${e.late?`<span style="font-size:11px;font-weight:700;color:var(--amber);background:var(--amber-l);padding:2px 8px;border-radius:6px">${e.late} late</span>`:'<span style="color:var(--g300)">—</span>'}</td>
+          <td style="padding:8px 14px;text-align:center"><span style="font-size:12px;font-weight:800;color:${scColor}">${sc.score}</span></td>
+        </tr>`;
+      }).join('');
+
+      missedPanel = `
+        <div style="background:#fff;border:1.5px solid #FECACA;border-radius:12px;overflow:hidden;margin-bottom:16px">
+          <div style="padding:12px 16px;background:var(--red-l);border-bottom:1px solid #FECACA;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+            <div style="display:flex;align-items:center;gap:10px">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="var(--red)" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v3M8 10.5v.5"/></svg>
+              <span style="font-size:13px;font-weight:800;color:var(--red)">${empArr.length} employee${empArr.length!==1?'s':''} with punch issues</span>
+              <div style="display:flex;background:rgba(239,68,68,.1);border-radius:8px;padding:2px;gap:1px">${pTabs}</div>
+            </div>
+            <button onclick="App.tcHideMissed()" style="background:none;border:none;cursor:pointer;color:var(--g400);font-size:18px;line-height:1;padding:4px 6px" title="Close">×</button>
+          </div>
+          ${empArr.length ? `
+            <table style="width:100%;border-collapse:collapse">
+              <thead><tr style="border-bottom:1px solid var(--g100)">
+                <th style="padding:8px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase">Employee</th>
+                <th style="padding:8px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase">Role</th>
+                <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">Missed In</th>
+                <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:#7C3AED;text-transform:uppercase">No Clock-Out</th>
+                <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--amber);text-transform:uppercase">Late</th>
+                <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase">30d Score</th>
+              </tr></thead>
+              <tbody>${empRows}</tbody>
+            </table>` : `
+            <div style="padding:20px;text-align:center;font-size:13px;color:var(--g400)">No punch issues for this period</div>`}
+        </div>`;
+    }
+
+    const corrections = recs.filter(r => r.status !== 'normal').length;
     return `
       ${this.hrHipaaBar()}
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
         <div><div class="hr-page-title">Time Clock</div><div class="hr-page-sub">Punch records, imports, hours summary</div></div>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-secondary btn-sm">Import CSV</button>
-          <button class="btn btn-secondary btn-sm">Hours Summary</button>
-          <button class="btn btn-secondary btn-sm" style="color:var(--red)">Corrections ${recs.filter(r=>r.status!=='normal').length}</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-secondary btn-sm" onclick="App.showToast('CSV import — coming soon','warn')">Import CSV</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.showToast('Hours summary — coming soon','warn')">Hours Summary</button>
+          <button class="btn btn-secondary btn-sm" style="color:var(--red);border-color:#FECACA" onclick="App.tcShowMissed('${period||'day'}')">
+            <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink:0"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v3M8 10.5v.5"/></svg>
+            Missed Punches <span style="background:var(--red);color:#fff;border-radius:99px;padding:0 5px;font-size:10px;margin-left:3px">${corrections}</span>
+          </button>
         </div>
       </div>
-      <div class="hr-section" style="overflow:auto;max-height:60vh">
+      ${missedPanel}
+      <div class="hr-section" style="overflow:auto;max-height:${period?'42vh':'60vh'}">
         <table style="width:100%;border-collapse:collapse">
           <thead style="position:sticky;top:0;background:#fff;z-index:1">
             <tr style="border-bottom:2px solid var(--g100)">
-              ${['Employee','Role','Date','Clock In','Clock Out','Hours','Status',''].map(h=>`<th style="padding:9px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap">${h}</th>`).join('')}
+              ${SH('name','Employee')}
+              ${SH('role','Role')}
+              ${SH('date','Date')}
+              <th style="padding:9px 14px;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">Clock In</th>
+              <th style="padding:9px 14px;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">Clock Out</th>
+              ${SH('hours','Hours')}
+              ${SH('status','Status')}
+              <th style="padding:9px 14px;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap" title="Punch reliability score (0–100, last 30 days). Normal=full points, Late=70%, Missed/No-Out=0%">Score ⓘ</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>${rows}</tbody>
         </table>
-        <div style="padding:12px 16px;font-size:12px;color:var(--g400);text-align:center">Showing 50 of ${recs.length} records</div>
+        <div style="padding:10px 16px;font-size:11px;color:var(--g400);text-align:center;border-top:1px solid var(--g100)">
+          Showing ${Math.min(50,recs.length)} of ${recs.length} records · <strong>Score:</strong> 90–100 <span style="color:var(--green)">●</span> Good · 70–89 <span style="color:var(--amber)">●</span> Fair · &lt;70 <span style="color:var(--red)">●</span> Needs attention
+        </div>
       </div>`;
+  },
+
+  // ── Time Clock helpers ───────────────────────────────────
+  tcSetSort(col) {
+    if (!this.S.tcSort) this.S.tcSort = {col:'date', dir:-1};
+    this.S.tcSort = this.S.tcSort.col === col
+      ? {col, dir: this.S.tcSort.dir * -1}
+      : {col, dir: (col==='date'||col==='hours'||col==='status') ? -1 : 1};
+    this.renderHRMain();
+  },
+
+  tcShowMissed(period) { this.S.tcMissedPeriod = period; this.renderHRMain(); },
+  tcHideMissed()       { this.S.tcMissedPeriod = null;   this.renderHRMain(); },
+
+  _tcPunchScore(empId, allRecs) {
+    const empRecs = allRecs.filter(r => r.empId === empId);
+    if (!empRecs.length) return {score:100, late:0, missed:0, noOut:0};
+    let pts = 0, maxPts = 0, late = 0, missed = 0, noOut = 0;
+    for (const r of empRecs) {
+      maxPts += 10;
+      if      (r.status === 'missed')  { missed++; pts += 0; }
+      else if (r.status === 'no-out')  { noOut++;  pts += 4; }
+      else if (r.status === 'late')    { late++;   pts += 7; }
+      else                             {           pts += 10; }
+    }
+    return {score: Math.round(pts / maxPts * 100), late, missed, noOut};
   },
 
   renderHRDataCenter() {
