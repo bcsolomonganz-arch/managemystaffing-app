@@ -2423,7 +2423,9 @@ const App = {
       (a.buildingId === b.id || (a.buildingIds||[]).includes(b.id)) &&
       (a.role === 'admin' || a.role === 'regionaladmin'));
     const staff = this.S.employees.filter(e => e.buildingId === b.id);
-    const openShifts = this.S.shifts.filter(s => s.buildingId === b.id && s.status === 'open' && s.date >= TODAY).length;
+    const twoWeeksOut = new Date(); twoWeeksOut.setDate(twoWeeksOut.getDate() + 14);
+    const twoWeeksStr = twoWeeksOut.toISOString().slice(0,10);
+    const openShifts = this.S.shifts.filter(s => s.buildingId === b.id && s.status === 'open' && s.date >= TODAY && s.date <= twoWeeksStr).length;
     const primaryAdmin = admins[0];
     const bInitials = primaryAdmin ? sanitize(primaryAdmin.name.split(' ').map(w=>w[0]).join('').slice(0,2)) : '';
     return `
@@ -2539,9 +2541,9 @@ const App = {
   // ── COMPANY CARD (on SA overview) ────────────────────────────
   _buildCompanyCard(co) {
     const coBuildings = this.S.buildings.filter(b => b.companyId === co.id);
-    const coStaff = this.S.employees.filter(e => coBuildings.some(b => b.id === e.buildingId));
-    const coAdmins = this.S.accounts.filter(a => (a.role === 'admin' || a.role === 'regionaladmin') && coBuildings.some(b => b.id === (a.buildingId || '') || (a.buildingIds||[]).includes(b.id)));
-    const coOpen = this.S.shifts.filter(s => s.status === 'open' && s.date >= TODAY && coBuildings.some(b => b.id === s.buildingId)).length;
+    const bd = this.S.billingData || {};
+    const monthlyRevenue = coBuildings.reduce((sum, b) => sum + (bd[b.id]?.monthlyFee || 0), 0);
+    const revenueStr = monthlyRevenue > 0 ? '$' + monthlyRevenue.toLocaleString() + '/mo' : '—';
     return `
       <div class="building-card" style="--accent:${co.color||'var(--blue)'}">
         <div style="position:absolute;top:0;left:0;right:0;height:4px;background:${co.color||'var(--blue)'}"></div>
@@ -2552,10 +2554,8 @@ const App = {
           <div class="building-name" style="margin-bottom:0">${sanitize(co.name)}</div>
         </div>
         <div class="building-stats" style="margin-top:12px">
-          <div class="building-stat"><div class="building-stat-val">${coBuildings.length}</div><div class="building-stat-label">Facilities</div></div>
-          <div class="building-stat"><div class="building-stat-val">${coStaff.length}</div><div class="building-stat-label">Staff</div></div>
-          <div class="building-stat"><div class="building-stat-val">${coAdmins.length}</div><div class="building-stat-label">Admins</div></div>
-          <div class="building-stat"><div class="building-stat-val" style="${coOpen>0?'color:var(--red)':''}">${coOpen}</div><div class="building-stat-label">Open</div></div>
+          <div class="building-stat"><div class="building-stat-val">${coBuildings.length}</div><div class="building-stat-label">Buildings</div></div>
+          <div class="building-stat"><div class="building-stat-val" style="font-size:15px">${revenueStr}</div><div class="building-stat-label">Monthly Revenue</div></div>
         </div>
         <div class="building-actions" style="margin-top:14px">
           <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();App.enterCompany('${co.id}')">Enter Company →</button>
