@@ -570,9 +570,14 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
       <div class="form-group"><label>Company Name</label><input type="text" id="co-name" placeholder="Sunrise Health Group"></div>
       <div class="form-group"><label>Color</label>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px" id="co-color-swatches">
-          ${['#2563EB','#7C3AED','#059669','#D97706','#DC2626','#DB2777','#0891B2','#EA580C'].map((c,i)=>`
-            <div onclick="App._selectCoColor('${c}',this)" data-color="${c}" style="width:28px;height:28px;border-radius:50%;background:${c};cursor:pointer;border:2px solid ${i===0?'#111':'transparent'};transition:border .15s"></div>
-          `).join('')}
+          <div class="co-swatch" onclick="App._selectCoColor('#2563EB',this)" data-color="#2563EB" style="width:28px;height:28px;border-radius:50%;background:#2563EB;cursor:pointer;border:2.5px solid #111;transition:border .15s"></div>
+          <div class="co-swatch" onclick="App._selectCoColor('#7C3AED',this)" data-color="#7C3AED" style="width:28px;height:28px;border-radius:50%;background:#7C3AED;cursor:pointer;border:2.5px solid transparent;transition:border .15s"></div>
+          <div class="co-swatch" onclick="App._selectCoColor('#059669',this)" data-color="#059669" style="width:28px;height:28px;border-radius:50%;background:#059669;cursor:pointer;border:2.5px solid transparent;transition:border .15s"></div>
+          <div class="co-swatch" onclick="App._selectCoColor('#D97706',this)" data-color="#D97706" style="width:28px;height:28px;border-radius:50%;background:#D97706;cursor:pointer;border:2.5px solid transparent;transition:border .15s"></div>
+          <div class="co-swatch" onclick="App._selectCoColor('#DC2626',this)" data-color="#DC2626" style="width:28px;height:28px;border-radius:50%;background:#DC2626;cursor:pointer;border:2.5px solid transparent;transition:border .15s"></div>
+          <div class="co-swatch" onclick="App._selectCoColor('#DB2777',this)" data-color="#DB2777" style="width:28px;height:28px;border-radius:50%;background:#DB2777;cursor:pointer;border:2.5px solid transparent;transition:border .15s"></div>
+          <div class="co-swatch" onclick="App._selectCoColor('#0891B2',this)" data-color="#0891B2" style="width:28px;height:28px;border-radius:50%;background:#0891B2;cursor:pointer;border:2.5px solid transparent;transition:border .15s"></div>
+          <div class="co-swatch" onclick="App._selectCoColor('#EA580C',this)" data-color="#EA580C" style="width:28px;height:28px;border-radius:50%;background:#EA580C;cursor:pointer;border:2.5px solid transparent;transition:border .15s"></div>
         </div>
         <input type="hidden" id="co-color" value="#2563EB">
       </div>
@@ -1028,11 +1033,11 @@ const PRESETS = {
 //  SEED DATA
 // ════════════════════════════════════════════════════════════
 const SEED_COMPANIES = [
-  // empty by default — companies are created by the super admin
+  {id:'co_skyblue',name:'SkyBlue Healthcare',color:'#0891B2'},
 ];
 
 const SEED_BUILDINGS = [
-  {id:'b1',name:'Harmony Hills Nursing Home',address:'421 Harmony Ln, Springfield, IL 62701',phone:'555-0200',beds:120,color:'#2563EB'},
+  {id:'b1',name:'Kirkland Court',address:'421 Harmony Ln, Springfield, IL 62701',phone:'555-0200',beds:120,color:'#0891B2',companyId:'co_skyblue'},
   {id:'b2',name:'Sunrise Skilled Care',address:'89 Sunrise Blvd, Riverside, CA 92501',phone:'555-0201',beds:96,color:'#7C3AED'},
   {id:'b3',name:'Willowbrook Care Center',address:'1144 Willow Dr, Lakewood, CO 80401',phone:'555-0202',beds:80,color:'#059669'},
   {id:'b4',name:'Golden Acres Rehabilitation',address:'775 Golden Ave, Hillside, TX 76001',phone:'555-0203',beds:64,color:'#D97706'},
