@@ -775,6 +775,40 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
   res.json({ ok: true, emailSent, smsSent, errors });
 });
 
+// ── POST /api/sms ─────────────────────────────────────────────────────────────
+// Sends a single SMS to a specific phone number. Admin only.
+// Body: { to, message }  — `to` is any phone format; server normalises to E.164
+app.post('/api/sms', requireAuth, requireAdmin, async (req, res) => {
+  const { to, message } = req.body || {};
+  if (!to || !message) return res.status(400).json({ error: 'to and message are required' });
+
+  if (!ACS_CONNECTION_STRING || !ACS_FROM_PHONE) {
+    return res.status(503).json({ error: 'SMS not configured — set ACS_CONNECTION_STRING and ACS_FROM_PHONE' });
+  }
+
+  const normalized = toE164(to);
+  if (!normalized) return res.status(400).json({ error: `Invalid phone number: ${to}` });
+
+  try {
+    const { SmsClient } = require('@azure/communication-sms');
+    const smsClient = new SmsClient(ACS_CONNECTION_STRING);
+    const results = await smsClient.send({
+      from: ACS_FROM_PHONE,
+      to: [normalized],
+      message: message.slice(0, 1600),
+    });
+    if (results[0]?.successful) {
+      console.log(`[mms] SMS sent by ${req.user.email} to ${normalized}`);
+      res.json({ ok: true });
+    } else {
+      res.status(502).json({ error: results[0]?.errorMessage || 'SMS send failed' });
+    }
+  } catch (e) {
+    console.error('[mms] /api/sms error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── POST /api/demo/message ────────────────────────────────────────────────────
 // Sends a direct email message to a demo prospect. Super admin only.
 // Body: { to, name, subject, message }

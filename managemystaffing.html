@@ -852,6 +852,38 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
   </div>
 </div>
 
+<!-- Shift Manager Modal -->
+<div class="modal-overlay" id="modal-shift-manager" role="dialog" aria-modal="true" aria-label="Manage Shifts">
+  <div class="modal" style="max-width:780px;width:96%;max-height:90vh;display:flex;flex-direction:column">
+    <div class="modal-header" style="flex-shrink:0">
+      <span class="modal-title">
+        <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;color:var(--blue)"><rect x="2" y="3" width="16" height="14" rx="1.5"/><path d="M2 7h16M6 3v4M14 3v4"/></svg>
+        Manage Shifts
+      </span>
+      <button class="modal-close" onclick="App.closeModal('modal-shift-manager')">✕</button>
+    </div>
+    <div style="padding:6px 20px 2px;background:var(--blue-l);border-bottom:1px solid var(--blue-m);flex-shrink:0">
+      <p style="font-size:12px;color:var(--blue-d);margin:8px 0">Set required headcount per shift, assign employees, and configure rotations. Changes apply to all future periods until updated.</p>
+    </div>
+    <div id="modal-shift-manager-body" style="overflow-y:auto;flex:1;padding:16px 20px"></div>
+    <div class="modal-footer" style="flex-shrink:0">
+      <button class="btn btn-secondary" onclick="App.closeModal('modal-shift-manager')">Cancel</button>
+      <button class="btn btn-primary" onclick="App.saveShiftManager()">Save Shifts</button>
+    </div>
+  </div>
+</div>
+
+<!-- Remove From Day Modal -->
+<div class="modal-overlay" id="modal-remove-shift" role="dialog" aria-modal="true" aria-label="Remove from Day">
+  <div class="modal" style="max-width:520px;width:96%">
+    <div class="modal-header">
+      <span class="modal-title">Shift Options</span>
+      <button class="modal-close" onclick="App.closeModal('modal-remove-shift')">✕</button>
+    </div>
+    <div id="modal-remove-shift-body" style="padding:0 20px 20px"></div>
+  </div>
+</div>
+
 <!-- Staffing Requirements Modal -->
 <div class="modal-overlay" id="modal-slots" role="dialog" aria-modal="true" aria-label="Staffing Requirements">
   <div class="modal" style="max-width:680px;width:96%">
@@ -2499,6 +2531,9 @@ const App = {
 
   // ── SIDEBAR ─────────────────────────────────────────────────
   renderSidebar() {
+    // Guard: if HR mode is active, render HR sidebar instead
+    if (this.S.appMode === 'hr') { this.renderHRSidebar(); return; }
+
     const u = this.S.user;
     const building = this.S.buildings.find(b => b.id === (u.buildingId || 'b1'));
 
@@ -2634,6 +2669,7 @@ const App = {
   },
 
   navigateHR(page) {
+    this.S.appMode = 'hr';   // guard: always ensure HR mode is active
     this.S.hrPage = page;
     this.renderHRSidebar();
     this.renderHRMain();
@@ -3543,6 +3579,346 @@ const App = {
           </div>
         </div>
       </div>`;
+  },
+
+  // ── SHIFT MANAGER (headcount + employee assignment + rotation) ─
+  openShiftManagerModal() {
+    const bId = this.S.user?.buildingId || 'b1';
+    const g = this.S.selectedGroup;
+    const groups = g ? [g] : DISPLAY_GROUPS;
+    const slots = (this.S.staffingSlots || {})[bId] || {};
+    const emps = this.S.employees.filter(e => e.buildingId === bId && !e.inactive);
+    const ROTATIONS = ['Every Day','Mon–Fri','Tue–Sat','Sun–Thu','3 On / 2 Off','2 On / 2 Off','Every Other Day','Custom'];
+
+    let html = '';
+    groups.forEach(grp => {
+      const shiftDefs = SHIFT_TYPES(grp);
+      const gSlots = slots[grp] || {};
+      const col = G_COLORS[grp] || 'var(--blue)';
+      const key = grp.replace(/ /g,'_');
+      const grpEmps = emps.filter(e => getActualGroups(grp).includes(e.group));
+
+      html += `<div style="margin-bottom:24px;border:1px solid var(--g200);border-radius:10px;overflow:hidden">
+        <div style="background:${col}15;border-bottom:1px solid ${col}30;padding:10px 14px;display:flex;align-items:center;gap:8px">
+          <div style="width:10px;height:10px;border-radius:50%;background:${col}"></div>
+          <span style="font-weight:700;font-size:13px;color:var(--g900)">${grp}</span>
+        </div>
+        <div style="padding:12px 14px">`;
+
+      shiftDefs.forEach(sh => {
+        const req = gSlots[sh.type] || 0;
+        const assignments = (gSlots._assignments || {})[sh.type] || [];
+        const assignedEmpIds = assignments.map(a => a.empId);
+
+        html += `<div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--g100)">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+            <span style="font-size:12px;font-weight:700;color:var(--g700);min-width:60px">${sh.type} <span style="font-size:10px;color:var(--g400);font-weight:400">${sh.start}–${sh.end}</span></span>
+            <div style="display:flex;align-items:center;gap:6px">
+              <label style="font-size:11px;color:var(--g500)">Slots needed:</label>
+              <input type="number" id="sm-${key}-${sh.type}-req" value="${req}" min="0" max="30"
+                style="width:56px;padding:4px 8px;border:1.5px solid var(--g200);border-radius:6px;font-size:13px;text-align:center"
+                onchange="App._smUpdateSlots('${grp}','${sh.type}',this.value)">
+            </div>
+          </div>
+          <div id="sm-${key}-${sh.type}-slots" style="display:flex;flex-direction:column;gap:6px">`;
+
+        // Show existing assigned slots + empty ones up to req
+        for (let i = 0; i < Math.max(req, assignments.length); i++) {
+          const a = assignments[i] || {empId: '', rotation: 'Every Day'};
+          html += `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--g50);border-radius:7px;border:1px solid var(--g100)">
+            <span style="font-size:11px;font-weight:600;color:var(--g400);min-width:20px">${i+1}</span>
+            <select id="sm-${key}-${sh.type}-emp-${i}" style="flex:1;padding:5px 8px;border:1.5px solid var(--g200);border-radius:6px;font-size:12px;font-family:inherit">
+              <option value="">— Assign Employee —</option>
+              ${grpEmps.map(e=>`<option value="${e.id}"${a.empId===e.id?' selected':''}>${sanitize(e.name)}</option>`).join('')}
+            </select>
+            <select id="sm-${key}-${sh.type}-rot-${i}" style="width:130px;padding:5px 8px;border:1.5px solid var(--g200);border-radius:6px;font-size:12px;font-family:inherit">
+              ${ROTATIONS.map(r=>`<option value="${r}"${(a.rotation||'Every Day')===r?' selected':''}>${r}</option>`).join('')}
+            </select>
+          </div>`;
+        }
+        if (req === 0 && assignments.length === 0) {
+          html += `<div style="font-size:11px;color:var(--g400);padding:4px 0">Set slots needed above to assign employees.</div>`;
+        }
+        html += `</div></div>`;
+      });
+      html += `</div></div>`;
+    });
+
+    document.getElementById('modal-shift-manager-body').innerHTML = html || '<div style="padding:20px;text-align:center;color:var(--g400)">Select a group from the sidebar to manage shifts.</div>';
+    this.openModal('modal-shift-manager');
+  },
+
+  _smUpdateSlots(grp, shiftType, val) {
+    // Dynamically update slot count display
+    const bId = this.S.user?.buildingId || 'b1';
+    if (!this.S.staffingSlots) this.S.staffingSlots = {};
+    if (!this.S.staffingSlots[bId]) this.S.staffingSlots[bId] = {};
+    if (!this.S.staffingSlots[bId][grp]) this.S.staffingSlots[bId][grp] = {};
+    const n = parseInt(val) || 0;
+    this.S.staffingSlots[bId][grp][shiftType] = n;
+    this.openShiftManagerModal(); // re-render with new slot count
+  },
+
+  saveShiftManager() {
+    const bId = this.S.user?.buildingId || 'b1';
+    if (!this.S.staffingSlots) this.S.staffingSlots = {};
+    if (!this.S.staffingSlots[bId]) this.S.staffingSlots[bId] = {};
+    const ROTATIONS = ['Every Day','Mon–Fri','Tue–Sat','Sun–Thu','3 On / 2 Off','2 On / 2 Off','Every Other Day','Custom'];
+    const g = this.S.selectedGroup;
+    const groups = g ? [g] : DISPLAY_GROUPS;
+
+    groups.forEach(grp => {
+      const key = grp.replace(/ /g,'_');
+      const shiftDefs = SHIFT_TYPES(grp);
+      if (!this.S.staffingSlots[bId][grp]) this.S.staffingSlots[bId][grp] = {};
+      if (!this.S.staffingSlots[bId][grp]._assignments) this.S.staffingSlots[bId][grp]._assignments = {};
+
+      shiftDefs.forEach(sh => {
+        const reqEl = document.getElementById(`sm-${key}-${sh.type}-req`);
+        const req = reqEl ? (parseInt(reqEl.value) || 0) : 0;
+        this.S.staffingSlots[bId][grp][sh.type] = req;
+
+        // Collect employee + rotation assignments
+        const assignments = [];
+        for (let i = 0; i < req; i++) {
+          const empEl = document.getElementById(`sm-${key}-${sh.type}-emp-${i}`);
+          const rotEl = document.getElementById(`sm-${key}-${sh.type}-rot-${i}`);
+          const empId = empEl?.value || '';
+          const rotation = rotEl?.value || 'Every Day';
+          if (empId) assignments.push({empId, rotation});
+        }
+        this.S.staffingSlots[bId][grp]._assignments[sh.type] = assignments;
+
+        // Generate actual shift records for assigned employees using their rotation
+        assignments.forEach(a => {
+          this._applyEmployeeRotation(bId, grp, sh, a.empId, a.rotation);
+        });
+      });
+    });
+
+    this.persistData();
+    this.closeModal('modal-shift-manager');
+    this.renderMain();
+    this.showToast('Shift assignments saved');
+  },
+
+  _applyEmployeeRotation(bId, grp, shiftDef, empId, rotation) {
+    const ag = getActualGroups(grp);
+    const group = ag[0] || grp;
+    // Generate shifts for next 90 days based on rotation
+    const today = new Date(TODAY + 'T00:00:00');
+    const end = new Date(today.getTime() + 90 * 86400000);
+    const DAYS_OF_WEEK = {
+      'Mon–Fri': [1,2,3,4,5],
+      'Tue–Sat': [2,3,4,5,6],
+      'Sun–Thu': [0,1,2,3,4],
+      'Every Day': [0,1,2,3,4,5,6],
+    };
+
+    for (let d = new Date(today); d <= end; d.setDate(d.getDate()+1)) {
+      const ds = d.toISOString().slice(0,10);
+      const dow = d.getDay();
+
+      let shouldWork = false;
+      if (rotation === 'Every Day') shouldWork = true;
+      else if (DAYS_OF_WEEK[rotation]) shouldWork = DAYS_OF_WEEK[rotation].includes(dow);
+      else if (rotation === 'Every Other Day') {
+        const dayNum = Math.floor((d - today) / 86400000);
+        shouldWork = dayNum % 2 === 0;
+      } else if (rotation === '3 On / 2 Off') {
+        const dayNum = Math.floor((d - today) / 86400000);
+        shouldWork = dayNum % 5 < 3;
+      } else if (rotation === '2 On / 2 Off') {
+        const dayNum = Math.floor((d - today) / 86400000);
+        shouldWork = dayNum % 4 < 2;
+      }
+
+      if (!shouldWork) continue;
+
+      // Check if shift already exists for this employee on this day/type
+      const existing = this.S.shifts.find(s =>
+        s.date === ds && s.group === group && s.type === shiftDef.type &&
+        s.buildingId === bId && s.employeeId === empId
+      );
+      if (existing) continue;
+
+      // Find or create an open slot for this shift
+      const openSlot = this.S.shifts.find(s =>
+        s.date === ds && s.group === group && s.type === shiftDef.type &&
+        s.buildingId === bId && (s.status === 'open' || !s.employeeId)
+      );
+      if (openSlot) {
+        openSlot.employeeId = empId;
+        openSlot.status = 'scheduled';
+        openSlot.rotation = rotation;
+      } else {
+        const sid = 's' + Date.now() + Math.random().toString(36).slice(2,5);
+        this.S.shifts.push({
+          id: sid, date: ds, group, type: shiftDef.type,
+          start: shiftDef.start, end: shiftDef.end, slot: 0,
+          employeeId: empId, status: 'scheduled',
+          buildingId: bId, rotation, patternGenerated: false,
+        });
+      }
+    }
+  },
+
+  // ── REMOVE FROM DAY ─────────────────────────────────────────
+  openRemoveShiftModal(date, shiftId, shiftType, empId) {
+    const emp = this.S.employees.find(e => e.id === empId);
+    const shift = this.S.shifts.find(s => s.id === shiftId);
+    if (!emp || !shift) return;
+
+    const bId = this.S.user?.buildingId || 'b1';
+    const g = this.S.selectedGroup || shift.group;
+    const ag = getActualGroups(g);
+
+    // Find available cover employees (same group, not already working that shift that day)
+    const workingIds = new Set(
+      this.S.shifts.filter(s => s.date === date && ag.includes(s.group) && s.status === 'scheduled' && s.type === shiftType)
+        .map(s => s.employeeId)
+    );
+    const available = this.S.employees.filter(e =>
+      ag.includes(e.group) && e.buildingId === bId && !e.inactive &&
+      e.id !== empId && !workingIds.has(e.id)
+    );
+
+    const dateDisplay = new Date(date + 'T00:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
+    const shiftDef = SHIFT_TYPES(g).find(s => s.type === shiftType) || {};
+
+    document.getElementById('modal-remove-shift-body').innerHTML = `
+      <div style="padding-top:16px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:12px 14px;background:var(--g50);border-radius:8px;border:1px solid var(--g100)">
+          <div style="width:36px;height:36px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">${sanitize(emp.name.split(' ').map(w=>w[0]).join('').slice(0,2))}</div>
+          <div>
+            <div style="font-weight:700;font-size:13px;color:var(--g900)">${sanitize(emp.name)}</div>
+            <div style="font-size:12px;color:var(--g500)">${shiftType} Shift · ${dateDisplay}</div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
+          <button class="btn btn-danger" onclick="App.removeFromDay('${shiftId}','${date}','${empId}')" style="justify-content:flex-start;text-align:left">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 8h12M6 4l-4 4 4 4"/></svg>
+            Remove from ${new Date(date+'T00:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})} only
+            <span style="font-size:11px;color:#FCA5A5;margin-left:auto">Keeps rotation</span>
+          </button>
+          <button class="btn btn-secondary" onclick="App.closeModal('modal-remove-shift')" style="justify-content:flex-start">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 1v14M1 8h14"/></svg>
+            Keep on schedule
+          </button>
+        </div>
+
+        <div style="border-top:1px solid var(--g100);padding-top:14px">
+          <div style="font-size:12px;font-weight:700;color:var(--g700);margin-bottom:10px">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" style="vertical-align:-2px;margin-right:4px"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5h0c2.8 0 5 2.2 5 5"/><circle cx="12.5" cy="5" r="2"/><path d="M16 13.5c0-2.2-1.6-4-3.5-4"/></svg>
+            Available staff for coverage (${available.length})
+          </div>
+          ${available.length ? `
+            <div style="max-height:160px;overflow-y:auto;margin-bottom:12px">
+              ${available.map(e => `
+                <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:7px;border:1px solid var(--g100);margin-bottom:4px;background:#fff">
+                  <div style="width:28px;height:28px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${sanitize(e.name.split(' ').map(w=>w[0]).join('').slice(0,2))}</div>
+                  <div style="flex:1">
+                    <div style="font-size:12px;font-weight:600;color:var(--g900)">${sanitize(e.name)}</div>
+                    <div style="font-size:11px;color:var(--g500)">${sanitize(e.group)}${e.phone?` · ${sanitize(e.phone)}`:''}</div>
+                  </div>
+                  <button class="btn btn-ghost btn-sm" onclick="App.assignCoverEmployee('${shiftId}','${e.id}')" style="font-size:11px;color:var(--blue-d)">Assign</button>
+                  ${e.phone ? `<button class="btn btn-ghost btn-sm" onclick="App.openCoverSMS('${e.id}','${date}','${shiftType}')" style="font-size:11px;color:var(--green)">
+                    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="1" y="2" width="14" height="10" rx="1.5"/><path d="M1 5l7 4 7-4"/></svg>
+                    Text
+                  </button>` : ''}
+                </div>`).join('')}
+            </div>` : `<div style="font-size:12px;color:var(--g400);padding:8px 0">No available staff found for this shift.</div>`}
+
+          <div style="background:var(--g50);border:1.5px solid var(--g200);border-radius:8px;padding:12px">
+            <label style="font-size:11px;font-weight:700;color:var(--g600);display:block;margin-bottom:6px">MESSAGE TO STAFF</label>
+            <textarea id="cover-sms-body" rows="3" style="width:100%;padding:8px;border:1.5px solid var(--g200);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical">${sanitize(emp.name)} is unable to work the ${shiftType} shift on ${dateDisplay}. We need coverage — please reply if available.</textarea>
+            <div style="display:flex;justify-content:flex-end;margin-top:8px">
+              <button class="btn btn-primary btn-sm" onclick="App.sendCoverageAlert('${date}','${shiftType}','${g}')">
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 6l7 4 7-4"/></svg>
+                Text All Available Staff
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    this.openModal('modal-remove-shift');
+  },
+
+  removeFromDay(shiftId, date, empId) {
+    const shift = this.S.shifts.find(s => s.id === shiftId);
+    if (!shift) return;
+    // Remove employee from just this day — shift becomes open, rotation intact
+    shift.employeeId = null;
+    shift.status = 'open';
+    shift._removedDate = date;
+    const emp = this.S.employees.find(e => e.id === empId);
+    this.logAudit('SHIFT_REMOVED', `${emp?.name||empId} removed from ${date} ${shift.type} shift (rotation kept)`);
+    this.persistData();
+    this.closeModal('modal-remove-shift');
+    this.renderMain();
+    this.showToast(`${emp?.name||'Employee'} removed from ${date} shift`);
+  },
+
+  assignCoverEmployee(shiftId, empId) {
+    const shift = this.S.shifts.find(s => s.id === shiftId);
+    const emp = this.S.employees.find(e => e.id === empId);
+    if (!shift || !emp) return;
+    shift.employeeId = empId;
+    shift.status = 'scheduled';
+    this.logAudit('SHIFT_COVERED', `${emp.name} assigned to cover ${shift.date} ${shift.type}`);
+    this.persistData();
+    this.closeModal('modal-remove-shift');
+    this.renderMain();
+    this.showToast(`${sanitize(emp.name)} assigned to cover`);
+  },
+
+  async openCoverSMS(empId, date, shiftType) {
+    const emp = this.S.employees.find(e => e.id === empId);
+    if (!emp?.phone) { this.showToast('No phone number on file', 'warn'); return; }
+    const msg = document.getElementById('cover-sms-body')?.value || '';
+    if (!msg.trim()) { this.showToast('Enter a message first', 'warn'); return; }
+    const ok = await this._sendSMS(emp.phone, msg);
+    if (ok) this.showToast(`Message sent to ${sanitize(emp.name)}`);
+  },
+
+  async sendCoverageAlert(date, shiftType, group) {
+    const bId = this.S.user?.buildingId || 'b1';
+    const ag = getActualGroups(group);
+    const msg = document.getElementById('cover-sms-body')?.value || '';
+    const workingIds = new Set(
+      this.S.shifts.filter(s => s.date===date && ag.includes(s.group) && s.status==='scheduled' && s.type===shiftType).map(s=>s.employeeId)
+    );
+    const available = this.S.employees.filter(e => ag.includes(e.group) && e.buildingId===bId && !e.inactive && !workingIds.has(e.id) && e.phone);
+    let sent = 0;
+    for (const e of available) {
+      const ok = await this._sendSMS(e.phone, msg);
+      if (ok) sent++;
+    }
+    this.showToast(`Coverage request sent to ${sent} of ${available.length} staff`);
+    this.closeModal('modal-remove-shift');
+  },
+
+  // ── DIRECT SMS via /api/sms ────────────────────────────────────
+  // Returns true on success, false on failure (shows toast on error).
+  async _sendSMS(phone, message) {
+    if (!phone || !message) return false;
+    try {
+      const resp = await fetch('/api/sms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + _authToken },
+        body: JSON.stringify({ to: phone, message }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        this.showToast(data.error || 'SMS failed', 'warn');
+        return false;
+      }
+      return true;
+    } catch (err) {
+      this.showToast('SMS error: ' + err.message, 'warn');
+      return false;
+    }
   },
 
   // ── STAFFING SLOT REQUIREMENTS ───────────────────────────────
@@ -5691,6 +6067,9 @@ const App = {
   renderMain() {
     const u = this.S.user;
 
+    // Guard: if HR mode is active, delegate to HR renderer
+    if (this.S.appMode === 'hr') { this.renderHRMain(); return; }
+
     // ── EMPLOYEE: personal schedule view ────────────────────
     if (u.role === 'employee') {
       document.getElementById('main').innerHTML = this.renderMySchedule();
@@ -5722,9 +6101,9 @@ const App = {
     }
     const groupPill = g ? `<div class="group-pill" style="background:${G_COLORS[g]}11;border:1.5px solid ${G_COLORS[g]}33;color:${G_COLORS[g]}">${G_ICONS[g]} ${g}</div>` : '';
     const hasSlots = g && Object.keys(((this.S.staffingSlots||{})[bId]||{})[g]||{}).some(k=>((this.S.staffingSlots||{})[bId]||{})[g][k]>0);
-    const slotsBtn = `<button class="btn btn-ghost btn-sm" onclick="App.openSlotsModal()" style="display:flex;align-items:center;gap:5px;color:${hasSlots?'var(--blue)':'var(--g500)'}">
-      <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v3l2 2"/><path d="M4 2.5l8 0"/><path d="M4 13.5l8 0"/></svg>
-      ${hasSlots?'Slots Set':'Set Slots'}
+    const slotsBtn = `<button class="btn btn-secondary btn-sm" onclick="App.openShiftManagerModal()" style="display:flex;align-items:center;gap:6px;font-weight:600">
+      <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 6h14M5 2v4M11 2v4M4 10h3M9 10h3"/></svg>
+      Manage Shifts
     </button>`;
     const filterTabs = `<div class="filter-tabs" style="margin-left:auto">
       <div class="filter-tab ${this.S.filter==='scheduled'?'active scheduled':''}" onclick="App.setFilter('scheduled')">All Shifts</div>
@@ -6146,12 +6525,12 @@ const App = {
             : '';
 
           let pills = '';
-          // Filled employee names (first name, truncated)
+          // Filled employee names (first name, truncated) — clickable to remove from day
           scheduled.forEach(slot => {
             const emp = this.S.employees.find(e => e.id === slot.employeeId);
             if (emp) {
               const firstName = emp.name.split(' ')[0];
-              pills += `<span class="shift-emp" title="${sanitize(emp.name)}" style="max-width:54px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${sanitize(firstName)}</span>`;
+              pills += `<span class="shift-emp" title="${sanitize(emp.name)} — click to manage" style="max-width:54px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer" onclick="event.stopPropagation();App.openRemoveShiftModal('${ds}','${slot.id}','${sh.type}','${emp.id}')">${sanitize(firstName)}</span>`;
             }
           });
           // Empty slot indicators
