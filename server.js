@@ -120,6 +120,22 @@ function loadData() {
     dirty = true;
   }
 
+  // ── Migration: strip seed HR employees and demo HR accounts ──────────────────
+  if (!data._hrSeedStripped) {
+    const beforeHE = (data.hrEmployees || []).length;
+    const beforeHA = (data.hrAccounts  || []).length;
+    // Seed HR employee IDs start with 'hre'; demo HR account IDs are ha1/ha2
+    data.hrEmployees = (data.hrEmployees || []).filter(e => !e.id.startsWith('hre'));
+    data.hrAccounts  = (data.hrAccounts  || []).filter(a => !['ha1','ha2'].includes(a.id));
+    const strippedHE = beforeHE - (data.hrEmployees || []).length;
+    const strippedHA = beforeHA - (data.hrAccounts  || []).length;
+    if (strippedHE || strippedHA) {
+      console.log(`[mms] Migration: stripped ${strippedHE} seed HR employees and ${strippedHA} demo HR accounts from data file.`);
+    }
+    data._hrSeedStripped = true;
+    dirty = true;
+  }
+
   // ── Password reset: if RESET_SA_PASSWORD=1 env var is set, clear the SA
   //    password hash so the next login accepts any password as the new permanent one.
   //    Remove the env var after triggering to prevent repeated resets.

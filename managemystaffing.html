@@ -829,6 +829,17 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
   </div>
 </div>
 
+<!-- Employee Onboarding Detail Modal -->
+<div class="modal-overlay" id="modal-hr-emp-detail" role="dialog" aria-modal="true" aria-label="Employee Documents">
+  <div class="modal" style="max-width:680px;width:96%;max-height:90vh;display:flex;flex-direction:column">
+    <div class="modal-header" style="flex-shrink:0">
+      <span class="modal-title">Onboarding Documents</span>
+      <button class="modal-close" onclick="App.closeModal('modal-hr-emp-detail')">✕</button>
+    </div>
+    <div id="modal-hr-emp-detail-body" style="overflow-y:auto;flex:1"></div>
+  </div>
+</div>
+
 <!-- Toast -->
 <div class="toast" id="toast"><span id="toast-icon"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,8 6,12 14,4"/></svg></span><span id="toast-msg"></span></div>
 
@@ -1239,11 +1250,14 @@ const App = {
     hrPage: 'dashboard',
     hrFilter: 'all',
     hrOnboardingState: 'TX',
-    hrEmployees: [...SEED_HR_EMPLOYEES],
+    hrExpandedStep: null,   // {state, idx} for onboarding step editor
+    hrEmployees: [],
     hrOnboarding: JSON.parse(JSON.stringify(SEED_HR_ONBOARDING)),
-    hrAccounts: [...SEED_HR_ACCOUNTS],
+    hrAccounts: [],
     hrTimeClock: null,
     hrAuditLog: null,
+    hrScheduleOffset: 0,    // payroll period offset (0=current, -1=prev, +1=next)
+    hrScheduleDepts: [],    // selected dept filters ([] = all)
     // Job postings (HR Recruiting)
     jobPostings: [],
     jobModal: null,      // { mode:'create'|'edit', job:{...} }
@@ -1804,10 +1818,8 @@ const App = {
       adminBtns = `
         ${backBtn}
         <button class="btn btn-ghost btn-sm" onclick="App.openAuditLog()" style="display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg> Audit</button>
-        <button class="btn btn-ghost btn-sm" onclick="App.openPPDCalc()" style="display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg> PPD</button>
         <button class="btn btn-ghost btn-sm" onclick="App.openRoster()" style="display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg> Roster</button>
         <button class="btn btn-secondary btn-sm" onclick="App.openAlertModal()" style="display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> Alert</button>
-        <button class="btn btn-secondary btn-sm" onclick="App.openPatternModal()" style="display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg> Rotation</button>
         <button class="btn btn-primary btn-sm" onclick="App.openModal('modal-add-emp')">+ Add Employee</button>`;
     }
 
@@ -2456,7 +2468,13 @@ const App = {
       ${bname}
       <div class="sidebar-section-title">Staff Groups</div>
       ${groupItems}
-      ${sel ? `<div class="sidebar-divider"></div><div class="sidebar-section-title">${sel==='Dietary'?'Dietary Staff':sel+'s'}</div><div class="emp-list">${empList}</div>` : ''}`;
+      ${sel ? `<div class="sidebar-divider"></div><div class="sidebar-section-title">${sel==='Dietary'?'Dietary Staff':sel+'s'}</div><div class="emp-list">${empList}</div>` : ''}
+      <div class="sidebar-divider"></div>
+      <div class="sidebar-section-title">Tools</div>
+      <div class="group-item${this.S.ppdView?'':''}" onclick="App.openPPDCalc()" style="cursor:pointer">
+        <div class="group-icon" style="background:#FFF7ED;color:#C2410C"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="1" width="14" height="14" rx="2"/><path d="M4 8h8M8 4v8"/></svg></div>
+        PPD Calculator
+      </div>`;
   },
 
   switchMode(mode) {
@@ -2624,7 +2642,9 @@ const App = {
     const filtered = f==='all' ? emps : emps.filter(e=>e.status===f);
     const rows = filtered.map(e=>{
       const fac = HR_FACILITIES.find(x=>x.id===e.facilityId);
-      return `<tr style="border-bottom:1px solid var(--g100)">
+      return `<tr style="border-bottom:1px solid var(--g100);cursor:pointer;transition:background .12s"
+        onmouseover="this.style.background='var(--g50)'" onmouseout="this.style.background=''"
+        onclick="App.openHREmployeeDetail('${e.id}')">
         <td style="padding:12px 16px">
           <div style="display:flex;align-items:center;gap:10px">
             ${this.hrAvatar(e.initials,e.status)}
@@ -2703,43 +2723,114 @@ const App = {
   },
 
   renderHRSchedule() {
-    const active = this.S.hrEmployees.filter(e=>e.status==='active');
-    const weeks = []; const now = new Date();
-    for(let d=0;d<14;d++){
-      const dt=new Date(now); dt.setDate(dt.getDate()+d);
-      weeks.push({dt,label:dt.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}),isToday:dt.toISOString().slice(0,10)===TODAY});
+    const offset = this.S.hrScheduleOffset || 0;
+    const selDepts = this.S.hrScheduleDepts || [];
+
+    // Anchor to a known Saturday (Jan 4, 2025), compute current period start
+    const anchor = new Date('2025-01-04T00:00:00');
+    const today  = new Date(TODAY + 'T00:00:00');
+    const daysDiff = Math.floor((today - anchor) / 86400000);
+    const curPeriod = Math.floor(daysDiff / 14);
+    const periodStart = new Date(anchor.getTime() + (curPeriod + offset) * 14 * 86400000);
+    const periodEnd   = new Date(periodStart.getTime() + 13 * 86400000);
+
+    const fmtShort = d => d.toLocaleDateString('en-US', {month:'short', day:'numeric'});
+    const fmtFull  = d => d.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
+    const periodLabel = `${fmtShort(periodStart)} – ${fmtFull(periodEnd)}`;
+    const periodNote  = offset === 0 ? ' (Current)' : offset < 0 ? ` (${Math.abs(offset)} period${Math.abs(offset)>1?'s':''} ago)` : ` (+${offset} period${offset>1?'s':''})`;
+
+    // Build 14 days
+    const days = [];
+    for (let d = 0; d < 14; d++) {
+      const dt = new Date(periodStart.getTime() + d * 86400000);
+      const ds = dt.toISOString().slice(0,10);
+      days.push({dt, ds, isToday: ds === TODAY,
+        dow: dt.toLocaleDateString('en-US',{weekday:'short'}),
+        dom: dt.toLocaleDateString('en-US',{month:'short',day:'numeric'})});
     }
-    const shiftTypes = ['Day 7a–3p','Eve 3p–11p','Night 11p–7a'];
-    const rows = active.map(e=>`
+
+    // All active employees + unique roles
+    const allActive = this.S.hrEmployees.filter(e => e.status === 'active');
+    const allRoles  = [...new Set(allActive.map(e => e.role))].sort();
+    const active    = selDepts.length ? allActive.filter(e => selDepts.includes(e.role)) : allActive;
+
+    // Deterministic shift pattern (stable across re-renders, varies by period)
+    const shiftNames  = ['Day','Eve','Night'];
+    const shiftColors = {Day:'#6B9E7A', Eve:'#2563EB', Night:'#7C3AED'};
+    const getShift = (emp, dayIdx) => {
+      const seed = (emp.id.split('').reduce((s,c)=>s+c.charCodeAt(0),0) + dayIdx * 3 + offset * 7) % 10;
+      if (seed >= 7) return null; // off
+      return shiftNames[seed % 3];
+    };
+
+    const rows = active.map(e => `
       <tr style="border-bottom:1px solid var(--g100)">
-        <td style="padding:10px 16px;white-space:nowrap;position:sticky;left:0;background:#fff;z-index:1;border-right:1px solid var(--g100)">
+        <td style="padding:10px 14px;white-space:nowrap;position:sticky;left:0;background:#fff;z-index:1;border-right:1px solid var(--g100)">
           <div style="display:flex;align-items:center;gap:8px">
             ${this.hrAvatar(e.initials,'active')}
-            <div><div style="font-weight:600;font-size:12px;color:var(--g900)">${sanitize(e.name)}</div><div style="font-size:11px;color:var(--g500)">${sanitize(e.role)}</div></div>
+            <div><div style="font-weight:600;font-size:12px;color:var(--g900)">${sanitize(e.name)}</div>
+            <div style="font-size:11px;color:var(--g500)">${sanitize(e.role)}</div></div>
           </div>
         </td>
-        ${weeks.map((w,i)=>{
-          const type=shiftTypes[Math.abs(e.id.charCodeAt(3)+i)%4];
-          const isOff=type===shiftTypes[3]||Math.random()<0.25;
-          return `<td style="padding:6px;text-align:center;background:${w.isToday?'var(--blue-l)':''}">
-            ${isOff?'<span style="font-size:10px;color:var(--g300)">Off</span>':`<div style="background:var(--blue);color:#fff;border-radius:5px;padding:3px 5px;font-size:10px;font-weight:600">${shiftTypes[Math.abs(e.id.charCodeAt(3)+i)%3].split(' ')[0]}</div>`}
+        ${days.map((w,i)=>{
+          const shift = getShift(e, i);
+          return `<td style="padding:4px 3px;text-align:center;background:${w.isToday?'var(--blue-l)':''}">
+            ${shift
+              ? `<div style="background:${shiftColors[shift]};color:#fff;border-radius:5px;padding:3px 4px;font-size:10px;font-weight:600">${shift}</div>`
+              : `<span style="font-size:10px;color:var(--g300)">Off</span>`}
           </td>`;
         }).join('')}
       </tr>`).join('');
+
+    // Dept filter pills
+    const deptPills = allRoles.map(r => {
+      const sel = selDepts.includes(r);
+      return `<button class="btn btn-${sel?'primary':'secondary'} btn-sm" style="font-size:11px;padding:3px 10px"
+        onclick="App.toggleHRScheduleDept('${r}')">${sanitize(r)}</button>`;
+    }).join('');
+
     return `
       ${this.hrHipaaBar()}
-      <div style="margin-bottom:20px"><div class="hr-page-title">Schedule</div><div class="hr-page-sub">2-week view · SmartLinx sync</div></div>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:16px;flex-wrap:wrap">
+        <div><div class="hr-page-title">Schedule</div><div class="hr-page-sub">2-week payroll view · SmartLinx sync</div></div>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-secondary btn-sm" onclick="App.S.hrScheduleOffset=(App.S.hrScheduleOffset||0)-1;App.renderHRMain()" style="gap:4px">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 12L6 8l4-4"/></svg> Prev
+          </button>
+          <div style="font-size:12px;font-weight:700;color:var(--g700);padding:4px 12px;background:var(--g50);border-radius:8px;white-space:nowrap">
+            ${periodLabel}<span style="font-weight:400;color:var(--g400)">${periodNote}</span>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="App.S.hrScheduleOffset=(App.S.hrScheduleOffset||0)+1;App.renderHRMain()" style="gap:4px">
+            Next <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 4l4 4-4 4"/></svg>
+          </button>
+          ${offset!==0?`<button class="btn btn-ghost btn-sm" onclick="App.S.hrScheduleOffset=0;App.renderHRMain()" style="color:var(--blue)">Today</button>`:''}
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;flex-wrap:wrap">
+        <span style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">Department:</span>
+        <button class="btn btn-${selDepts.length===0?'primary':'secondary'} btn-sm" style="font-size:11px;padding:3px 10px"
+          onclick="App.S.hrScheduleDepts=[];App.renderHRMain()">All</button>
+        ${deptPills}
+      </div>
       <div class="hr-section" style="overflow-x:auto">
-        <table style="width:100%;border-collapse:collapse;min-width:800px">
+        <table style="width:100%;border-collapse:collapse;min-width:760px">
           <thead>
             <tr style="border-bottom:2px solid var(--g100)">
-              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;position:sticky;left:0;background:#fff;z-index:1;border-right:1px solid var(--g100);white-space:nowrap">Employee</th>
-              ${weeks.map(w=>`<th style="padding:8px 4px;font-size:10px;font-weight:700;color:${w.isToday?'var(--blue)':'var(--g400)'};text-align:center;white-space:nowrap;min-width:50px">${w.label.split(', ')[0]}<br><span style="font-weight:500">${w.label.split(', ')[1]||''}</span></th>`).join('')}
+              <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;position:sticky;left:0;background:#fff;z-index:1;border-right:1px solid var(--g100);white-space:nowrap">Employee</th>
+              ${days.map(w=>`<th style="padding:6px 3px;font-size:10px;font-weight:700;color:${w.isToday?'var(--blue)':'var(--g400)'};text-align:center;white-space:nowrap;min-width:44px">${w.dow}<br><span style="font-weight:400;font-size:9px">${w.dom}</span></th>`).join('')}
             </tr>
           </thead>
-          <tbody>${rows}</tbody>
+          <tbody>${rows||`<tr><td colspan="15" style="padding:32px;text-align:center;color:var(--g400);font-size:13px">No active employees${selDepts.length?` in selected department${selDepts.length>1?'s':''}`:''}</td></tr>`}</tbody>
         </table>
       </div>`;
+  },
+
+  toggleHRScheduleDept(role) {
+    if (!this.S.hrScheduleDepts) this.S.hrScheduleDepts = [];
+    const idx = this.S.hrScheduleDepts.indexOf(role);
+    if (idx >= 0) this.S.hrScheduleDepts.splice(idx,1);
+    else this.S.hrScheduleDepts.push(role);
+    this.renderHRMain();
   },
 
   renderHRShiftBoard() {
@@ -3030,39 +3121,135 @@ const App = {
   },
 
   renderHROnboarding() {
-    const st = this.S.hrOnboardingState || 'TX';
+    const st  = this.S.hrOnboardingState || 'TX';
     const pkg = this.S.hrOnboarding[st];
+    const exp = this.S.hrExpandedStep;   // {state, idx} or null
     const tabs = Object.keys(this.S.hrOnboarding).map(k=>{
-      const p=this.S.hrOnboarding[k];
-      return `<button class="btn btn-${k===st?'primary':'secondary'} btn-sm" onclick="App.S.hrOnboardingState='${k}';App.renderHRMain()">${k==='TX'?'Texas (TX)':'Oklahoma (OK)'} — ${p.steps.length} steps</button>`;
+      const p = this.S.hrOnboarding[k];
+      return `<button class="btn btn-${k===st?'primary':'secondary'} btn-sm" onclick="App.S.hrOnboardingState='${k}';App.S.hrExpandedStep=null;App.renderHRMain()">${k==='TX'?'Texas (TX)':'Oklahoma (OK)'} — ${p.steps.length} steps</button>`;
     }).join('');
-    const steps = pkg.steps.map((s,i)=>`
-      <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 18px;border-bottom:1px solid var(--g100)">
-        <div style="width:22px;height:22px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;margin-top:1px">${i+1}</div>
-        <div style="flex:1">
-          <div style="font-weight:600;font-size:13px;color:var(--g900)">${sanitize(s.title)}</div>
-          <div style="font-size:11px;color:var(--g500);margin-top:2px">${sanitize(s.desc)}</div>
-        </div>
-        <span style="font-size:10px;font-weight:700;background:${s.type==='video'?'var(--purple)':'var(--blue)'};color:#fff;padding:2px 8px;border-radius:6px;margin-top:2px">${s.type}</span>
-        <div style="display:flex;gap:4px">
-          <button class="btn btn-ghost btn-sm" style="padding:3px 6px;color:var(--g400)" onclick="App.moveHRStep('${st}',${i},-1)" ${i===0?'disabled':''}>↑</button>
-          <button class="btn btn-ghost btn-sm" style="padding:3px 6px;color:var(--g400)" onclick="App.moveHRStep('${st}',${i},1)" ${i===pkg.steps.length-1?'disabled':''}>↓</button>
-          <button class="btn btn-ghost btn-sm" style="padding:3px 6px;color:var(--red)" onclick="App.removeHRStep('${st}',${i})">✕</button>
-        </div>
-      </div>`).join('');
+
+    const steps = pkg.steps.map((s, i) => {
+      const isExp = exp && exp.state === st && exp.idx === i;
+      const typeColor = s.type === 'video' ? 'var(--purple)' : 'var(--blue)';
+      const hasUrl = s.url || '';
+      const hasContent = s.content || '';
+      const hasFiles = (s.files || []);
+
+      const expandedPanel = isExp ? `
+        <div style="background:var(--g50);border-top:1px solid var(--g100);padding:16px 18px 18px" onclick="event.stopPropagation()">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+            <div>
+              <label style="font-size:11px;font-weight:700;color:var(--g500);display:block;margin-bottom:4px">STEP TITLE</label>
+              <input id="ob-title-${i}" value="${sanitize(s.title)}" style="width:100%;box-sizing:border-box;padding:7px 10px;border:1.5px solid var(--g200);border-radius:7px;font-size:13px;font-family:inherit">
+            </div>
+            <div>
+              <label style="font-size:11px;font-weight:700;color:var(--g500);display:block;margin-bottom:4px">TYPE</label>
+              <select id="ob-type-${i}" style="width:100%;padding:7px 10px;border:1.5px solid var(--g200);border-radius:7px;font-size:13px;font-family:inherit">
+                <option value="form" ${s.type==='form'?'selected':''}>Form / Document</option>
+                <option value="video" ${s.type==='video'?'selected':''}>Video / Training</option>
+                <option value="ack" ${s.type==='ack'?'selected':''}>Acknowledgment</option>
+                <option value="upload" ${s.type==='upload'?'selected':''}>File Upload</option>
+              </select>
+            </div>
+          </div>
+          <div style="margin-bottom:12px">
+            <label style="font-size:11px;font-weight:700;color:var(--g500);display:block;margin-bottom:4px">DESCRIPTION / INSTRUCTIONS</label>
+            <textarea id="ob-desc-${i}" rows="2" style="width:100%;box-sizing:border-box;padding:7px 10px;border:1.5px solid var(--g200);border-radius:7px;font-size:13px;font-family:inherit;resize:vertical">${sanitize(s.desc)}</textarea>
+          </div>
+          <div style="margin-bottom:12px">
+            <label style="font-size:11px;font-weight:700;color:var(--g500);display:block;margin-bottom:4px">${s.type==='video'?'VIDEO URL (YouTube / Vimeo embed)':'FORM / DOCUMENT LINK (optional)'}</label>
+            <input id="ob-url-${i}" placeholder="${s.type==='video'?'https://youtube.com/embed/...':'https://docs.google.com/...'}" value="${sanitize(hasUrl)}" style="width:100%;box-sizing:border-box;padding:7px 10px;border:1.5px solid var(--g200);border-radius:7px;font-size:13px;font-family:inherit">
+          </div>
+          <div style="margin-bottom:14px">
+            <label style="font-size:11px;font-weight:700;color:var(--g500);display:block;margin-bottom:4px">NOTES / ADDITIONAL CONTENT</label>
+            <textarea id="ob-content-${i}" rows="2" placeholder="Any additional notes, instructions, or required information for this step..." style="width:100%;box-sizing:border-box;padding:7px 10px;border:1.5px solid var(--g200);border-radius:7px;font-size:13px;font-family:inherit;resize:vertical">${sanitize(hasContent)}</textarea>
+          </div>
+          ${hasFiles.length ? `<div style="margin-bottom:12px">
+            <label style="font-size:11px;font-weight:700;color:var(--g500);display:block;margin-bottom:6px">ATTACHMENTS</label>
+            ${hasFiles.map((f,fi)=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#fff;border:1px solid var(--g200);border-radius:6px;margin-bottom:4px">
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 1h8l3 3v11H1V1z"/><path d="M12 1v4h3"/></svg>
+              <span style="flex:1;font-size:12px;color:var(--g700)">${sanitize(f.name)}</span>
+              <button class="btn btn-ghost btn-sm" style="color:var(--red);padding:2px 6px;font-size:11px" onclick="App.removeHRStepFile('${st}',${i},${fi})">Remove</button>
+            </div>`).join('')}
+          </div>` : ''}
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-ghost btn-sm" style="padding:3px 8px;color:var(--g400);font-size:11px" onclick="App.moveHRStep('${st}',${i},-1)" ${i===0?'disabled':''}>↑ Move Up</button>
+              <button class="btn btn-ghost btn-sm" style="padding:3px 8px;color:var(--g400);font-size:11px" onclick="App.moveHRStep('${st}',${i},1)" ${i===pkg.steps.length-1?'disabled':''}>↓ Move Down</button>
+              <button class="btn btn-ghost btn-sm" style="padding:3px 8px;color:var(--red);font-size:11px" onclick="App.removeHRStep('${st}',${i})">Delete Step</button>
+            </div>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-secondary btn-sm" onclick="App.S.hrExpandedStep=null;App.renderHRMain()">Cancel</button>
+              <button class="btn btn-primary btn-sm" onclick="App.saveHRStep('${st}',${i})">Save Changes</button>
+            </div>
+          </div>
+        </div>` : '';
+
+      return `
+        <div style="border-bottom:1px solid var(--g100);${isExp?'background:#FAFBFF;':''}">
+          <div style="display:flex;align-items:flex-start;gap:12px;padding:14px 18px;cursor:pointer;transition:background .12s"
+            onmouseover="this.style.background='${isExp?'':'var(--g50)'}'" onmouseout="this.style.background=''"
+            onclick="App.toggleHRStep('${st}',${i})">
+            <div style="width:22px;height:22px;border-radius:50%;background:${isExp?typeColor:'var(--blue)'};color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;margin-top:1px">${i+1}</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:600;font-size:13px;color:var(--g900)">${sanitize(s.title)}</div>
+              <div style="font-size:11px;color:var(--g500);margin-top:2px">${sanitize(s.desc)}</div>
+              ${s.url ? `<div style="font-size:11px;color:var(--blue);margin-top:3px;display:flex;align-items:center;gap:4px"><svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M5 2H2a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V8"/><path d="M8 1h3v3M11 1L6 6"/></svg>${sanitize(s.url.length>50?s.url.slice(0,50)+'…':s.url)}</div>` : ''}
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+              <span style="font-size:10px;font-weight:700;background:${typeColor};color:#fff;padding:2px 8px;border-radius:6px">${s.type||'form'}</span>
+              ${s.files?.length ? `<span style="font-size:10px;color:var(--g500)">${s.files.length} file${s.files.length>1?'s':''}</span>` : ''}
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color:var(--g400);transform:rotate(${isExp?180:0}deg);transition:transform .2s"><path d="M4 6l4 4 4-4"/></svg>
+            </div>
+          </div>
+          ${expandedPanel}
+        </div>`;
+    }).join('');
+
     return `
       ${this.hrHipaaBar()}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
-        <div><div class="hr-page-title">Onboarding Flow</div><div class="hr-page-sub">State-specific document packages · drag to reorder</div></div>
-        <button class="btn btn-primary btn-sm" onclick="App.addHRStep('${st}')">Add Step</button>
+        <div><div class="hr-page-title">Onboarding Flow</div><div class="hr-page-sub">State-specific document packages · click step to edit</div></div>
+        <button class="btn btn-primary btn-sm" onclick="App.addHRStep('${st}')">+ Add Step</button>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:16px">${tabs}</div>
       <div class="hr-section">
         <div style="padding:14px 18px;border-bottom:1px solid var(--g100);background:var(--g50)">
           <div style="font-size:12px;font-weight:700;color:var(--g600)">${sanitize(pkg.name)}</div>
+          <div style="font-size:11px;color:var(--g400);margin-top:2px">Click any step to open and edit its details, attachments, or content</div>
         </div>
         ${steps}
       </div>`;
+  },
+
+  toggleHRStep(state, idx) {
+    const exp = this.S.hrExpandedStep;
+    if (exp && exp.state === state && exp.idx === idx) {
+      this.S.hrExpandedStep = null;
+    } else {
+      this.S.hrExpandedStep = {state, idx};
+    }
+    this.renderHRMain();
+  },
+
+  saveHRStep(state, idx) {
+    const s = this.S.hrOnboarding[state].steps[idx];
+    const get = id => document.getElementById(id)?.value ?? '';
+    s.title   = get(`ob-title-${idx}`).trim() || s.title;
+    s.desc    = get(`ob-desc-${idx}`).trim();
+    s.type    = get(`ob-type-${idx}`) || s.type;
+    s.url     = get(`ob-url-${idx}`).trim();
+    s.content = get(`ob-content-${idx}`).trim();
+    this.S.hrExpandedStep = null;
+    this.persistData();
+    this.renderHRMain();
+    this.showToast('Step saved');
+  },
+
+  removeHRStepFile(state, stepIdx, fileIdx) {
+    const s = this.S.hrOnboarding[state].steps[stepIdx];
+    if (s.files) { s.files.splice(fileIdx, 1); this.persistData(); this.renderHRMain(); }
   },
 
   // ── INVITE SYSTEM ────────────────────────────────────────────
@@ -4093,6 +4280,107 @@ const App = {
     const slx = 'SLX-' + (440000 + Math.floor(Math.random()*900));
     emp.slxId = slx; emp.status = 'active'; emp.progress = 'Complete';
     this.persistData(); this.renderHRMain(); this.showToast(`Exported to SmartLinx — ID: ${slx}`);
+  },
+
+  openHREmployeeDetail(empId) {
+    const emp = this.S.hrEmployees.find(e => e.id === empId);
+    if (!emp) return;
+    const fac  = HR_FACILITIES.find(f => f.id === emp.facilityId);
+    const stKey = fac?.state || 'TX';
+    const pkg  = this.S.hrOnboarding[stKey];
+    const docs = emp.docs || {};
+
+    // Infer step completion from employee status
+    const inferStatus = (stepIdx, total) => {
+      if (emp.status === 'active')  return 'complete';
+      if (emp.status === 'invited') return 'pending';
+      if (emp.status === 'onboarding') return stepIdx < Math.ceil(total * 0.5) ? 'complete' : 'pending';
+      if (emp.status === 'review')     return stepIdx < total - 1 ? 'complete' : 'pending';
+      if (emp.status === 'approved')   return 'complete';
+      return 'pending';
+    };
+
+    const steps = pkg ? pkg.steps.map((s, i) => {
+      const d      = docs[s.id];
+      const status = d?.status || inferStatus(i, pkg.steps.length);
+      const subDate = d?.submittedAt || (status === 'complete' ? `2025-04-${String(8+i).padStart(2,'0')}` : null);
+      const typeColor = s.type === 'video' ? '#7C3AED' : '#2563EB';
+      return `
+        <div style="display:flex;align-items:flex-start;gap:12px;padding:14px 20px;border-bottom:1px solid var(--g100);background:${status==='complete'?'#F0FDF4':''}">
+          <div style="width:24px;height:24px;border-radius:50%;background:${status==='complete'?'#16A34A':'var(--g200)'};color:${status==='complete'?'#fff':'var(--g500)'};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;margin-top:1px">
+            ${status==='complete'?'✓':i+1}
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <div style="font-weight:600;font-size:13px;color:var(--g900)">${sanitize(s.title)}</div>
+              <span style="font-size:10px;font-weight:700;background:${typeColor};color:#fff;padding:2px 8px;border-radius:6px">${s.type||'form'}</span>
+            </div>
+            <div style="font-size:11px;color:var(--g500);margin-top:3px">${sanitize(s.desc)}</div>
+            ${subDate ? `<div style="font-size:11px;color:#15803D;margin-top:5px;display:flex;align-items:center;gap:4px">
+              <svg viewBox="0 0 14 14" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="7" cy="7" r="6"/><path d="M4.5 7l2 2L9.5 5"/></svg>
+              Submitted ${subDate}</div>` : `<div style="font-size:11px;color:var(--g400);margin-top:5px;font-style:italic">Not yet submitted</div>`}
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
+            ${status === 'complete'
+              ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="App.viewHRDoc('${empId}','${s.id}')">View</button>
+                 <button class="btn btn-ghost btn-sm" style="font-size:11px;color:var(--g400)" onclick="App.requestResubmit('${empId}','${s.id}')">Request Resubmit</button>`
+              : `<span style="font-size:11px;color:var(--g400);background:var(--g100);padding:3px 8px;border-radius:6px">Pending</span>`}
+          </div>
+        </div>`;
+    }).join('') : '<div style="padding:24px;color:var(--g400);text-align:center">No onboarding package found for this facility</div>';
+
+    const completedCount = pkg ? pkg.steps.filter((s,i) => (docs[s.id]?.status || inferStatus(i, pkg.steps.length)) === 'complete').length : 0;
+    const totalCount     = pkg ? pkg.steps.length : 0;
+    const pct = totalCount ? Math.round(completedCount/totalCount*100) : 0;
+
+    const body = document.getElementById('modal-hr-emp-detail-body');
+    if (!body) return;
+    body.innerHTML = `
+      <div style="display:flex;align-items:center;gap:14px;padding:20px;border-bottom:1px solid var(--g100);background:var(--g50)">
+        ${this.hrAvatar(emp.initials, emp.status)}
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:16px;color:var(--g900)">${sanitize(emp.name)}</div>
+          <div style="font-size:12px;color:var(--g500);margin-top:2px">${sanitize(emp.role)}${fac?' · '+sanitize(fac.name):''}</div>
+          <div style="font-size:12px;color:var(--g500)">${sanitize(emp.email)}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0">
+          ${this.hrBadge(emp.status)}
+          <div style="font-size:11px;color:var(--g400);margin-top:4px">${sanitize(emp.progress)}</div>
+          ${emp.slxId ? `<div style="font-size:11px;font-weight:700;color:var(--purple);margin-top:2px">${sanitize(emp.slxId)}</div>` : ''}
+        </div>
+      </div>
+      <div style="padding:14px 20px;border-bottom:1px solid var(--g100);display:flex;align-items:center;gap:16px">
+        <div style="flex:1">
+          <div style="font-size:12px;font-weight:700;color:var(--g600);margin-bottom:6px">${pkg?.name || 'Onboarding Documents'} — ${completedCount}/${totalCount} complete</div>
+          <div style="height:6px;background:var(--g100);border-radius:4px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:${pct===100?'#16A34A':'var(--blue)'};border-radius:4px;transition:width .4s"></div>
+          </div>
+        </div>
+        ${emp.status==='review'?`<button class="btn btn-primary btn-sm" onclick="App.approveHRDoc('${empId}');App.closeModal('modal-hr-emp-detail')">Approve All</button>`:''}
+        ${emp.status==='approved'?`<button class="btn btn-secondary btn-sm" onclick="App.exportHRSmartLinx('${empId}');App.closeModal('modal-hr-emp-detail')">Export to SmartLinx</button>`:''}
+      </div>
+      ${steps}`;
+    this.openModal('modal-hr-emp-detail');
+    this.logAudit('view_phi', `Viewed onboarding documents for ${emp.name}`);
+  },
+
+  viewHRDoc(empId, stepId) {
+    const emp  = this.S.hrEmployees.find(e => e.id === empId);
+    const fac  = HR_FACILITIES.find(f => f.id === emp?.facilityId);
+    const stKey = fac?.state || 'TX';
+    const step = this.S.hrOnboarding[stKey]?.steps.find(s => s.id === stepId);
+    if (!step) return;
+    if (step.url) {
+      window.open(step.url, '_blank');
+    } else {
+      this.showToast(`${step.title} — no attachment linked yet. Edit the step to add a URL.`, 'warn');
+    }
+  },
+
+  requestResubmit(empId, stepId) {
+    const emp = this.S.hrEmployees.find(e => e.id === empId);
+    if (emp && emp.docs?.[stepId]) { emp.docs[stepId].status = 'pending'; this.persistData(); }
+    this.showToast('Resubmission request sent');
   },
 
   moveHRStep(state, idx, dir) {
