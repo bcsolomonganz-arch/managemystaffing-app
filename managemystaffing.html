@@ -829,6 +829,24 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
   </div>
 </div>
 
+<!-- Staffing Requirements Modal -->
+<div class="modal-overlay" id="modal-slots" role="dialog" aria-modal="true" aria-label="Staffing Requirements">
+  <div class="modal" style="max-width:680px;width:96%">
+    <div class="modal-header">
+      <span class="modal-title">Staffing Requirements</span>
+      <button class="modal-close" onclick="App.closeModal('modal-slots')">✕</button>
+    </div>
+    <div style="padding:6px 20px 2px;background:var(--blue-l);border-bottom:1px solid var(--blue-m)">
+      <p style="font-size:12px;color:var(--blue-d);margin:8px 0">Set how many staff are required per shift type for each department. The calendar will show filled slots (names) and empty slots that still need coverage.</p>
+    </div>
+    <div id="modal-slots-body" style="padding:16px 20px;max-height:65vh;overflow-y:auto"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="App.closeModal('modal-slots')">Cancel</button>
+      <button class="btn btn-primary" onclick="App.saveStaffingSlots()">Save Requirements</button>
+    </div>
+  </div>
+</div>
+
 <!-- Employee Onboarding Detail Modal -->
 <div class="modal-overlay" id="modal-hr-emp-detail" role="dialog" aria-modal="true" aria-label="Employee Documents">
   <div class="modal" style="max-width:680px;width:96%;max-height:90vh;display:flex;flex-direction:column">
@@ -1266,6 +1284,7 @@ const App = {
     },
     hrBudgetEditing: false,
     hrOpenShifts: [],                 // real open shifts (not demo)
+    staffingSlots: {},                // {buildingId: {group: {shiftType: N}}}
     hrScheduleOffset: 0,    // payroll period offset (0=current, -1=prev, +1=next)
     hrScheduleDepts: [],    // selected dept filters ([] = all)
     // Job postings (HR Recruiting)
@@ -3408,6 +3427,70 @@ const App = {
       </div>`;
   },
 
+  // ── STAFFING SLOT REQUIREMENTS ───────────────────────────────
+  getSlotReqs(bId, group) {
+    return ((this.S.staffingSlots || {})[bId] || {})[group] || {};
+  },
+
+  openSlotsModal() {
+    const bId = this.S.user?.buildingId || 'b1';
+    const slots = (this.S.staffingSlots || {})[bId] || {};
+    const g = this.S.selectedGroup;
+
+    // Build form — if a group is selected, lead with it; show all groups
+    const groups = g
+      ? [g, ...DISPLAY_GROUPS.filter(x => x !== g)]
+      : DISPLAY_GROUPS;
+
+    let html = '';
+    groups.forEach(grp => {
+      const shiftDefs = SHIFT_TYPES(grp);
+      const gSlots    = slots[grp] || {};
+      const col       = G_COLORS[grp] || 'var(--blue)';
+      const isCurrent = grp === g;
+      const key       = grp.replace(/ /g,'_');
+      html += `
+        <div style="border:1.5px solid ${isCurrent?col:'var(--g100)'};border-radius:10px;padding:14px 16px;margin-bottom:12px;background:${isCurrent?col+'0A':'#fff'}">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+            <div style="width:28px;height:28px;border-radius:8px;background:${col}22;color:${col};display:flex;align-items:center;justify-content:center;font-size:14px">${G_ICONS[grp]}</div>
+            <div style="font-weight:700;font-size:13px;color:var(--g900)">${grp}</div>
+            ${isCurrent?`<span style="font-size:10px;font-weight:700;background:${col};color:#fff;padding:2px 8px;border-radius:10px">Selected</span>`:''}
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(${shiftDefs.length},1fr);gap:10px">
+            ${shiftDefs.map(sh => `
+              <div>
+                <label style="font-size:11px;font-weight:700;color:var(--g500);display:block;margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em">${sh.type}<br><span style="font-weight:400;font-size:10px;text-transform:none">${sh.start}–${sh.end}</span></label>
+                <input id="slots-${key}-${sh.type}" type="number" min="0" max="30"
+                  value="${gSlots[sh.type] || 0}"
+                  style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid var(--g200);border-radius:8px;font-size:18px;font-weight:700;text-align:center;font-family:inherit;color:var(--g900)">
+              </div>`).join('')}
+          </div>
+        </div>`;
+    });
+
+    document.getElementById('modal-slots-body').innerHTML = html;
+    this.openModal('modal-slots');
+  },
+
+  saveStaffingSlots() {
+    const bId = this.S.user?.buildingId || 'b1';
+    if (!this.S.staffingSlots) this.S.staffingSlots = {};
+    if (!this.S.staffingSlots[bId]) this.S.staffingSlots[bId] = {};
+    DISPLAY_GROUPS.forEach(grp => {
+      const shiftDefs = SHIFT_TYPES(grp);
+      const key = grp.replace(/ /g,'_');
+      this.S.staffingSlots[bId][grp] = {};
+      shiftDefs.forEach(sh => {
+        const val = parseInt(document.getElementById(`slots-${key}-${sh.type}`)?.value || 0, 10);
+        this.S.staffingSlots[bId][grp][sh.type] = isNaN(val) ? 0 : val;
+      });
+    });
+    this.persistData();
+    this.closeModal('modal-slots');
+    this.renderMain();
+    this.showToast('Staffing requirements saved');
+  },
+
   saveHRBudget() {
     const get = id => parseFloat(document.getElementById(id)?.value || 0);
     this.S.hrLaborBudget = {
@@ -5198,6 +5281,11 @@ const App = {
       </div>`;
     }
     const groupPill = g ? `<div class="group-pill" style="background:${G_COLORS[g]}11;border:1.5px solid ${G_COLORS[g]}33;color:${G_COLORS[g]}">${G_ICONS[g]} ${g}</div>` : '';
+    const hasSlots = g && Object.keys(((this.S.staffingSlots||{})[bId]||{})[g]||{}).some(k=>((this.S.staffingSlots||{})[bId]||{})[g][k]>0);
+    const slotsBtn = `<button class="btn btn-ghost btn-sm" onclick="App.openSlotsModal()" style="display:flex;align-items:center;gap:5px;color:${hasSlots?'var(--blue)':'var(--g500)'}">
+      <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v3l2 2"/><path d="M4 2.5l8 0"/><path d="M4 13.5l8 0"/></svg>
+      ${hasSlots?'Slots Set':'Set Slots'}
+    </button>`;
     const filterTabs = `<div class="filter-tabs" style="margin-left:auto">
       <div class="filter-tab ${this.S.filter==='scheduled'?'active scheduled':''}" onclick="App.setFilter('scheduled')">All Shifts</div>
       <div class="filter-tab ${this.S.filter==='open'?'active open':''}" onclick="App.setFilter('open')">Open Only</div>
@@ -5220,7 +5308,7 @@ const App = {
     else calHtml = this.renderShiftView();
 
     document.getElementById('main').innerHTML = `${stats}
-      <div class="cal-toolbar">${viewTabs}${groupPill}${filterTabs}</div>${calHtml}`;
+      <div class="cal-toolbar">${viewTabs}${groupPill}${g?slotsBtn:''}${filterTabs}</div>${calHtml}`;
   },
 
   // ── PPD CALCULATOR ──────────────────────────────────────────
@@ -5589,24 +5677,61 @@ const App = {
       const sched = dayShifts.filter(s=>s.status==='scheduled');
       const g = this.S.selectedGroup;
 
+      const bId = this.S.user?.buildingId || 'b1';
       let content = '';
       if (g) {
-        const ag = getActualGroups(g);
+        const ag       = getActualGroups(g);
         const shiftDefs = SHIFT_TYPES(g);
+        const slotReqs  = this.getSlotReqs(bId, g);
+        const hasReqs   = Object.values(slotReqs).some(v => v > 0);
+        let anyShown = false;
+
         shiftDefs.forEach(sh => {
-          const slots = dayShifts.filter(s=>ag.includes(s.group)&&s.type===sh.type);
-          slots.forEach(slot => {
-            if (filter==='open'&&slot.status==='scheduled') return;
-            // filter==='scheduled' shows ALL shifts (open + filled)
-            if (slot.status==='open') {
-              content += `<div class="shift-row"><span class="shift-label">${sh.type.slice(0,3)}</span><span class="shift-open-tag">OPEN</span></div>`;
-            } else {
-              const emp = this.S.employees.find(e=>e.id===slot.employeeId);
-              if (emp) content += `<div class="shift-row"><span class="shift-label">${sh.type.slice(0,3)}</span><span class="shift-emp">${emp.initials}</span></div>`;
+          const req       = slotReqs[sh.type] || 0;
+          const allSlots  = dayShifts.filter(s => ag.includes(s.group) && s.type === sh.type);
+          const scheduled = allSlots.filter(s => s.status === 'scheduled');
+          const numFilled = scheduled.length;
+          const numEmpty  = hasReqs ? Math.max(0, req - numFilled) : allSlots.filter(s=>s.status==='open').length;
+          const total     = hasReqs ? req : (numFilled + numEmpty);
+
+          // skip in open-only filter if no empty slots
+          if (filter === 'open' && numEmpty === 0 && total > 0) return;
+
+          if (total === 0 && numFilled === 0) return; // nothing for this shift type
+
+          anyShown = true;
+          const allFull = hasReqs && numEmpty === 0 && req > 0;
+          const badge = hasReqs && req > 0
+            ? `<span style="margin-left:auto;font-size:9px;font-weight:700;color:${allFull?'#16A34A':'#DC2626'}">${numFilled}/${req}</span>`
+            : '';
+
+          let pills = '';
+          // Filled employee names (first name, truncated)
+          scheduled.forEach(slot => {
+            const emp = this.S.employees.find(e => e.id === slot.employeeId);
+            if (emp) {
+              const firstName = emp.name.split(' ')[0];
+              pills += `<span class="shift-emp" title="${sanitize(emp.name)}" style="max-width:54px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${sanitize(firstName)}</span>`;
             }
           });
+          // Empty slot indicators
+          for (let i = 0; i < numEmpty; i++) {
+            pills += `<span class="shift-open-tag" style="opacity:.8">OPEN</span>`;
+          }
+
+          content += `<div class="shift-row" style="flex-wrap:wrap;gap:2px;row-gap:2px">
+            <span class="shift-label" style="background:${allFull?'#DCFCE7':'#FEF2F2'};color:${allFull?'#166534':'#991B1B'}">${sh.type.slice(0,3)}</span>
+            ${pills}${badge}
+          </div>`;
         });
-        if (!content) content = `<div style="font-size:11px;color:var(--g300)">${filter==='open'?'No open':'All covered'}</div>`;
+
+        if (!anyShown) {
+          if (hasReqs && filter !== 'open') {
+            content = `<div style="font-size:10px;color:#16A34A;display:flex;align-items:center;gap:3px"><svg viewBox="0 0 10 10" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="1,5 3.5,8 9,2"/></svg> All covered</div>`;
+          } else {
+            content = `<div style="font-size:10px;color:var(--g300)">${filter==='open'?'No open':'No shifts'}</div>`;
+          }
+        }
       } else {
         content = `<div class="cal-summary">
           ${sched.length?`<div class="cal-chip sched"><svg viewBox="0 0 10 10" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1,5 4,8 9,2"/></svg> ${sched.length}</div>`:''}
@@ -5640,28 +5765,69 @@ const App = {
     const dayShifts = this.getDayShifts(date);
     const d = new Date(date+'T12:00:00');
     const label = d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
-    const colStyle = `grid-template-columns:100px repeat(3,1fr)`;
-    const grps = ['Charge Nurse','CNA','CMA'];
+    const bId = this.S.user?.buildingId || 'b1';
 
-    let hdr = `<div style="padding:12px 16px;background:var(--g50);font-size:12px;font-weight:700;color:var(--g400)">SHIFT</div>`;
-    grps.forEach(g => hdr += `<div style="padding:12px 16px;border-left:3px solid ${G_COLORS[g]};background:${G_COLORS[g]}09;font-weight:700;font-size:13px;color:${G_COLORS[g]}">${G_ICONS[g]} ${g}</div>`);
+    // Use selected group if clinical, else show all clinical groups
+    const selGroup = this.S.selectedGroup;
+    const grps = selGroup && CLINICAL.includes(selGroup)
+      ? [selGroup]
+      : ['Charge Nurse','CNA','CMA'];
+
+    const colStyle = `grid-template-columns:110px repeat(${grps.length},1fr)`;
+
+    let hdr = `<div style="padding:12px 16px;background:var(--g50);font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase">Shift</div>`;
+    grps.forEach(g => {
+      const slotReqsG = this.getSlotReqs(bId, g);
+      const hasReqsG  = Object.values(slotReqsG).some(v=>v>0);
+      hdr += `<div style="padding:10px 14px;border-left:3px solid ${G_COLORS[g]};background:${G_COLORS[g]}09">
+        <div style="font-weight:700;font-size:13px;color:${G_COLORS[g]}">${G_ICONS[g]} ${g}</div>
+        ${hasReqsG?`<div style="font-size:10px;color:var(--g400);margin-top:2px">${Object.entries(slotReqsG).map(([t,n])=>`${n} ${t}`).join(' · ')}</div>`:''}
+      </div>`;
+    });
 
     let rows = '';
     CLINICAL_SHIFTS.forEach(sh => {
-      let row = `<div style="padding:12px 16px;background:var(--g50)"><div style="font-size:12px;font-weight:700;color:var(--g700)">${sh.type}</div><div style="font-size:11px;color:var(--g400)">${sh.start}–${sh.end}</div></div>`;
+      let row = `<div style="padding:12px 16px;background:var(--g50)">
+        <div style="font-size:12px;font-weight:700;color:var(--g700)">${sh.type}</div>
+        <div style="font-size:11px;color:var(--g400)">${sh.start}–${sh.end}</div>
+      </div>`;
+
       grps.forEach(g => {
-        const slots = dayShifts.filter(s=>s.group===g&&s.type===sh.type);
+        const slotReqsG  = this.getSlotReqs(bId, g);
+        const req        = slotReqsG[sh.type] || 0;
+        const allSlots   = dayShifts.filter(s => s.group === g && s.type === sh.type);
+        const scheduled  = allSlots.filter(s => s.status === 'scheduled');
+        const numFilled  = scheduled.length;
+        const numEmpty   = req > 0 ? Math.max(0, req - numFilled) : allSlots.filter(s=>s.status==='open').length;
+        const allFull    = req > 0 && numEmpty === 0;
+
         let cell = '';
-        slots.forEach(slot => {
-          if (slot.status==='open') {
-            const opts = this.S.employees.filter(e=>e.group===g&&!e.inactive).map(e=>`<option value="${e.id}">${sanitize(e.name)}</option>`).join('');
-            cell += `<div class="emp-slot-open" style="margin-bottom:4px"><span class="emp-slot-open-label">OPEN</span><select class="assign-select" onchange="App.assignShift('${slot.id}',this.value)"><option value="">Assign...</option>${opts}</select></div>`;
-          } else {
-            const emp = this.S.employees.find(e=>e.id===slot.employeeId);
-            if (emp) cell += `<div class="emp-slot" style="margin-bottom:4px"><div class="emp-slot-avatar" style="background:${G_COLORS[g]}">${sanitize(emp.initials)}</div><span style="font-size:12px;font-weight:600">${sanitize(emp.name)}</span></div>`;
-          }
+        // Filled slots — full name + avatar
+        scheduled.forEach(slot => {
+          const emp = this.S.employees.find(e => e.id === slot.employeeId);
+          if (emp) cell += `<div class="emp-slot" style="margin-bottom:6px;border:1px solid #DCFCE7;border-radius:8px;padding:6px 8px;background:#F0FDF4">
+            <div class="emp-slot-avatar" style="background:${G_COLORS[g]}">${sanitize(emp.initials)}</div>
+            <div>
+              <div style="font-size:12px;font-weight:700;color:var(--g900)">${sanitize(emp.name)}</div>
+              <div style="font-size:10px;color:var(--g500)">${sanitize(emp.group)}</div>
+            </div>
+          </div>`;
         });
-        row += `<div style="padding:12px">${cell||'<span style="font-size:11px;color:var(--g300)">—</span>'}</div>`;
+        // Empty slot placeholders
+        for (let i = 0; i < numEmpty; i++) {
+          const opts = this.S.employees.filter(e=>e.group===g&&!e.inactive).map(e=>`<option value="${e.id}">${sanitize(e.name)}</option>`).join('');
+          cell += `<div style="border:2px dashed #FCA5A5;border-radius:8px;padding:8px 10px;margin-bottom:6px;background:#FFF5F5">
+            <div style="font-size:10px;font-weight:700;color:#DC2626;margin-bottom:4px">OPEN SLOT</div>
+            <select class="assign-select" style="font-size:11px" onchange="App.assignShiftByDate('${date}','${g}','${sh.type}',this.value)">
+              <option value="">Assign employee…</option>${opts}
+            </select>
+          </div>`;
+        }
+
+        const fillLabel = req > 0
+          ? `<div style="font-size:10px;color:${allFull?'#16A34A':'#DC2626'};font-weight:700;margin-bottom:6px">${numFilled}/${req} filled</div>`
+          : '';
+        row += `<div style="padding:10px 12px;border-left:1px solid var(--g100)">${fillLabel}${cell||(!req?`<span style="font-size:11px;color:var(--g300)">No slots</span>`:'')} </div>`;
       });
       rows += `<div style="display:grid;${colStyle};border-bottom:1px solid var(--g100)">${row}</div>`;
     });
@@ -5715,27 +5881,64 @@ const App = {
 
     const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
+    const slotReqs = this.getSlotReqs(bId, g);
+    const hasReqs  = Object.values(slotReqs).some(v => v > 0);
+
     const renderCell = (ds) => {
       const d = new Date(ds+'T12:00:00');
       const dayShifts = this.S.shifts.filter(s=>s.date===ds&&actualGroups.includes(s.group)&&(s.buildingId===bId||!s.buildingId));
       const isToday = ds===TODAY;
       const isSel = ds===this.S.selectedDate;
-      const hasOpen = dayShifts.some(s=>s.status==='open');
+
       let content = '';
+      let hasAnyOpen = false;
+
       shiftDefs.forEach(sh => {
-        const slots = dayShifts.filter(s=>s.type===sh.type);
-        slots.forEach(slot => {
-          if (filter==='open'&&slot.status==='scheduled') return;
-          if (slot.status==='open') {
-            content += `<div class="shift-row"><span class="shift-label">${sh.type.slice(0,3)}</span><span class="shift-open-tag">OPEN</span></div>`;
-          } else {
-            const emp = this.S.employees.find(e=>e.id===slot.employeeId);
-            if (emp) content += `<div class="shift-row"><span class="shift-label">${sh.type.slice(0,3)}</span><span class="shift-emp">${sanitize(emp.initials)}</span></div>`;
-          }
-        });
+        const req       = slotReqs[sh.type] || 0;
+        const allSlots  = dayShifts.filter(s => s.type === sh.type);
+        const scheduled = allSlots.filter(s => s.status === 'scheduled');
+        const numFilled = scheduled.length;
+        const numEmpty  = hasReqs ? Math.max(0, req - numFilled) : allSlots.filter(s=>s.status==='open').length;
+        const total     = hasReqs ? req : (numFilled + numEmpty);
+
+        if (numEmpty > 0) hasAnyOpen = true;
+        if (filter === 'open' && numEmpty === 0 && total > 0) return;
+        if (total === 0 && numFilled === 0) return;
+
+        const allFull = hasReqs && numEmpty === 0 && req > 0;
+
+        // Name pills for filled slots
+        let pills = scheduled.map(slot => {
+          const emp = this.S.employees.find(e => e.id === slot.employeeId);
+          if (!emp) return '';
+          const firstName = emp.name.split(' ')[0];
+          return `<span class="shift-emp" title="${sanitize(emp.name)}" style="display:block;width:100%;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px">${sanitize(firstName)} ${emp.name.split(' ').slice(1).map(w=>w[0]).join('.')}.</span>`;
+        }).join('');
+
+        // Empty slot placeholders
+        for (let i = 0; i < numEmpty; i++) {
+          pills += `<div style="border:1.5px dashed #FCA5A5;border-radius:5px;padding:2px 5px;font-size:10px;font-weight:700;color:#DC2626;text-align:center;margin-top:1px">OPEN</div>`;
+        }
+
+        const badge = hasReqs && req > 0
+          ? `<span style="font-size:9px;font-weight:700;color:${allFull?'#16A34A':'#DC2626'};float:right">${numFilled}/${req}</span>`
+          : '';
+
+        content += `<div style="margin-bottom:5px">
+          <div style="font-size:9px;font-weight:700;color:var(--g400);text-transform:uppercase;margin-bottom:2px;display:flex;justify-content:space-between">
+            <span style="background:${allFull?'#DCFCE7':'#FEF2F2'};color:${allFull?'#166534':'#991B1B'};padding:1px 5px;border-radius:4px">${sh.type.slice(0,3)}</span>${badge}
+          </div>
+          ${pills}
+        </div>`;
       });
-      if (!content) content = `<div style="font-size:10px;color:var(--g300);margin-top:4px">${filter==='open'?'No open':'Covered'}</div>`;
-      const cls = `week14-cell${isToday?' today':''}${isSel?' selected':''}${hasOpen&&!isSel?' has-open':''}`;
+
+      if (!content) {
+        content = hasReqs && filter !== 'open'
+          ? `<div style="font-size:10px;color:#16A34A;margin-top:4px">✓ All covered</div>`
+          : `<div style="font-size:10px;color:var(--g300);margin-top:4px">${filter==='open'?'No open':'No shifts'}</div>`;
+      }
+
+      const cls = `week14-cell${isToday?' today':''}${isSel?' selected':''}${hasAnyOpen&&!isSel?' has-open':''}`;
       return `<div class="${cls}" onclick="App.selectDay('${ds}')">
         <div class="week14-date">${DOW[d.getDay()]} ${d.getDate()}</div>
         ${content}
@@ -6075,7 +6278,13 @@ const App = {
   },
 
   // ── ACTIONS ─────────────────────────────────────────────────
-  selectGroup(g) { this.S.selectedGroup=g; this.S.calView='month'; this.render(); },
+  selectGroup(g) {
+    this.S.selectedGroup = g;
+    this.S.calView = 'month';
+    this.S.ppdView = false;
+    this.S.rosterView = false;
+    this.render();
+  },
   setCalView(v) { this.S.calView=v; if(v==='day'&&!this.S.selectedDate) this.S.selectedDate=TODAY; this.renderMain(); },
   setFilter(f) { this.S.filter=f; this.renderMain(); },
   navMonth(dir) {
@@ -6111,6 +6320,33 @@ const App = {
   updateMonthLabel() {
     const el=document.getElementById('month-label');
     if(el) el.textContent=`${MONTHS[this.S.viewMonth]} ${this.S.viewYear}`;
+  },
+
+  assignShiftByDate(date, group, shiftType, empId) {
+    if (!empId) return;
+    if (this.S.user?.role !== 'admin' && this.S.user?.role !== 'superadmin') { this.showToast('Unauthorized','warn'); return; }
+    const emp = this.S.employees.find(e => e.id === empId);
+    if (!emp) return;
+    const bId = this.S.user?.buildingId || 'b1';
+    // Find an existing open shift for this date/group/type, or create one and assign it
+    let shift = this.S.shifts.find(s => s.date === date && s.group === group && s.type === shiftType && s.status === 'open' && (s.buildingId === bId || !s.buildingId));
+    if (!shift) {
+      // Create a new shift record
+      const shiftDef = SHIFT_TYPES(group).find(s => s.type === shiftType);
+      shift = {
+        id: 'sh_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+        date, group, type: shiftType, status: 'scheduled',
+        employeeId: empId, buildingId: bId,
+        start: shiftDef?.start || '', end: shiftDef?.end || '',
+      };
+      this.S.shifts.push(shift);
+    } else {
+      shift.employeeId = empId;
+      shift.status = 'scheduled';
+    }
+    this.persistData();
+    this.showToast(`${sanitize(emp.name)} assigned to ${shiftType} on ${date}`);
+    this.renderMain();
   },
 
   assignShift(shiftId, empId) {
