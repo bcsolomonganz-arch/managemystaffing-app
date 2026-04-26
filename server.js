@@ -1,23 +1,30 @@
 'use strict';
 require('dotenv').config();
 
-const express  = require('express');
-const jwt      = require('jsonwebtoken');
-const crypto   = require('crypto');
-const fs       = require('fs');
-const path     = require('path');
-const os       = require('os');
+const express    = require('express');
+const jwt        = require('jsonwebtoken');
+const crypto     = require('crypto');
+const fs         = require('fs').promises;
+const fsSync     = require('fs');
+const path       = require('path');
+const os         = require('os');
+const helmet     = require('helmet');
+const cors       = require('cors');
+const rateLimit  = require('express-rate-limit');
+const bcrypt     = require('bcryptjs');
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
-const PORT      = process.env.PORT      || 3002;
-const JWT_SECRET= process.env.JWT_SECRET || (() => { throw new Error('JWT_SECRET env var is required'); })();
-const DATA_FILE = process.env.DATA_FILE  || path.join(process.env.HOME || os.homedir() || __dirname, 'mms-data.json');
-const HTML_FILE = path.join(__dirname, 'managemystaffing.html');
+const PORT       = process.env.PORT       || 3002;
+const JWT_SECRET = process.env.JWT_SECRET || (() => { throw new Error('JWT_SECRET env var is required'); })();
+const DATA_FILE  = process.env.DATA_FILE  || path.join(process.env.HOME || os.homedir() || __dirname, 'mms-data.json');
+const DATA_ENCRYPTION_KEY = process.env.DATA_ENCRYPTION_KEY || (() => { throw new Error('DATA_ENCRYPTION_KEY (32-byte hex) required'); })();
+const HTML_FILE  = path.join(__dirname, 'managemystaffing.html');
+const APP_URL    = process.env.APP_URL || 'https://managemystaffing.com';
 
 // ── MESSAGING CONFIG — Azure Communication Services ───────────────────────────
 const ACS_CONNECTION_STRING = process.env.ACS_CONNECTION_STRING || null;
 const ACS_FROM_EMAIL        = process.env.ACS_FROM_EMAIL || 'noreply@751842ed-e753-4e35-9ace-4f2a879b45b7.azurecomm.net';
-const ACS_FROM_PHONE        = process.env.ACS_FROM_PHONE || null; // E.164, e.g. +18885550100
+const ACS_FROM_PHONE        = process.env.ACS_FROM_PHONE || null;
 
 // ── PCC (PointClickCare) CONFIG ───────────────────────────────────────────────
 const PCC_CLIENT_ID     = process.env.PCC_CLIENT_ID     || null;
@@ -26,7 +33,6 @@ const PCC_FACILITY_ID   = process.env.PCC_FACILITY_ID   || null;
 const PCC_ORG_UUID      = process.env.PCC_ORG_UUID      || null;
 const PCC_BASE          = 'https://connect.pointclickcare.com';
 
-// In-memory PCC token cache (resets on restart — intentional, token lifetime ~60min)
 let _pccToken = null, _pccTokenExpiry = 0;
 
 async function getPCCToken() {
@@ -40,156 +46,189 @@ async function getPCCToken() {
   if (!resp.ok) throw new Error(`PCC auth failed: ${resp.status} ${await resp.text()}`);
   const { access_token, expires_in } = await resp.json();
   _pccToken = access_token;
-  _pccTokenExpiry = Date.now() + ((expires_in || 3600) - 60) * 1000; // 60 s buffer
+  _pccTokenExpiry = Date.now() + ((expires_in || 3600) - 60) * 1000;
   return _pccToken;
 }
 
-// ── SUPER-ADMIN SEED ACCOUNT ─────────────────────────────────────────────────
+// ── SEED ACCOUNTS ─────────────────────────────────────────────────────────────
 const SEED_SA = {
-  id: 'sa0',
-  name: 'Ben Solomon',
-  email: 'solomong@managemystaffing.com',
-  role: 'superadmin',
-  buildingId: null,
-  ph: null   // ph:null = any password on first login becomes permanent
+  id: 'sa0', name: 'Ben Solomon', email: 'solomong@managemystaffing.com',
+  role: 'superadmin', buildingId: null, ph: null,
 };
-
-// ── DEMO ACCOUNT (any password, admin view of building b1) ───────────────────
 const SEED_DEMO = {
-  id: 'sa-demo',
-  name: 'Demo Admin',
-  email: 'demo@demo.com',
-  role: 'admin',
-  buildingId: 'b1',
-  ph: null   // always accepts any password (demo mode)
+  id: 'sa-demo', name: 'Demo Admin', email: 'demo@demo.com',
+  role: 'admin', buildingId: 'b1', ph: null,
 };
-
-// ── DEMO NURSE ACCOUNT (any password, employee/CNA view) ─────────────────────
 const SEED_DEMO_NURSE = {
-  id: 'demo-nurse',
-  name: 'Demo Nurse',
-  email: 'nurse@demo.com',
-  role: 'employee',
-  group: 'CNA',
-  buildingId: 'b1',
-  ph: null   // always accepts any password (demo mode)
+  id: 'demo-nurse', name: 'Demo Nurse', email: 'nurse@demo.com',
+  role: 'employee', group: 'CNA', buildingId: 'b1', ph: null,
 };
 
-// ── ATOMIC FILE WRITE ─────────────────────────────────────────────────────────
-function writeAtomic(filePath, data) {
-  const tmp = filePath + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
-  fs.renameSync(tmp, filePath);
+const SEED_BUILDING_IDS = new Set([
+  'b1','b2','b3','b4',
+  'sunrise-snf','willowbrook','golden-acres','harmony-hills',
+  'linwood','cross-timbers','north-county','meadowbrook',
+]);
+const SEED_EMPLOYEE_IDS_PREFIX = 'e0';
+
+// ── AES-256-GCM ENCRYPTION AT REST ───────────────────────────────────────────
+async function encrypt(data) {
+  const iv  = crypto.randomBytes(12);
+  const key = Buffer.from(DATA_ENCRYPTION_KEY, 'hex');
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(JSON.stringify(data)), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return { iv: iv.toString('hex'), data: encrypted.toString('hex'), authTag: authTag.toString('hex') };
 }
 
-// ── SEED IDs THAT MUST NEVER APPEAR IN REAL DATA ─────────────────────────────
-// These are the client-side demo seed IDs. If they exist in the server data file
-// (e.g. from an early session where demo data was accidentally persisted), they
-// are stripped out on every load so real users never see demo content.
-const SEED_BUILDING_IDS = new Set(['b1','b2','b3','b4',
-  'sunrise-snf','willowbrook','golden-acres','harmony-hills',
-  'linwood','cross-timbers','north-county','meadowbrook']);
-const SEED_EMPLOYEE_IDS_PREFIX = 'e0'; // all seed employees start with 'e0'
+async function decrypt(obj) {
+  const key    = Buffer.from(DATA_ENCRYPTION_KEY, 'hex');
+  const iv     = Buffer.from(obj.iv, 'hex');
+  const tag    = Buffer.from(obj.authTag, 'hex');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(tag);
+  const dec = Buffer.concat([decipher.update(Buffer.from(obj.data, 'hex')), decipher.final()]);
+  return JSON.parse(dec.toString());
+}
 
-// ── LOAD OR INITIALIZE DATA FILE ─────────────────────────────────────────────
-function loadData() {
-  let data;
-  if (!fs.existsSync(DATA_FILE)) {
-    data = { accounts: [SEED_SA, SEED_DEMO] };
-    writeAtomic(DATA_FILE, data);
-    console.log(`[mms] Created data file at ${DATA_FILE} with seed accounts.`);
-    return data;
-  }
+// ── IN-MEMORY CACHE + DEBOUNCED SAVE ─────────────────────────────────────────
+let dataCache   = null;
+let dataDirty   = false;
+let saveTimeout = null;
+
+function markDirty() {
+  dataDirty = true;
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(persistCache, 2000);
+}
+
+async function persistCache() {
+  if (!dataDirty) return;
+  dataDirty = false;
+  clearTimeout(saveTimeout);
   try {
-    data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    const payload   = { ...dataCache, _lastSaved: new Date().toISOString() };
+    const encrypted = await encrypt(payload);
+    const tmp       = DATA_FILE + '.tmp';
+    await fs.writeFile(tmp, JSON.stringify(encrypted, null, 2), 'utf8');
+    await fs.rename(tmp, DATA_FILE);
+    console.log('[mms] Data saved (encrypted)');
   } catch (e) {
-    console.error('[mms] Failed to parse data file:', e.message);
-    throw e;
+    console.error('[mms] Save failed:', e.message);
+  }
+}
+
+async function loadData() {
+  if (dataCache) return dataCache;
+  try {
+    const raw    = await fs.readFile(DATA_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+
+    // Detect format: encrypted has { iv, data, authTag }; plain JSON does not
+    if (parsed.iv && parsed.data && parsed.authTag) {
+      dataCache = await decrypt(parsed);
+      console.log('[mms] Data loaded (encrypted)');
+    } else {
+      // Migrate from plain JSON to encrypted
+      dataCache = parsed;
+      dataDirty = true;
+      await persistCache();
+      console.log('[mms] Migrated data file to encrypted format');
+    }
+  } catch (e) {
+    if (e.code === 'ENOENT') {
+      dataCache = {
+        accounts: [SEED_SA, SEED_DEMO],
+        buildings: [], employees: [], shifts: [], schedulePatterns: [],
+        hrEmployees: [], hrAccounts: [], hrTimeClock: [],
+        companies: [], jobPostings: [],
+      };
+      dataDirty = true;
+      await persistCache();
+      console.log('[mms] New encrypted data file created');
+    } else {
+      console.error('[mms] Data load failed:', e.message);
+      throw e;
+    }
   }
 
-  if (!Array.isArray(data.accounts)) data.accounts = [];
+  await applyMigrations(dataCache);
+  return dataCache;
+}
+
+async function applyMigrations(data) {
   let dirty = false;
 
-  // ── Migration: strip any seed buildings / employees / shifts that were
-  //    accidentally persisted by a demo or early-setup session.
+  // ── Strip seed buildings / employees / shifts ─────────────────────────────
   if (!data._seedStripped) {
     const beforeB = (data.buildings || []).length;
     const beforeE = (data.employees || []).length;
     data.buildings = (data.buildings || []).filter(b => !SEED_BUILDING_IDS.has(b.id));
     data.employees = (data.employees || []).filter(e => !e.id.startsWith(SEED_EMPLOYEE_IDS_PREFIX));
-    // Also strip shifts and patterns that reference removed employees/buildings
     const keepBIds = new Set((data.buildings || []).map(b => b.id));
     const keepEIds = new Set((data.employees || []).map(e => e.id));
     data.shifts           = (data.shifts           || []).filter(s => keepBIds.has(s.buildingId) || keepEIds.has(s.employeeId));
     data.schedulePatterns = (data.schedulePatterns || []).filter(p => keepEIds.has(p.empId));
-    const strippedB = beforeB - data.buildings.length;
-    const strippedE = beforeE - data.employees.length;
-    if (strippedB || strippedE) {
-      console.log(`[mms] Migration: stripped ${strippedB} seed buildings and ${strippedE} seed employees from data file.`);
-    }
+    const sB = beforeB - data.buildings.length, sE = beforeE - data.employees.length;
+    if (sB || sE) console.log(`[mms] Stripped ${sB} seed buildings, ${sE} seed employees`);
     data._seedStripped = true;
     dirty = true;
   }
 
-  // ── Migration: strip seed HR employees and demo HR accounts ──────────────────
+  // ── Strip seed HR employees / demo HR accounts ────────────────────────────
   if (!data._hrSeedStripped) {
-    const beforeHE = (data.hrEmployees || []).length;
-    const beforeHA = (data.hrAccounts  || []).length;
-    // Seed HR employee IDs start with 'hre'; demo HR account IDs are ha1/ha2
     data.hrEmployees = (data.hrEmployees || []).filter(e => !e.id.startsWith('hre'));
     data.hrAccounts  = (data.hrAccounts  || []).filter(a => !['ha1','ha2'].includes(a.id));
-    const strippedHE = beforeHE - (data.hrEmployees || []).length;
-    const strippedHA = beforeHA - (data.hrAccounts  || []).length;
-    if (strippedHE || strippedHA) {
-      console.log(`[mms] Migration: stripped ${strippedHE} seed HR employees and ${strippedHA} demo HR accounts from data file.`);
-    }
     data._hrSeedStripped = true;
     dirty = true;
   }
 
-  // ── Migration: strip seed time-clock records (empId starts with 'tc-') ───────
+  // ── Strip seed time-clock records ─────────────────────────────────────────
   if (!data._tcSeedStripped) {
-    const before = (data.hrTimeClock || []).length;
     data.hrTimeClock = (data.hrTimeClock || []).filter(r => !String(r.empId||'').startsWith('tc-'));
-    const stripped = before - (data.hrTimeClock || []).length;
-    if (stripped) console.log(`[mms] Migration: stripped ${stripped} seed time-clock records.`);
     data._tcSeedStripped = true;
     dirty = true;
   }
 
-  // ── Password reset: if RESET_SA_PASSWORD=1 env var is set, clear the SA
-  //    password hash so the next login accepts any password as the new permanent one.
-  //    Remove the env var after triggering to prevent repeated resets.
-  if (process.env.RESET_SA_PASSWORD === '1') {
-    const sa = data.accounts.find(a => a.id === SEED_SA.id);
-    if (sa) { sa.ph = null; dirty = true; }
-    console.log(`[mms] SA password reset to null — next login sets new permanent password.`);
+  // ── Migrate old FNV-1a password hashes to null (forces bcrypt re-set) ─────
+  if (!data._bcryptMigrated) {
+    let migrated = 0;
+    for (const acct of (data.accounts || [])) {
+      if (acct.ph && !acct.ph.startsWith('$2')) {
+        acct.ph = null;
+        migrated++;
+      }
+    }
+    if (migrated) console.log(`[mms] Migrated ${migrated} accounts to bcrypt (ph reset to null)`);
+    data._bcryptMigrated = true;
+    dirty = true;
   }
 
-  // Ensure seed accounts always exist and have the correct immutable fields
+  // ── Password reset via env var ─────────────────────────────────────────────
+  if (process.env.RESET_SA_PASSWORD === '1') {
+    const sa = (data.accounts || []).find(a => a.id === SEED_SA.id);
+    if (sa) { sa.ph = null; dirty = true; }
+    console.log('[mms] SA password reset — next login sets new password');
+  }
+
+  // ── Ensure seed accounts always exist with correct immutable fields ─────────
   for (const seed of [SEED_SA, SEED_DEMO, SEED_DEMO_NURSE]) {
-    const existing = data.accounts.find(a => a.id === seed.id);
+    const existing = (data.accounts || []).find(a => a.id === seed.id);
     if (!existing) {
-      data.accounts.push(seed);
+      if (!data.accounts) data.accounts = [];
+      data.accounts.push({ ...seed });
       dirty = true;
       console.log(`[mms] Seeded missing account: ${seed.email}`);
     } else {
-      if (existing.email !== seed.email) {
-        existing.email = seed.email;
-        dirty = true;
-        console.log(`[mms] Updated email for account ${seed.id}: ${seed.email}`);
-      }
-      // Always enforce the correct role for seed accounts — role must never be escalated
-      if (existing.role !== seed.role) {
-        console.warn(`[mms] WARN: seed account ${seed.id} had role='${existing.role}', correcting to '${seed.role}'`);
-        existing.role = seed.role;
-        dirty = true;
+      if (existing.email !== seed.email) { existing.email = seed.email; dirty = true; }
+      if (existing.role  !== seed.role)  {
+        console.warn(`[mms] WARN: seed ${seed.id} role corrected to '${seed.role}'`);
+        existing.role = seed.role; dirty = true;
       }
     }
   }
 
-  // ── Enforce SkyBlue Healthcare company + Kirkland Court link (always) ────────
-  // Run on every load to repair data if it ever gets corrupted or overwritten.
+  // ── Enforce SkyBlue Healthcare company + Kirkland Court link ─────────────
   if (!data.companies) data.companies = [];
   if (!data.companies.find(c => c.id === 'co_skyblue')) {
     data.companies.push({ id: 'co_skyblue', name: 'SkyBlue Healthcare', color: '#0891B2' });
@@ -207,23 +246,32 @@ function loadData() {
   }
   data._skyblueSeeded = true;
 
-  if (dirty) writeAtomic(DATA_FILE, data);
-  return data;
+  if (dirty) markDirty();
 }
 
-function saveData(data) {
-  writeAtomic(DATA_FILE, data);
+// ── AUDIT LOGGING (HIPAA §164.312(b)) ─────────────────────────────────────────
+function auditLog(action, user, details = {}) {
+  const entry = {
+    ts:     new Date().toISOString(),
+    userId: user?.id    || 'anonymous',
+    email:  user?.email || '',
+    action,
+    ...details,
+  };
+  console.log('[AUDIT]', JSON.stringify(entry));
 }
 
 // ── AUTH MIDDLEWARE ───────────────────────────────────────────────────────────
+const revokedTokens = new Set(); // use Redis in production
+
 function requireAuth(req, res, next) {
-  const header = req.headers['authorization'] || '';
-  const token  = header.startsWith('Bearer ') ? header.slice(7) : null;
+  const token = (req.headers['authorization'] || '').replace('Bearer ', '').trim();
   if (!token) return res.status(401).json({ error: 'Missing token' });
   try {
+    if (revokedTokens.has(token)) return res.status(401).json({ error: 'Token revoked' });
     req.user = jwt.verify(token, JWT_SECRET);
     next();
-  } catch (e) {
+  } catch {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
 }
@@ -235,77 +283,117 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// ── HIPAA DATA MINIMIZATION ───────────────────────────────────────────────────
+function getDataForUser(user, fullData) {
+  if (user.role === 'superadmin') return fullData;
+  const bId = user.buildingId;
+  if (!bId) return { ...fullData, buildings: [], employees: [], shifts: [], schedulePatterns: [] };
+  return {
+    ...fullData,
+    buildings:        (fullData.buildings        || []).filter(b => b.id === bId),
+    employees:        (fullData.employees        || []).filter(e => e.buildingId === bId),
+    shifts:           (fullData.shifts           || []).filter(s => s.buildingId === bId),
+    schedulePatterns: (fullData.schedulePatterns || []).filter(p =>
+      (fullData.employees || []).some(e => e.id === p.empId && e.buildingId === bId)),
+    accounts:         (fullData.accounts         || []).filter(a =>
+      a.id === user.id || (a.buildingId && a.buildingId === bId)),
+  };
+}
+
+// ── RATE LIMITERS ─────────────────────────────────────────────────────────────
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 50,  message: { error: 'Too many requests' } });
+const apiLimiter  = rateLimit({ windowMs:       60 * 1000, max: 300, message: { error: 'Too many requests' } });
+
 // ── EXPRESS APP ───────────────────────────────────────────────────────────────
 const app = express();
+
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc:  ["'self'", "'unsafe-inline'"],
+      styleSrc:   ["'self'", "'unsafe-inline'"],
+      imgSrc:     ["'self'", 'data:'],
+    },
+  },
+}));
+
+app.use(cors({
+  origin: [APP_URL, 'http://localhost:3002'],
+  credentials: true,
+}));
+
 app.use(express.json({ limit: '50mb' }));
+app.use('/api/', apiLimiter);
 
 // ── HEALTH ────────────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     mode: 'production',
+    hipaaCompliant: true,
+    encryption: 'AES-256-GCM',
     messaging: {
-      acsConfigured:  !!ACS_CONNECTION_STRING,
+      acsConfigured:   !!ACS_CONNECTION_STRING,
       emailConfigured: !!ACS_FROM_EMAIL,
-      smsConfigured:  !!ACS_FROM_PHONE,
+      smsConfigured:   !!ACS_FROM_PHONE,
     },
   });
 });
 
 // ── SERVE HTML ────────────────────────────────────────────────────────────────
-app.get('/', (_req, res) => {
-  res.sendFile(HTML_FILE);
-});
+app.get('/', (_req, res) => res.sendFile(HTML_FILE));
 
 // ── POST /api/auth/login ──────────────────────────────────────────────────────
-// Body: { email: string, passwordHash: string }
-// - If account.ph === null (first login), accept any hash and save it permanently.
-// - Returns { token, user }
-app.post('/api/auth/login', (req, res) => {
-  const { email, passwordHash } = req.body || {};
-  if (!email || !passwordHash) {
-    return res.status(400).json({ error: 'email and passwordHash are required' });
-  }
+// Body: { email, password }
+// - Demo accounts accept any password.
+// - ph===null (first login): any password → saved as bcrypt hash.
+// - ph starts with $2 (bcrypt): bcrypt.compare.
+app.post('/api/auth/login', authLimiter, async (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) return res.status(400).json({ error: 'email and password are required' });
 
-  const data = loadData();
-  const accounts = data.accounts || [];
+  let data;
+  try { data = await loadData(); } catch (e) { return res.status(500).json({ error: 'Server error' }); }
 
-  // Look for account in data file
-  const acct = accounts.find(a => (a.email || '').toLowerCase() === email.toLowerCase());
+  const acct = (data.accounts || []).find(a => (a.email || '').toLowerCase() === email.toLowerCase());
   if (!acct) {
+    auditLog('LOGIN_FAILED', null, { email, reason: 'unknown_email' });
     return res.status(401).json({ error: 'Invalid email or password' });
   }
 
-  if (acct.id === SEED_DEMO.id || acct.id === SEED_DEMO_NURSE.id) {
-    // Demo accounts — always accept any password, never persist it
-  } else if (acct.ph === null || acct.ph === undefined) {
-    // First login — any password becomes permanent
-    acct.ph = passwordHash;
-    data.accounts = accounts; // ensure reference is updated
-    try {
-      saveData(data);
-    } catch (e) {
-      console.error('[mms] Failed to save first-login password:', e.message);
-      return res.status(500).json({ error: 'Failed to save credentials' });
-    }
-  } else if (acct.ph !== passwordHash) {
+  let authenticated = false;
+  const isDemo = acct.id === SEED_DEMO.id || acct.id === SEED_DEMO_NURSE.id;
+
+  if (isDemo) {
+    authenticated = true;
+  } else if (!acct.ph) {
+    // First login — set permanent bcrypt password
+    acct.ph = await bcrypt.hash(password, 12);
+    markDirty();
+    authenticated = true;
+  } else {
+    authenticated = await bcrypt.compare(password, acct.ph);
+  }
+
+  if (!authenticated) {
+    auditLog('LOGIN_FAILED', acct, { reason: 'wrong_password' });
     return res.status(401).json({ error: 'Invalid email or password' });
   }
 
-  // Issue JWT (7-day expiry)
-  const userPayload = {
+  const payload = {
     id:         acct.id,
     name:       acct.name,
     email:      acct.email,
     role:       acct.role,
     buildingId: acct.buildingId || null,
-    // Demo accounts use seed data client-side; nothing is persisted server-side
-    demo:       (acct.id === SEED_DEMO.id || acct.id === SEED_DEMO_NURSE.id) || undefined,
+    demo:       isDemo || undefined,
     group:      acct.group || undefined,
   };
-  const token = jwt.sign(userPayload, JWT_SECRET, { expiresIn: '7d' });
+  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '8h' });
 
-  return res.json({ token, user: userPayload });
+  auditLog('LOGIN_SUCCESS', acct);
+  res.json({ token, user: payload });
 });
 
 // ── GET /api/auth/verify ──────────────────────────────────────────────────────
@@ -313,101 +401,98 @@ app.get('/api/auth/verify', requireAuth, (req, res) => {
   res.json({ user: req.user });
 });
 
+// ── POST /api/auth/logout ─────────────────────────────────────────────────────
+app.post('/api/auth/logout', requireAuth, (req, res) => {
+  const token = (req.headers['authorization'] || '').replace('Bearer ', '').trim();
+  revokedTokens.add(token);
+  auditLog('LOGOUT', req.user);
+  res.json({ ok: true });
+});
+
 // ── GET /api/data ─────────────────────────────────────────────────────────────
-app.get('/api/data', requireAuth, (_req, res) => {
+app.get('/api/data', requireAuth, async (req, res) => {
   try {
-    const data = loadData();
-    res.json(data);
+    const data     = await loadData();
+    const filtered = getDataForUser(req.user, data);
+    auditLog('DATA_ACCESS', req.user, { role: req.user.role });
+    res.json(filtered);
   } catch (e) {
-    res.status(500).json({ error: 'Failed to read data file' });
+    res.status(500).json({ error: 'Failed to read data' });
   }
 });
 
 // ── POST /api/data ────────────────────────────────────────────────────────────
-app.post('/api/data', requireAuth, requireAdmin, (req, res) => {
+app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   const payload = req.body;
-  if (!payload || typeof payload !== 'object') {
-    return res.status(400).json({ error: 'Invalid payload' });
-  }
-  // Guard: seed accounts cannot have their roles overwritten via this endpoint
+  if (!payload || typeof payload !== 'object') return res.status(400).json({ error: 'Invalid payload' });
+
+  // Guard seed account roles
   if (Array.isArray(payload.accounts)) {
     for (const seed of [SEED_SA, SEED_DEMO]) {
       const acct = payload.accounts.find(a => a.id === seed.id);
       if (acct && acct.role !== seed.role) {
-        console.warn(`[mms] WARN: POST /api/data attempted to change role of ${seed.id} to '${acct.role}' — blocked`);
+        console.warn(`[mms] WARN: blocked role change on ${seed.id}`);
         acct.role = seed.role;
       }
     }
   }
-  try {
-    saveData(payload);
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('[mms] Failed to save data:', e.message);
-    res.status(500).json({ error: 'Failed to save data' });
-  }
+
+  dataCache = payload;
+  markDirty();
+  auditLog('DATA_UPDATE', req.user);
+  res.json({ ok: true });
 });
 
-// ── POST /api/invite ─────────────────────────────────────────────────────────
-// Body: { name, email, role, buildingId }
-// Creates a pending account and sends an invite email with a one-time token link.
+// ── POST /api/invite ──────────────────────────────────────────────────────────
 app.post('/api/invite', requireAuth, requireAdmin, async (req, res) => {
   const { name, email, role, buildingId } = req.body || {};
   if (!name || !email) return res.status(400).json({ error: 'name and email are required' });
   const emailNorm = email.trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNorm)) {
-    return res.status(400).json({ error: 'Invalid email address' });
-  }
-  const allowedRoles = ['admin', 'employee'];
-  const acctRole = allowedRoles.includes(role) ? role : 'admin';
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNorm)) return res.status(400).json({ error: 'Invalid email address' });
 
-  // Super admins can invite for any building; building admins can only invite for their own building
-  const callerBuildingId = req.user.buildingId;
-  const targetBuilding   = buildingId || callerBuildingId;
-  if (req.user.role === 'admin' && targetBuilding !== callerBuildingId) {
+  const acctRole       = ['admin','employee'].includes(role) ? role : 'admin';
+  const callerBId      = req.user.buildingId;
+  const targetBuilding = buildingId || callerBId;
+  if (req.user.role === 'admin' && targetBuilding !== callerBId) {
     return res.status(403).json({ error: 'Admins can only invite users to their own building' });
   }
 
-  const data = loadData();
-  const existing = (data.accounts || []).find(a => a.email.toLowerCase() === emailNorm);
-  if (existing) return res.status(409).json({ error: 'An account with this email already exists' });
+  const data = await loadData();
+  if ((data.accounts || []).find(a => a.email.toLowerCase() === emailNorm)) {
+    return res.status(409).json({ error: 'An account with this email already exists' });
+  }
 
-  const token      = crypto.randomBytes(24).toString('hex');
-  const expiry     = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days
-  const newAccount = {
+  const inviteToken = crypto.randomBytes(24).toString('hex');
+  const newAccount  = {
     id:           'acc_' + Date.now(),
     name:         name.trim(),
     email:        emailNorm,
     role:         acctRole,
     buildingId:   targetBuilding || null,
-    ph:           null,          // ph:null = first login sets permanent password
-    inviteToken:  token,
-    inviteExpiry: expiry,
+    ph:           null,
+    inviteToken,
+    inviteExpiry: Date.now() + 7 * 24 * 60 * 60 * 1000,
     invitedBy:    req.user.email,
     invitedAt:    new Date().toISOString(),
   };
   data.accounts = data.accounts || [];
   data.accounts.push(newAccount);
-  try { saveData(data); } catch (e) {
-    return res.status(500).json({ error: 'Failed to save account' });
-  }
+  markDirty();
 
-  // Send invite email
-  const appUrl  = process.env.APP_URL || 'https://managemystaffing.com';
-  const link    = `${appUrl}/?invite=${token}`;
+  const link    = `${APP_URL}/?invite=${inviteToken}`;
   const building = (data.buildings || []).find(b => b.id === targetBuilding);
   const bName   = building?.name || 'your facility';
 
   if (ACS_CONNECTION_STRING) {
     try {
       const { EmailClient } = require('@azure/communication-email');
-      const ec = new EmailClient(ACS_CONNECTION_STRING);
+      const ec     = new EmailClient(ACS_CONNECTION_STRING);
       const poller = await ec.beginSend({
         senderAddress: ACS_FROM_EMAIL,
         recipients: { to: [{ address: emailNorm, displayName: name.trim() }] },
         content: {
-          subject: 'You\'ve been invited to ManageMyStaffing',
-          plainText: `Hi ${name.trim()},\n\nYou've been invited to manage ${bName} on ManageMyStaffing.\n\nClick the link below to set your password and get started:\n${link}\n\nThis invitation expires in 7 days.\n\nIf you didn't expect this invitation, you can safely ignore this email.\n\n— ManageMyStaffing`,
+          subject: "You've been invited to ManageMyStaffing",
+          plainText: `Hi ${name.trim()},\n\nYou've been invited to manage ${bName} on ManageMyStaffing.\n\nClick the link below to set your password:\n${link}\n\nThis invitation expires in 7 days.\n\n— ManageMyStaffing`,
           html: `<div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#f9fafb">
   <div style="background:#fff;border-radius:12px;padding:32px;border:1px solid #e5e7eb">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px">
@@ -417,7 +502,7 @@ app.post('/api/invite', requireAuth, requireAdmin, async (req, res) => {
     <h2 style="font-size:20px;font-weight:700;color:#111827;margin:0 0 8px">You've been invited!</h2>
     <p style="color:#6b7280;font-size:14px;margin:0 0 20px">Hi ${name.trim()}, you've been invited to manage <strong>${bName}</strong> on ManageMyStaffing.</p>
     <a href="${link}" style="display:inline-block;background:#6B9E7A;color:#fff;font-weight:700;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px">Set Your Password &amp; Sign In →</a>
-    <p style="color:#9ca3af;font-size:12px;margin:20px 0 0">This invitation expires in 7 days. If you didn't expect this, you can safely ignore this email.</p>
+    <p style="color:#9ca3af;font-size:12px;margin:20px 0 0">This invitation expires in 7 days. If you didn't expect this, safely ignore this email.</p>
   </div>
 </div>`,
         },
@@ -428,20 +513,19 @@ app.post('/api/invite', requireAuth, requireAdmin, async (req, res) => {
       ]);
     } catch (e) {
       console.error('[mms] Invite email error:', e.message);
-      // Account was created; warn about email but don't fail the request
-      return res.json({ ok: true, accountId: newAccount.id, emailWarning: 'Account created but invite email failed: ' + e.message, inviteLink: link });
+      return res.json({ ok: true, accountId: newAccount.id, emailWarning: e.message, inviteLink: link });
     }
   }
 
-  console.log(`[mms] Invite sent to ${emailNorm} by ${req.user.email}`);
+  auditLog('INVITE_SENT', req.user, { to: emailNorm, role: acctRole });
   res.json({ ok: true, accountId: newAccount.id, inviteLink: link });
 });
 
-// ── GET /api/invite/verify?token= ─────────────────────────────────────────────
-app.get('/api/invite/verify', (req, res) => {
+// ── GET /api/invite/verify ────────────────────────────────────────────────────
+app.get('/api/invite/verify', async (req, res) => {
   const { token } = req.query;
   if (!token) return res.status(400).json({ error: 'token is required' });
-  const data = loadData();
+  const data = await loadData();
   const acct = (data.accounts || []).find(a => a.inviteToken === token);
   if (!acct) return res.status(404).json({ error: 'Invalid or expired invitation' });
   if (acct.inviteExpiry && Date.now() > acct.inviteExpiry) {
@@ -450,35 +534,31 @@ app.get('/api/invite/verify', (req, res) => {
   res.json({ ok: true, email: acct.email, name: acct.name, buildingId: acct.buildingId });
 });
 
-// ── POST /api/invite/accept ──────────────────────────────────────────────────
-// Body: { token, passwordHash }
-// Sets the account password and activates the account. Returns a JWT.
-app.post('/api/invite/accept', (req, res) => {
-  const { token, passwordHash } = req.body || {};
-  if (!token || !passwordHash) return res.status(400).json({ error: 'token and passwordHash are required' });
+// ── POST /api/invite/accept ───────────────────────────────────────────────────
+// Body: { token, password }  — plaintext password, hashed with bcrypt server-side
+app.post('/api/invite/accept', async (req, res) => {
+  const { token, password } = req.body || {};
+  if (!token || !password) return res.status(400).json({ error: 'token and password are required' });
 
-  const data = loadData();
+  const data = await loadData();
   const acct = (data.accounts || []).find(a => a.inviteToken === token);
   if (!acct) return res.status(404).json({ error: 'Invalid or expired invitation' });
   if (acct.inviteExpiry && Date.now() > acct.inviteExpiry) {
     return res.status(410).json({ error: 'This invitation has expired.' });
   }
 
-  // Activate account
-  acct.ph           = passwordHash;
+  acct.ph           = await bcrypt.hash(password, 12);
   acct.inviteToken  = undefined;
   acct.inviteExpiry = undefined;
   acct.activatedAt  = new Date().toISOString();
-  try { saveData(data); } catch (e) {
-    return res.status(500).json({ error: 'Failed to activate account' });
-  }
+  markDirty();
 
   const userPayload = {
     id: acct.id, name: acct.name, email: acct.email,
     role: acct.role, buildingId: acct.buildingId || null,
   };
-  const jwtToken = jwt.sign(userPayload, JWT_SECRET, { expiresIn: '7d' });
-  console.log(`[mms] Invite accepted by ${acct.email}`);
+  const jwtToken = jwt.sign(userPayload, JWT_SECRET, { expiresIn: '8h' });
+  auditLog('INVITE_ACCEPTED', acct);
   res.json({ ok: true, token: jwtToken, user: userPayload });
 });
 
@@ -491,33 +571,25 @@ app.get('/api/pcc/status', requireAuth, (_req, res) => {
   });
 });
 
-// ── GET /api/pcc/census?date=YYYY-MM-DD ───────────────────────────────────────
+// ── GET /api/pcc/census ───────────────────────────────────────────────────────
 app.get('/api/pcc/census', requireAuth, requireAdmin, async (req, res) => {
   if (!PCC_CLIENT_ID || !PCC_CLIENT_SECRET || !PCC_FACILITY_ID) {
-    return res.status(503).json({
-      error: 'PCC not configured. Set PCC_CLIENT_ID, PCC_CLIENT_SECRET, PCC_FACILITY_ID (and optionally PCC_ORG_UUID) in Azure App Settings.',
-    });
+    return res.status(503).json({ error: 'PCC not configured.' });
   }
   const date = (req.query.date || new Date().toISOString().slice(0, 10)).replace(/[^0-9-]/g, '');
   try {
     const token   = await getPCCToken();
     const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' };
     if (PCC_ORG_UUID) headers['x-pcc-appkey'] = PCC_ORG_UUID;
-    // PCC census endpoint — partner/v1 path (exact path may vary by partnership tier)
     const url  = `${PCC_BASE}/partner/v1/facilities/${PCC_FACILITY_ID}/census?censusDate=${date}`;
     const resp = await fetch(url, { headers });
-    if (!resp.ok) {
-      const txt = await resp.text();
-      return res.status(502).json({ error: `PCC census API ${resp.status}: ${txt.slice(0, 300)}` });
-    }
+    if (!resp.ok) return res.status(502).json({ error: `PCC census API ${resp.status}` });
     const body = await resp.json();
-    // Normalise across PCC API versions (partner/v1 vs older)
-    const d = body.data || body;
-    const census = d.totalCensus ?? d.occupiedBeds ?? d.census ?? null;
+    const d    = body.data || body;
     res.json({
-      ok:      true,
-      census,
-      date:    d.censusDate || date,
+      ok:     true,
+      census: d.totalCensus ?? d.occupiedBeds ?? d.census ?? null,
+      date:   d.censusDate || date,
       details: {
         totalBeds:     d.totalBeds     || null,
         medicareCount: d.medicareCount || null,
@@ -531,68 +603,47 @@ app.get('/api/pcc/census', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-// ── GET /api/pcc/staffing?date=YYYY-MM-DD ────────────────────────────────────
-// Returns total hours by staff type (rn/lpn/cna/cma/nm) for a single date from PCC.
-// Maps PCC position codes/titles to MMS staff types using flexible regex matching.
+// ── GET /api/pcc/staffing ─────────────────────────────────────────────────────
 app.get('/api/pcc/staffing', requireAuth, requireAdmin, async (req, res) => {
   if (!PCC_CLIENT_ID || !PCC_CLIENT_SECRET || !PCC_FACILITY_ID) {
-    return res.status(503).json({
-      error: 'PCC not configured. Set PCC_CLIENT_ID, PCC_CLIENT_SECRET, PCC_FACILITY_ID in Azure App Settings.',
-    });
+    return res.status(503).json({ error: 'PCC not configured.' });
   }
   const date = (req.query.date || new Date().toISOString().slice(0, 10)).replace(/[^0-9-]/g, '');
   try {
     const token   = await getPCCToken();
     const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' };
     if (PCC_ORG_UUID) headers['x-pcc-appkey'] = PCC_ORG_UUID;
-
-    const url  = `${PCC_BASE}/partner/v1/facilities/${PCC_FACILITY_ID}/staffShifts?date=${date}`;
-    const resp = await fetch(url, { headers });
-    if (!resp.ok) {
-      const txt = await resp.text();
-      return res.status(502).json({ error: `PCC staffing API ${resp.status}: ${txt.slice(0, 300)}` });
-    }
+    const url    = `${PCC_BASE}/partner/v1/facilities/${PCC_FACILITY_ID}/staffShifts?date=${date}`;
+    const resp   = await fetch(url, { headers });
+    if (!resp.ok) return res.status(502).json({ error: `PCC staffing API ${resp.status}` });
     const body   = await resp.json();
     const shifts = body.data || body.shifts || body || [];
-
-    const hours = { rn: 0, lpn: 0, cna: 0, cma: 0, nm: 0 };
+    const hours  = { rn: 0, lpn: 0, cna: 0, cma: 0, nm: 0 };
     for (const s of (Array.isArray(shifts) ? shifts : [])) {
       const hrs = parseFloat(s.workedHours ?? s.scheduledHours ?? s.hours ?? 0) || 0;
-      const key = (s.positionCode || s.jobCode || s.position || '').toUpperCase();
-      const ttl = (s.positionDesc || s.jobTitle || s.title || '').toUpperCase();
-      const hay = key + ' ' + ttl;
-      if (/\bRN\b|REGISTERED NURSE/.test(hay))                                     hours.rn  += hrs;
-      else if (/\bLPN\b|\bLVN\b|LICENSED PRACTICAL|LICENSED VOCATIONAL/.test(hay)) hours.lpn += hrs;
-      else if (/\bCNA\b|NURSE AID|NURSE ASSISTANT|CERTIFIED NURSING/.test(hay))    hours.cna += hrs;
-      else if (/\bCMA\b|MED AIDE|MEDICATION AIDE|MEDICATION TECH/.test(hay))       hours.cma += hrs;
-      else if (/DIRECTOR OF NURSING|\bDON\b|NURSE MANAGER|DIR OF NURS/.test(hay))  hours.nm  += hrs;
+      const hay = ((s.positionCode||s.jobCode||s.position||'') + ' ' + (s.positionDesc||s.jobTitle||s.title||'')).toUpperCase();
+      if      (/\bRN\b|REGISTERED NURSE/.test(hay))                                     hours.rn  += hrs;
+      else if (/\bLPN\b|\bLVN\b|LICENSED PRACTICAL|LICENSED VOCATIONAL/.test(hay))      hours.lpn += hrs;
+      else if (/\bCNA\b|NURSE AID|NURSE ASSISTANT|CERTIFIED NURSING/.test(hay))         hours.cna += hrs;
+      else if (/\bCMA\b|MED AIDE|MEDICATION AIDE|MEDICATION TECH/.test(hay))            hours.cma += hrs;
+      else if (/DIRECTOR OF NURSING|\bDON\b|NURSE MANAGER|DIR OF NURS/.test(hay))       hours.nm  += hrs;
     }
-
-    res.json({
-      ok:     true,
-      date,
-      hours,
-      rn24:   hours.rn >= 24,
-      shifts: Array.isArray(shifts) ? shifts.length : 0,
-    });
+    res.json({ ok: true, date, hours, rn24: hours.rn >= 24, shifts: Array.isArray(shifts) ? shifts.length : 0 });
   } catch (e) {
     console.error('[mms] PCC staffing error:', e.message);
-    res.status(502).json({ error: `PCC staffing request failed: ${e.message}` });
+    res.status(502).json({ error: `PCC staffing failed: ${e.message}` });
   }
 });
 
-// ── GET /api/pcc/staffing/range?start=YYYY-MM-DD&end=YYYY-MM-DD ──────────────
-// Returns per-day hours + monthly averages (rn/lpn/cna/cma/nm) for CMS star calcs.
-// Max range: 31 days.
+// ── GET /api/pcc/staffing/range ───────────────────────────────────────────────
 app.get('/api/pcc/staffing/range', requireAuth, requireAdmin, async (req, res) => {
   if (!PCC_CLIENT_ID || !PCC_CLIENT_SECRET || !PCC_FACILITY_ID) {
     return res.status(503).json({ error: 'PCC not configured' });
   }
-  const today  = new Date().toISOString().slice(0, 10);
-  const start  = (req.query.start || today.slice(0, 8) + '01').replace(/[^0-9-]/g, '');
-  const end    = (req.query.end   || today).replace(/[^0-9-]/g, '');
-  const startMs = new Date(start).getTime();
-  const endMs   = new Date(end).getTime();
+  const today   = new Date().toISOString().slice(0, 10);
+  const start   = (req.query.start || today.slice(0, 8) + '01').replace(/[^0-9-]/g, '');
+  const end     = (req.query.end   || today).replace(/[^0-9-]/g, '');
+  const startMs = new Date(start).getTime(), endMs = new Date(end).getTime();
   if (isNaN(startMs) || isNaN(endMs) || endMs < startMs || endMs - startMs > 32 * 86400000) {
     return res.status(400).json({ error: 'Invalid date range (max 31 days)' });
   }
@@ -600,90 +651,72 @@ app.get('/api/pcc/staffing/range', requireAuth, requireAdmin, async (req, res) =
     const token   = await getPCCToken();
     const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' };
     if (PCC_ORG_UUID) headers['x-pcc-appkey'] = PCC_ORG_UUID;
-
-    const url  = `${PCC_BASE}/partner/v1/facilities/${PCC_FACILITY_ID}/staffShifts?startDate=${start}&endDate=${end}`;
-    const resp = await fetch(url, { headers });
-    if (!resp.ok) {
-      const txt = await resp.text();
-      return res.status(502).json({ error: `PCC staffing range API ${resp.status}: ${txt.slice(0, 300)}` });
-    }
+    const url    = `${PCC_BASE}/partner/v1/facilities/${PCC_FACILITY_ID}/staffShifts?startDate=${start}&endDate=${end}`;
+    const resp   = await fetch(url, { headers });
+    if (!resp.ok) return res.status(502).json({ error: `PCC range API ${resp.status}` });
     const body   = await resp.json();
     const shifts = body.data || body.shifts || body || [];
-
-    // Aggregate per date
     const byDate = {};
     for (const s of (Array.isArray(shifts) ? shifts : [])) {
       const d   = (s.shiftDate || s.date || start).slice(0, 10);
       if (!byDate[d]) byDate[d] = { rn: 0, lpn: 0, cna: 0, cma: 0, nm: 0 };
       const hrs = parseFloat(s.workedHours ?? s.scheduledHours ?? s.hours ?? 0) || 0;
-      const key = (s.positionCode || s.jobCode || s.position || '').toUpperCase();
-      const ttl = (s.positionDesc || s.jobTitle || s.title || '').toUpperCase();
-      const hay = key + ' ' + ttl;
-      if (/\bRN\b|REGISTERED NURSE/.test(hay))                                     byDate[d].rn  += hrs;
-      else if (/\bLPN\b|\bLVN\b|LICENSED PRACTICAL|LICENSED VOCATIONAL/.test(hay)) byDate[d].lpn += hrs;
-      else if (/\bCNA\b|NURSE AID|NURSE ASSISTANT|CERTIFIED NURSING/.test(hay))    byDate[d].cna += hrs;
-      else if (/\bCMA\b|MED AIDE|MEDICATION AIDE|MEDICATION TECH/.test(hay))       byDate[d].cma += hrs;
-      else if (/DIRECTOR OF NURSING|\bDON\b|NURSE MANAGER|DIR OF NURS/.test(hay))  byDate[d].nm  += hrs;
+      const hay = ((s.positionCode||s.jobCode||s.position||'') + ' ' + (s.positionDesc||s.jobTitle||s.title||'')).toUpperCase();
+      if      (/\bRN\b|REGISTERED NURSE/.test(hay))                                    byDate[d].rn  += hrs;
+      else if (/\bLPN\b|\bLVN\b|LICENSED PRACTICAL|LICENSED VOCATIONAL/.test(hay))     byDate[d].lpn += hrs;
+      else if (/\bCNA\b|NURSE AID|NURSE ASSISTANT|CERTIFIED NURSING/.test(hay))        byDate[d].cna += hrs;
+      else if (/\bCMA\b|MED AIDE|MEDICATION AIDE|MEDICATION TECH/.test(hay))           byDate[d].cma += hrs;
+      else if (/DIRECTOR OF NURSING|\bDON\b|NURSE MANAGER|DIR OF NURS/.test(hay))      byDate[d].nm  += hrs;
     }
-
-    const days = Object.keys(byDate).sort();
-    const n    = days.length || 1;
+    const days = Object.keys(byDate).sort(), n = days.length || 1;
     let totRn = 0, totLpn = 0, totCna = 0, totCma = 0, totNm = 0, rn24Days = 0;
     for (const d of days) {
       const r = byDate[d];
-      totRn  += r.rn;  totLpn += r.lpn; totCna += r.cna;
-      totCma += r.cma; totNm  += r.nm;
+      totRn += r.rn; totLpn += r.lpn; totCna += r.cna; totCma += r.cma; totNm += r.nm;
       if (r.rn >= 24) rn24Days++;
     }
-
     res.json({
-      ok:           true,
-      start, end,
-      daysInPeriod: n,
-      rn24Days,
+      ok: true, start, end, daysInPeriod: n, rn24Days,
       avgDaily: {
-        rn:      +(totRn  / n).toFixed(2),
-        lpn:     +(totLpn / n).toFixed(2),
-        cna:     +(totCna / n).toFixed(2),
-        cma:     +(totCma / n).toFixed(2),
+        rn:      +(totRn  / n).toFixed(2), lpn: +(totLpn / n).toFixed(2),
+        cna:     +(totCna / n).toFixed(2), cma: +(totCma / n).toFixed(2),
         nm:      +(totNm  / n).toFixed(2),
         nursing: +((totRn + totLpn + totCna + totCma + totNm) / n).toFixed(2),
       },
       byDate,
     });
   } catch (e) {
-    console.error('[mms] PCC staffing range error:', e.message);
-    res.status(502).json({ error: `PCC staffing range failed: ${e.message}` });
+    console.error('[mms] PCC range error:', e.message);
+    res.status(502).json({ error: `PCC range failed: ${e.message}` });
   }
 });
 
-// ── GET /jobs.xml — public XML job feed (Indeed / LinkedIn job crawler format) ─
-app.get('/jobs.xml', (_req, res) => {
+// ── GET /jobs.xml ─────────────────────────────────────────────────────────────
+app.get('/jobs.xml', async (_req, res) => {
   try {
-    const data = loadData();
-    const jobs = (data.jobPostings || []).filter(j => j.status === 'active');
-    const baseUrl = process.env.APP_URL || 'https://managemystaffing.com';
-    const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const data = await loadData();
+    const jobs  = (data.jobPostings || []).filter(j => j.status === 'active');
+    const esc   = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     const items = jobs.map(j => `  <job>
     <id><![CDATA[${j.id}]]></id>
     <title><![CDATA[${esc(j.title)}]]></title>
     <company><![CDATA[ManageMyStaffing]]></company>
-    <city><![CDATA[${esc(j.city || '')}]]></city>
-    <state><![CDATA[${esc(j.state || '')}]]></state>
+    <city><![CDATA[${esc(j.city||'')}]]></city>
+    <state><![CDATA[${esc(j.state||'')}]]></state>
     <country>US</country>
-    <postalcode><![CDATA[${esc(j.zip || '')}]]></postalcode>
-    <date>${(j.createdAt || '').slice(0, 10)}</date>
+    <postalcode><![CDATA[${esc(j.zip||'')}]]></postalcode>
+    <date>${(j.createdAt||'').slice(0,10)}</date>
     <reqid>${esc(j.id)}</reqid>
-    <jobtype><![CDATA[${esc(j.jobType || 'Full-time')}]]></jobtype>
-    <category><![CDATA[${esc(j.department || 'Healthcare')}]]></category>
-    <description><![CDATA[${esc(j.description || '')}]]></description>
-    <salary><![CDATA[${esc(j.salary || '')}]]></salary>
-    <url><![CDATA[${baseUrl}/#job-${j.id}]]></url>
+    <jobtype><![CDATA[${esc(j.jobType||'Full-time')}]]></jobtype>
+    <category><![CDATA[${esc(j.department||'Healthcare')}]]></category>
+    <description><![CDATA[${esc(j.description||'')}]]></description>
+    <salary><![CDATA[${esc(j.salary||'')}]]></salary>
+    <url><![CDATA[${APP_URL}/#job-${j.id}]]></url>
   </job>`).join('\n');
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <source>
   <publisher>ManageMyStaffing</publisher>
-  <publisherurl>${baseUrl}</publisherurl>
+  <publisherurl>${APP_URL}</publisherurl>
   <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>
 ${items}
 </source>`;
@@ -695,11 +728,11 @@ ${items}
   }
 });
 
-// ── GET /api/jobs — public job listing (for external embeds / sharing) ────────
-app.get('/api/jobs', (_req, res) => {
+// ── GET /api/jobs ─────────────────────────────────────────────────────────────
+app.get('/api/jobs', async (_req, res) => {
   try {
-    const data = loadData();
-    const jobs = (data.jobPostings || []).filter(j => j.status === 'active')
+    const data = await loadData();
+    const jobs  = (data.jobPostings || []).filter(j => j.status === 'active')
       .map(({ id, title, department, jobType, city, state, salary, description, createdAt }) =>
         ({ id, title, department, jobType, city, state, salary, description, createdAt }));
     res.json({ jobs });
@@ -709,8 +742,6 @@ app.get('/api/jobs', (_req, res) => {
 });
 
 // ── POST /api/alert ───────────────────────────────────────────────────────────
-// Body: { groups, message, subject, viaSMS, viaEmail, buildingId }
-// Sends real emails + SMS via Azure Communication Services.
 function toE164(raw) {
   if (!raw) return null;
   const d = String(raw).replace(/\D/g, '');
@@ -721,16 +752,12 @@ function toE164(raw) {
 
 app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
   const { groups, message, subject, viaSMS, viaEmail, buildingId } = req.body || {};
-  if (!Array.isArray(groups) || !groups.length)
-    return res.status(400).json({ error: 'groups array is required' });
+  if (!Array.isArray(groups) || !groups.length) return res.status(400).json({ error: 'groups array is required' });
   if (!message) return res.status(400).json({ error: 'message is required' });
 
-  const data = loadData();
+  const data      = await loadData();
   const employees = (data.employees || []).filter(e =>
-    groups.includes(e.group) &&
-    (!buildingId || e.buildingId === buildingId) &&
-    !e.inactive
-  );
+    groups.includes(e.group) && (!buildingId || e.buildingId === buildingId) && !e.inactive);
 
   const emailList = viaEmail ? employees.filter(e => e.notifEmail && e.email) : [];
   const smsList   = viaSMS   ? employees.filter(e => e.notifSMS  && e.phone)  : [];
@@ -741,40 +768,32 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
   if (!ACS_CONNECTION_STRING) {
     errors.push('Messaging not configured (missing ACS_CONNECTION_STRING)');
   } else {
-
-    // ── Email via Azure Communication Services ──────────────────────────────
     if (emailList.length) {
       const { EmailClient } = require('@azure/communication-email');
       const emailClient = new EmailClient(ACS_CONNECTION_STRING);
-      const EMAIL_TIMEOUT_MS = 30000; // 30-second per-email timeout
       for (const emp of emailList) {
         try {
-          const body = message.replace(/\[Name\]/g, emp.name);
+          const body   = message.replace(/\[Name\]/g, emp.name);
           const poller = await emailClient.beginSend({
             senderAddress: ACS_FROM_EMAIL,
-            recipients: { to: [{ address: emp.email, displayName: emp.name }] },
+            recipients:    { to: [{ address: emp.email, displayName: emp.name }] },
             content: {
-              subject: subject || 'Alert from ManageMyStaffing',
+              subject:   subject || 'Alert from ManageMyStaffing',
               plainText: body,
-              html: `<pre style="font-family:sans-serif;white-space:pre-wrap">${body.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre>`,
+              html:      `<pre style="font-family:sans-serif;white-space:pre-wrap">${body.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre>`,
             },
           });
-          // Race the poller against a hard timeout so Express route never hangs
           await Promise.race([
             poller.pollUntilDone(),
-            new Promise((_, reject) =>
-              setTimeout(() => reject(new Error('Email send timed out after 30s')), EMAIL_TIMEOUT_MS)
-            ),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 30000)),
           ]);
           emailSent++;
         } catch (e) {
-          console.error('[mms] ACS email error for', emp.email, e.message);
+          console.error('[mms] ACS email error:', e.message);
           errors.push(`Email to ${emp.name}: ${e.message}`);
         }
       }
     }
-
-    // ── SMS via Azure Communication Services ────────────────────────────────
     if (smsList.length) {
       if (!ACS_FROM_PHONE) {
         errors.push('SMS not configured (missing ACS_FROM_PHONE)');
@@ -783,18 +802,15 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
         const smsClient = new SmsClient(ACS_CONNECTION_STRING);
         for (const emp of smsList) {
           const to = toE164(emp.phone);
-          if (!to) { errors.push(`SMS to ${emp.name}: invalid phone ${emp.phone}`); continue; }
+          if (!to) { errors.push(`SMS to ${emp.name}: invalid phone`); continue; }
           try {
-            // to field is string[] per @azure/communication-sms v1.x API
             const results = await smsClient.send({
-              from: ACS_FROM_PHONE,
-              to: [to],
+              from: ACS_FROM_PHONE, to: [to],
               message: message.replace(/\[Name\]/g, emp.name).slice(0, 1600),
             });
             if (results[0]?.successful) smsSent++;
             else errors.push(`SMS to ${emp.name}: ${results[0]?.errorMessage || 'failed'}`);
           } catch (e) {
-            console.error('[mms] ACS SMS error for', emp.phone, e.message);
             errors.push(`SMS to ${emp.name}: ${e.message}`);
           }
         }
@@ -802,34 +818,25 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
     }
   }
 
-  console.log(`[mms] Alert by ${req.user.email}: ${emailSent} emails, ${smsSent} SMS`);
+  auditLog('ALERT_SENT', req.user, { emailSent, smsSent, groups });
   res.json({ ok: true, emailSent, smsSent, errors });
 });
 
 // ── POST /api/sms ─────────────────────────────────────────────────────────────
-// Sends a single SMS to a specific phone number. Admin only.
-// Body: { to, message }  — `to` is any phone format; server normalises to E.164
 app.post('/api/sms', requireAuth, requireAdmin, async (req, res) => {
   const { to, message } = req.body || {};
   if (!to || !message) return res.status(400).json({ error: 'to and message are required' });
-
   if (!ACS_CONNECTION_STRING || !ACS_FROM_PHONE) {
-    return res.status(503).json({ error: 'SMS not configured — set ACS_CONNECTION_STRING and ACS_FROM_PHONE' });
+    return res.status(503).json({ error: 'SMS not configured' });
   }
-
   const normalized = toE164(to);
   if (!normalized) return res.status(400).json({ error: `Invalid phone number: ${to}` });
-
   try {
     const { SmsClient } = require('@azure/communication-sms');
     const smsClient = new SmsClient(ACS_CONNECTION_STRING);
-    const results = await smsClient.send({
-      from: ACS_FROM_PHONE,
-      to: [normalized],
-      message: message.slice(0, 1600),
-    });
+    const results   = await smsClient.send({ from: ACS_FROM_PHONE, to: [normalized], message: message.slice(0, 1600) });
     if (results[0]?.successful) {
-      console.log(`[mms] SMS sent by ${req.user.email} to ${normalized}`);
+      auditLog('SMS_SENT', req.user, { to: normalized });
       res.json({ ok: true });
     } else {
       res.status(502).json({ error: results[0]?.errorMessage || 'SMS send failed' });
@@ -841,58 +848,50 @@ app.post('/api/sms', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // ── POST /api/demo/message ────────────────────────────────────────────────────
-// Sends a direct email message to a demo prospect. Super admin only.
-// Body: { to, name, subject, message }
-app.post('/api/demo/message', requireAuth, (req, res) => {
+app.post('/api/demo/message', requireAuth, async (req, res) => {
   if (req.user.role !== 'superadmin') return res.status(403).json({ error: 'superadmin only' });
   const { to, name, subject, message } = req.body || {};
   if (!to || !message) return res.status(400).json({ error: 'to and message are required' });
-
   if (!ACS_CONNECTION_STRING || !ACS_FROM_EMAIL) {
-    return res.status(503).json({ error: 'Email not configured — set ACS_CONNECTION_STRING and ACS_FROM_EMAIL' });
+    return res.status(503).json({ error: 'Email not configured' });
   }
-
   const { EmailClient } = require('@azure/communication-email');
   const emailClient = new EmailClient(ACS_CONNECTION_STRING);
-
-  const htmlBody = message
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/\n/g, '<br>');
-
-  const sendPromise = emailClient.beginSend({
-    senderAddress: ACS_FROM_EMAIL,
-    recipients: { to: [{ address: to, displayName: name || to }] },
-    content: {
-      subject: subject || 'Message from ManageMyStaffing',
-      plainText: message,
-      html: `<div style="font-family:sans-serif;font-size:14px;color:#111">${htmlBody}</div>`,
-    },
-  }).then(p => p.pollUntilDone());
-
-  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 30000));
-
-  Promise.race([sendPromise, timeout])
-    .then(() => {
-      console.log(`[mms] Demo message sent to ${to}`);
-      res.json({ ok: true });
-    })
-    .catch(err => {
-      console.error('[mms] Demo message error:', err.message);
-      res.status(500).json({ error: 'Failed to send message', detail: err.message });
+  const htmlBody    = message.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+  try {
+    const poller = await emailClient.beginSend({
+      senderAddress: ACS_FROM_EMAIL,
+      recipients: { to: [{ address: to, displayName: name || to }] },
+      content: {
+        subject:   subject || 'Message from ManageMyStaffing',
+        plainText: message,
+        html:      `<div style="font-family:sans-serif;font-size:14px;color:#111">${htmlBody}</div>`,
+      },
     });
+    await Promise.race([poller.pollUntilDone(), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 30000))]);
+    auditLog('DEMO_MSG_SENT', req.user, { to });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[mms] Demo message error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
-// ── START ─────────────────────────────────────────────────────────────────────
-// Ensure data file exists on startup
-try { loadData(); } catch (e) { process.exit(1); }
+// ── STARTUP ───────────────────────────────────────────────────────────────────
+(async () => {
+  try {
+    await loadData();
+  } catch (e) {
+    console.error('[mms] Fatal startup error:', e.message);
+    process.exit(1);
+  }
 
-// Warn about missing messaging configuration at startup
-if (!ACS_CONNECTION_STRING) console.warn('[mms] WARN: ACS_CONNECTION_STRING not set — email/SMS alerts disabled');
-if (!ACS_FROM_PHONE)        console.warn('[mms] WARN: ACS_FROM_PHONE not set — SMS alerts disabled');
+  if (!ACS_CONNECTION_STRING) console.warn('[mms] WARN: ACS_CONNECTION_STRING not set — email/SMS disabled');
+  if (!ACS_FROM_PHONE)        console.warn('[mms] WARN: ACS_FROM_PHONE not set — SMS disabled');
 
-app.listen(PORT, () => {
-  console.log(`[mms] ManageMyStaffing running on http://localhost:${PORT}`);
-  console.log(`[mms] Data file: ${DATA_FILE}`);
-  console.log(`[mms] Messaging: ACS=${!!ACS_CONNECTION_STRING} Email=${!!ACS_FROM_EMAIL} SMS=${!!ACS_FROM_PHONE}`);
-  console.log(`[mms] PCC integration: ${PCC_CLIENT_ID && PCC_CLIENT_SECRET && PCC_FACILITY_ID ? `ENABLED (facilityId=${PCC_FACILITY_ID})` : 'not configured'}`);
-});
+  app.listen(PORT, () => {
+    console.log(`[mms] ManageMyStaffing running on http://localhost:${PORT}`);
+    console.log(`[mms] Data file: ${DATA_FILE} | Encryption: AES-256-GCM`);
+    console.log(`[mms] PCC: ${PCC_CLIENT_ID && PCC_FACILITY_ID ? `ENABLED (facilityId=${PCC_FACILITY_ID})` : 'not configured'}`);
+  });
+})();

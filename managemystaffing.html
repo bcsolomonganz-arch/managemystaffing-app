@@ -1660,11 +1660,10 @@ const App = {
     if (IS_SERVER_MODE) {
       // ── SERVER MODE AUTH ────────────────────────────────
       try {
-        const hash = hashPw(emailRaw, pass);
         const resp = await fetch('/api/auth/login', {
           method:'POST',
           headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({email:emailRaw, passwordHash:hash})
+          body:JSON.stringify({email:emailRaw, password:pass})
         });
         if (!resp.ok) {
           const body = await resp.json().catch(()=>({}));
@@ -2320,44 +2319,84 @@ const App = {
 
   // ── SA BILLING ───────────────────────────────────────────────
   renderSABilling() {
-    const buildings = this.S.buildings;
-    const bd = this.S.billingData || {};
-    const plans = { Basic:99, Professional:299, Enterprise:599 };
-    let mrr = 0, arr = 0;
-    buildings.forEach(b => { const fee = bd[b.id]?.monthlyFee || 0; mrr += fee; });
-    arr = mrr * 12;
+    const buildings  = this.S.buildings;
+    const companies  = this.S.companies || [];
+    const bd         = this.S.billingData || {};
+    let mrr = 0;
+    buildings.forEach(b => { mrr += bd[b.id]?.monthlyFee || 0; });
+    const arr = mrr * 12;
 
-    const rows = buildings.map(b => {
-      const cfg = bd[b.id] || { plan:'Trial', monthlyFee:0, contractStart:'', contractEnd:'', payStatus:'trial' };
-      const daysLeft = cfg.contractEnd ? Math.max(0, Math.ceil((new Date(cfg.contractEnd)-Date.now())/(1000*60*60*24))) : null;
-      const admin = this.S.accounts.find(a=>a.buildingId===b.id&&a.role==='admin');
-      return `<tr style="border-bottom:1px solid var(--g100)">
-        <td style="padding:13px 16px">
-          <div style="font-weight:700;font-size:13px;color:var(--g900)">${sanitize(b.name)}</div>
-          <div style="font-size:11px;color:var(--g500)">${admin?sanitize(admin.email):'No admin'}</div>
-        </td>
-        <td style="padding:13px 16px"><span class="billing-plan-badge billing-plan-${(cfg.plan||'trial').toLowerCase()}">${sanitize(cfg.plan||'Trial')}</span></td>
-        <td style="padding:13px 16px;font-weight:700;color:var(--g900)">${cfg.monthlyFee ? '$'+cfg.monthlyFee+'/mo' : '—'}</td>
-        <td style="padding:13px 16px;font-size:12px;color:var(--g600)">${cfg.contractStart||'—'}</td>
-        <td style="padding:13px 16px;font-size:12px;color:var(--g600)">${cfg.contractEnd||'—'}</td>
-        <td style="padding:13px 16px">
-          ${daysLeft !== null ? `<span style="font-size:12px;font-weight:600;color:${daysLeft<30?'var(--red)':daysLeft<90?'var(--amber)':'var(--green)'}">${daysLeft} days</span>` : '—'}
-        </td>
-        <td style="padding:13px 16px"><span class="billing-status-${cfg.payStatus||'trial'}">${(cfg.payStatus||'Trial').replace(/\b\w/g,c=>c.toUpperCase())}</span></td>
-        <td style="padding:13px 16px">
-          <button class="btn btn-secondary btn-sm" onclick="App.openBillingConfigModal('${b.id}')">Edit</button>
-        </td>
-      </tr>`;
+    // Build company sections
+    const renderCompanySection = (co, coBuildings) => {
+      const coMrr = coBuildings.reduce((s, b) => s + (bd[b.id]?.monthlyFee || 0), 0);
+      const rows = coBuildings.map(b => {
+        const cfg   = bd[b.id] || {};
+        const fee   = cfg.monthlyFee || 0;
+        const admin = this.S.accounts.find(a => a.buildingId === b.id && a.role === 'admin');
+        const daysLeft = cfg.contractEnd ? Math.max(0, Math.ceil((new Date(cfg.contractEnd)-Date.now())/(1000*60*60*24))) : null;
+        return `<tr style="border-bottom:1px solid var(--g100)">
+          <td style="padding:12px 16px;padding-left:28px">
+            <div style="font-weight:600;font-size:13px;color:var(--g900)">${sanitize(b.name)}</div>
+            <div style="font-size:11px;color:var(--g500)">${admin ? sanitize(admin.email) : 'No admin'} &middot; ${b.beds||'—'} beds</div>
+          </td>
+          <td style="padding:12px 16px">
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="color:var(--g500);font-size:13px">$</span>
+              <input type="number" min="0" step="1" value="${fee||''}" placeholder="0"
+                style="width:90px;padding:5px 8px;border:1.5px solid var(--g200);border-radius:7px;font-size:13px;font-weight:600"
+                onchange="App.setBuildingMonthlyFee('${b.id}', this.value)">
+              <span style="font-size:12px;color:var(--g400)">/mo</span>
+            </div>
+          </td>
+          <td style="padding:12px 16px"><span class="billing-plan-badge billing-plan-${(cfg.plan||'trial').toLowerCase()}">${sanitize(cfg.plan||'Trial')}</span></td>
+          <td style="padding:12px 16px;font-size:12px;color:var(--g600)">${cfg.contractStart||'—'}</td>
+          <td style="padding:12px 16px;font-size:12px;color:var(--g600)">${cfg.contractEnd||'—'}</td>
+          <td style="padding:12px 16px">
+            ${daysLeft !== null ? `<span style="font-size:12px;font-weight:600;color:${daysLeft<30?'var(--red)':daysLeft<90?'var(--amber)':'var(--green)'}">${daysLeft}d</span>` : '—'}
+          </td>
+          <td style="padding:12px 16px"><span class="billing-status-${cfg.payStatus||'trial'}">${(cfg.payStatus||'Trial').replace(/\b\w/g,c=>c.toUpperCase())}</span></td>
+          <td style="padding:12px 16px">
+            <button class="btn btn-secondary btn-sm" onclick="App.openBillingConfigModal('${b.id}')">Edit</button>
+          </td>
+        </tr>`;
+      }).join('');
+
+      const accentColor = co ? (co.color || 'var(--blue)') : 'var(--g300)';
+      const coName      = co ? sanitize(co.name) : 'Ungrouped Facilities';
+      return `
+        <div style="background:#fff;border:1px solid var(--g200);border-radius:12px;overflow:hidden;box-shadow:var(--shadow);margin-bottom:20px">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;background:${accentColor}14;border-bottom:2px solid ${accentColor}30">
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="width:10px;height:10px;border-radius:50%;background:${accentColor}"></div>
+              <span style="font-size:15px;font-weight:700;color:var(--g900)">${coName}</span>
+              <span style="font-size:12px;color:var(--g500)">${coBuildings.length} building${coBuildings.length!==1?'s':''}</span>
+            </div>
+            <div style="font-size:14px;font-weight:700;color:${accentColor}">$${coMrr.toLocaleString()}/mo</div>
+          </div>
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr style="border-bottom:1px solid var(--g100)">
+              ${['Building','Monthly Fee','Plan','Contract Start','Contract End','Remaining','Status',''].map(h=>`<th style="padding:9px 16px;text-align:left;font-size:10px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">${h}</th>`).join('')}
+            </tr></thead>
+            <tbody>${rows || '<tr><td colspan="8" style="padding:20px 28px;color:var(--g400);font-size:13px">No buildings</td></tr>'}</tbody>
+          </table>
+        </div>`;
+    };
+
+    // Group buildings by company
+    const companySections = companies.map(co => {
+      const coBuildings = buildings.filter(b => b.companyId === co.id);
+      return renderCompanySection(co, coBuildings);
     }).join('');
 
+    const ungrouped = buildings.filter(b => !b.companyId);
+    const ungroupedSection = ungrouped.length ? renderCompanySection(null, ungrouped) : '';
+
     document.getElementById('main').innerHTML = `<div style="padding:28px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
-        <div>
-          <div style="font-size:22px;font-weight:800;color:var(--g900)">Billing</div>
-          <div style="font-size:13px;color:var(--g500)">Client subscriptions, contracts, and revenue</div>
-        </div>
+      <div style="margin-bottom:20px">
+        <div style="font-size:22px;font-weight:800;color:var(--g900)">Billing</div>
+        <div style="font-size:13px;color:var(--g500)">Set monthly charges per building for each company</div>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px">
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:28px">
         <div class="billing-stat-card" style="border-left:4px solid var(--blue-d)">
           <div style="font-size:26px;font-weight:800;color:var(--g900)">$${mrr.toLocaleString()}</div>
           <div style="font-size:11px;font-weight:600;color:var(--g500)">Monthly Recurring Revenue</div>
@@ -2375,15 +2414,18 @@ const App = {
           <div style="font-size:11px;font-weight:600;color:var(--g500)">Overdue Accounts</div>
         </div>
       </div>
-      <div style="background:#fff;border:1px solid var(--g200);border-radius:12px;overflow:hidden;box-shadow:var(--shadow)">
-        <table style="width:100%;border-collapse:collapse">
-          <thead><tr style="border-bottom:2px solid var(--g100)">
-            ${['Facility','Plan','Monthly Fee','Contract Start','Contract End','Remaining','Status',''].map(h=>`<th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">${h}</th>`).join('')}
-          </tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
+      ${companySections}
+      ${ungroupedSection}
     </div>`;
+  },
+
+  setBuildingMonthlyFee(bId, value) {
+    if (!this.S.billingData) this.S.billingData = {};
+    if (!this.S.billingData[bId]) this.S.billingData[bId] = {};
+    this.S.billingData[bId].monthlyFee = parseFloat(value) || 0;
+    this.S.billingData[bId].updatedAt  = new Date().toISOString();
+    this.persistData();
+    this.showToast('Monthly fee updated');
   },
 
   openBillingConfigModal(buildingId) {
@@ -5416,11 +5458,10 @@ const App = {
     const btn = document.querySelector('.login-card .btn-primary');
     if (btn) { btn.disabled = true; btn.textContent = 'Activating…'; }
     try {
-      const hash = hashPw(email.toLowerCase(), pass);
-      const r    = await fetch('/api/invite/accept', {
+      const r = await fetch('/api/invite/accept', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ token, passwordHash: hash }),
+        body: JSON.stringify({ token, password: pass }),
       });
       const data = await r.json();
       if (!r.ok) { showErr(data.error || 'Activation failed.'); if(btn){btn.disabled=false;btn.textContent='Set Password & Sign In';} return; }
