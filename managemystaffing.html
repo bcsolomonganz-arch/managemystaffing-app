@@ -562,11 +562,34 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
   </footer>
 </div>
 
+<!-- MODAL: Add Company -->
+<div class="modal-overlay" id="modal-company">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header"><span class="modal-title"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;color:var(--blue)"><rect x="2" y="7" width="16" height="12" rx="1.5"/><path d="M6 7V5a6 6 0 0 1 8 0v2"/></svg>Add Company</span><button class="modal-close" onclick="App.closeModal('modal-company')">✕</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label>Company Name</label><input type="text" id="co-name" placeholder="Sunrise Health Group"></div>
+      <div class="form-group"><label>Color</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px" id="co-color-swatches">
+          ${['#2563EB','#7C3AED','#059669','#D97706','#DC2626','#DB2777','#0891B2','#EA580C'].map((c,i)=>`
+            <div onclick="App._selectCoColor('${c}',this)" data-color="${c}" style="width:28px;height:28px;border-radius:50%;background:${c};cursor:pointer;border:2px solid ${i===0?'#111':'transparent'};transition:border .15s"></div>
+          `).join('')}
+        </div>
+        <input type="hidden" id="co-color" value="#2563EB">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="App.closeModal('modal-company')">Cancel</button>
+      <button class="btn btn-primary" onclick="App.saveCompany()">Create Company</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL: Add Building -->
 <div class="modal-overlay" id="modal-building">
   <div class="modal">
-    <div class="modal-header"><span class="modal-title"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px;color:var(--blue)"><rect x="2" y="7" width="16" height="12" rx="1.5"/><path d="M6 7V5a4 4 0 0 1 8 0v2"/><rect x="8" y="11" width="4" height="4" rx="0.5"/></svg>Add New Building</span><button class="modal-close" onclick="App.closeModal('modal-building')">✕</button></div>
+    <div class="modal-header"><span class="modal-title"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px;color:var(--blue)"><rect x="2" y="7" width="16" height="12" rx="1.5"/><path d="M6 7V5a4 4 0 0 1 8 0v2"/><rect x="8" y="11" width="4" height="4" rx="0.5"/></svg>Add New Facility</span><button class="modal-close" onclick="App.closeModal('modal-building')">✕</button></div>
     <div class="modal-body">
+      <div class="form-group"><label>Company <span style="color:var(--g400);font-weight:400">(optional)</span></label><select id="b-company"><option value="">— Independent / No Company —</option></select></div>
       <div class="form-group"><label>Facility Name</label><input type="text" id="b-name" placeholder="Sunrise Skilled Care"></div>
       <div class="form-group"><label>Address</label><input type="text" id="b-addr" placeholder="123 Main St, Springfield, IL"></div>
       <div class="grid-2">
@@ -583,7 +606,7 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="App.closeModal('modal-building')">Cancel</button>
-      <button class="btn btn-primary" onclick="App.saveBuilding()">Create Building & Admin Account</button>
+      <button class="btn btn-primary" onclick="App.saveBuilding()">Create Facility</button>
     </div>
   </div>
 </div>
@@ -933,6 +956,10 @@ const PRESETS = {
 // ════════════════════════════════════════════════════════════
 //  SEED DATA
 // ════════════════════════════════════════════════════════════
+const SEED_COMPANIES = [
+  // empty by default — companies are created by the super admin
+];
+
 const SEED_BUILDINGS = [
   {id:'b1',name:'Harmony Hills Nursing Home',address:'421 Harmony Ln, Springfield, IL 62701',phone:'555-0200',beds:120,color:'#2563EB'},
   {id:'b2',name:'Sunrise Skilled Care',address:'89 Sunrise Blvd, Riverside, CA 92501',phone:'555-0201',beds:96,color:'#7C3AED'},
@@ -1246,6 +1273,7 @@ const RateLimit = {
 const App = {
   S: {
     user: null,
+    companies: [],
     buildings: [],
     accounts: [],
     employees: [],
@@ -1307,6 +1335,7 @@ const App = {
     // Time Clock
     tcSort: {col:'date', dir:-1},
     tcMissedPeriod: null,
+    activeBuildingId: null,  // for multi-building users: currently active building
   },
 
   // ── TIMERS & INTERNAL STATE ───────────────────────────────
@@ -1826,13 +1855,30 @@ const App = {
       ? '<span class="role-badge role-admin">Admin</span>'
       : `<span class="role-badge role-emp">${sanitize(u.group)}</span>`;
 
-    // Month nav only for non-superadmin
-    const nav = u.role === 'superadmin' ? '' : `
-      <div class="month-nav">
+    // Month nav only for non-superadmin; building switcher for multi-building admins
+    let nav = '';
+    if (u.role !== 'superadmin') {
+      // Building switcher — show if user has multiple buildings
+      const userBuildingIds = u.buildingIds?.length ? u.buildingIds : (u.buildingId ? [u.buildingId] : []);
+      const activeBId = this.S.activeBuildingId || u.buildingId || userBuildingIds[0];
+      let switcher = '';
+      if (userBuildingIds.length > 1) {
+        const opts = userBuildingIds.map(bid => {
+          const b = this.S.buildings.find(x => x.id === bid);
+          return b ? `<option value="${b.id}"${b.id===activeBId?' selected':''}>${sanitize(b.name)}</option>` : '';
+        }).join('');
+        switcher = `
+          <div style="display:flex;align-items:center;gap:6px;margin-right:8px;padding:5px 10px;background:var(--blue-l);border:1.5px solid var(--blue-m);border-radius:8px">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="var(--blue-d)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="14" height="11" rx="1"/><path d="M5 15V9h6v6"/><path d="M1 8l7-6 7 6"/></svg>
+            <select onchange="App.switchBuilding(this.value)" style="border:none;background:transparent;font-family:inherit;font-size:13px;font-weight:600;color:var(--blue-d);cursor:pointer;outline:none">${opts}</select>
+          </div>`;
+      }
+      nav = `${switcher}<div class="month-nav">
         <button onclick="App.navMonth(-1)">&#8249;</button>
         <h2 id="month-label"></h2>
         <button onclick="App.navMonth(1)">&#8250;</button>
       </div>`;
+    }
     document.getElementById('header-nav').innerHTML = nav;
 
     let adminBtns = '';
@@ -2260,73 +2306,115 @@ const App = {
   },
 
   renderSuperAdmin() { this.renderSAOverview(); }, // legacy alias
+  _buildFacilityCard(b) {
+    const admins = this.S.accounts.filter(a => (a.buildingId === b.id || (a.buildingIds||[]).includes(b.id)) && a.role === 'admin');
+    const staff = this.S.employees.filter(e => e.buildingId === b.id);
+    const openShifts = this.S.shifts.filter(s => s.buildingId === b.id && s.status === 'open' && s.date >= TODAY).length;
+    const primaryAdmin = admins[0];
+    const bInitials = primaryAdmin ? sanitize(primaryAdmin.name.split(' ').map(w=>w[0]).join('').slice(0,2)) : '';
+    return `
+      <div class="building-card" style="--accent:${b.color}">
+        <div style="position:absolute;top:0;left:0;right:0;height:4px;background:${b.color}"></div>
+        <div class="building-name">${sanitize(b.name)}</div>
+        <div class="building-addr"><svg viewBox="0 0 16 20" width="11" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M8 1C4.69 1 2 3.69 2 7c0 4.5 6 12 6 12s6-7.5 6-12c0-3.31-2.69-6-6-6z"/><circle cx="8" cy="7" r="2"/></svg> ${sanitize(b.address||'')}</div>
+        <div class="building-stats">
+          <div class="building-stat"><div class="building-stat-val">${staff.length}</div><div class="building-stat-label">Staff</div></div>
+          <div class="building-stat"><div class="building-stat-val">${admins.length}</div><div class="building-stat-label">Admins</div></div>
+          <div class="building-stat"><div class="building-stat-val" style="color:var(--g600)">${openShifts}</div><div class="building-stat-label">Open</div></div>
+          <div class="building-stat"><div class="building-stat-val">${b.beds || '—'}</div><div class="building-stat-label">Beds</div></div>
+        </div>
+        ${primaryAdmin ? `
+          <div class="building-admin">
+            <div class="building-admin-avatar">${bInitials}</div>
+            <div class="building-admin-info">
+              <div class="building-admin-name">${sanitize(primaryAdmin.name)}</div>
+              <div class="building-admin-email">${sanitize(primaryAdmin.email)}</div>
+            </div>
+            <span class="tag tag-blue" style="font-size:11px">Admin</span>
+          </div>
+        ` : '<div style="font-size:13px;color:var(--g400);padding:8px 0;margin-bottom:8px">No admin assigned</div>'}
+        <div class="building-actions">
+          <button class="btn btn-secondary btn-sm" onclick="App.enterBuilding('${b.id}')">Enter Dashboard →</button>
+          <button class="btn btn-ghost btn-sm" onclick="App.addAdminToBuilding('${b.id}')">+ Add Admin</button>
+        </div>
+      </div>`;
+  },
+
   renderSAOverview() {
     const buildings = this.S.buildings;
+    const companies = this.S.companies || [];
     const totalStaff = this.S.employees.length;
     const totalAdmins = this.S.accounts.filter(a => a.role === 'admin').length;
-    const totalOpen = this.S.shifts.filter(s => s.status === 'open' && s.date.startsWith('2026-04')).length;
+    const totalOpen = this.S.shifts.filter(s => s.status === 'open' && s.date >= TODAY).length;
 
-    let cards = '';
-    buildings.forEach(b => {
-      const admins = this.S.accounts.filter(a => a.buildingId === b.id && a.role === 'admin');
-      const staff = this.S.employees.filter(e => e.buildingId === b.id);
-      const openShifts = this.S.shifts.filter(s => s.buildingId === b.id && s.status === 'open' && s.date.startsWith('2026-04')).length;
-      const primaryAdmin = admins[0];
-      const bInitials = primaryAdmin ? sanitize(primaryAdmin.name.split(' ').map(w=>w[0]).join('').slice(0,2)) : '';
-      cards += `
-        <div class="building-card" style="--accent:${b.color}">
-          <div style="position:absolute;top:0;left:0;right:0;height:4px;background:${b.color}"></div>
-          <div class="building-name">${sanitize(b.name)}</div>
-          <div class="building-addr"><svg viewBox="0 0 16 20" width="11" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M8 1C4.69 1 2 3.69 2 7c0 4.5 6 12 6 12s6-7.5 6-12c0-3.31-2.69-6-6-6z"/><circle cx="8" cy="7" r="2"/></svg> ${sanitize(b.address)}</div>
-          <div class="building-stats">
-            <div class="building-stat"><div class="building-stat-val">${staff.length}</div><div class="building-stat-label">Staff</div></div>
-            <div class="building-stat"><div class="building-stat-val">${admins.length}</div><div class="building-stat-label">Admins</div></div>
-            <div class="building-stat"><div class="building-stat-val" style="color:var(--g600)">${openShifts}</div><div class="building-stat-label">Open</div></div>
-            <div class="building-stat"><div class="building-stat-val">${b.beds || '—'}</div><div class="building-stat-label">Beds</div></div>
-          </div>
-          ${primaryAdmin ? `
-            <div class="building-admin">
-              <div class="building-admin-avatar">${bInitials}</div>
-              <div class="building-admin-info">
-                <div class="building-admin-name">${sanitize(primaryAdmin.name)}</div>
-                <div class="building-admin-email">${sanitize(primaryAdmin.email)}</div>
+    // Build grouped sections
+    let facilitySections = '';
+
+    if (companies.length === 0) {
+      // No companies yet — flat grid
+      const cards = buildings.map(b => this._buildFacilityCard(b)).join('');
+      facilitySections = `<div class="buildings-grid">${cards || '<div style="color:var(--g400);font-size:14px;padding:20px 0">No facilities added yet.</div>'}</div>`;
+    } else {
+      // Group by company
+      companies.forEach(co => {
+        const coBuildings = buildings.filter(b => b.companyId === co.id);
+        const cards = coBuildings.map(b => this._buildFacilityCard(b)).join('');
+        facilitySections += `
+          <div style="margin-bottom:32px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:10px;height:10px;border-radius:50%;background:${co.color||'var(--blue)'}"></div>
+                <span style="font-size:16px;font-weight:700;color:var(--g900)">${sanitize(co.name)}</span>
+                <span style="font-size:12px;color:var(--g400);font-weight:500">${coBuildings.length} facilit${coBuildings.length===1?'y':'ies'}</span>
               </div>
-              <span class="tag tag-blue" style="font-size:11px">Admin</span>
+              <button class="btn btn-ghost btn-sm" onclick="App.openAddBuildingToCompany('${co.id}')" style="font-size:12px">+ Add Facility</button>
             </div>
-          ` : '<div style="font-size:13px;color:var(--g400);padding:8px 0;margin-bottom:8px">No admin assigned</div>'}
-          <div class="building-actions">
-            <button class="btn btn-secondary btn-sm" onclick="App.enterBuilding('${b.id}')">Enter Dashboard →</button>
-            <button class="btn btn-ghost btn-sm" onclick="App.addAdminToBuilding('${b.id}')">+ Add Admin</button>
-          </div>
-        </div>`;
-    });
+            <div class="buildings-grid">${cards || '<div style="color:var(--g400);font-size:13px;padding:12px 0">No facilities in this company yet.</div>'}</div>
+          </div>`;
+      });
+      // Ungrouped buildings
+      const ungrouped = buildings.filter(b => !b.companyId);
+      if (ungrouped.length > 0) {
+        const cards = ungrouped.map(b => this._buildFacilityCard(b)).join('');
+        facilitySections += `
+          <div style="margin-bottom:32px">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+              <div style="width:10px;height:10px;border-radius:50%;background:var(--g300)"></div>
+              <span style="font-size:16px;font-weight:700;color:var(--g900)">Independent Facilities</span>
+              <span style="font-size:12px;color:var(--g400);font-weight:500">${ungrouped.length} facilit${ungrouped.length===1?'y':'ies'}</span>
+            </div>
+            <div class="buildings-grid">${cards}</div>
+          </div>`;
+      }
+    }
 
     document.getElementById('main').innerHTML = `
       <div class="sa-page">
         <div class="sa-hero">
           <h1>Platform Overview</h1>
-          <p>Manage all facilities and administrator accounts from one place.</p>
+          <p>Manage all facilities and companies from one place.</p>
         </div>
         <div class="sa-stats-row">
+          <div class="sa-stat-card"><div class="sa-stat-val">${companies.length}</div><div class="sa-stat-label">Companies</div></div>
           <div class="sa-stat-card"><div class="sa-stat-val">${buildings.length}</div><div class="sa-stat-label">Buildings</div></div>
           <div class="sa-stat-card"><div class="sa-stat-val">${totalAdmins}</div><div class="sa-stat-label">Admins</div></div>
           <div class="sa-stat-card"><div class="sa-stat-val">${totalStaff}</div><div class="sa-stat-label">Total Staff</div></div>
-          <div class="sa-stat-card"><div class="sa-stat-val" style="color:var(--g600)">${totalOpen}</div><div class="sa-stat-label">Open Shifts (Apr)</div></div>
         </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
           <h2 style="font-size:18px;font-weight:700">Facilities</h2>
           <div style="display:flex;gap:8px">
-            <button class="btn btn-primary btn-sm" onclick="App.openModal('modal-building')">+ Add Building</button>
+            <button class="btn btn-secondary btn-sm" onclick="App.openModal('modal-company')">+ Add Company</button>
+            <button class="btn btn-primary btn-sm" onclick="App.openModal('modal-building')">+ Add Facility</button>
           </div>
         </div>
-        <div class="buildings-grid">${cards}</div>
+        ${facilitySections}
         ${IS_SERVER_MODE && !this.S.user?.demo ? `
         <div style="margin-top:32px;padding:16px 20px;background:var(--blue-l);border:1px solid var(--blue-m);border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:16px">
           <div style="display:flex;align-items:center;gap:10px">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--blue-d)" stroke-width="2" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
             <div>
               <div style="font-size:13px;font-weight:600;color:var(--g700)">Live Production Data</div>
-              <div style="font-size:12px;color:var(--g500);margin-top:1px">All data is stored server-side and persists across sessions. Invite admins to give them access to their building dashboard.</div>
+              <div style="font-size:12px;color:var(--g500);margin-top:1px">All data is stored server-side and persists across sessions.</div>
             </div>
           </div>
           <button class="btn btn-primary btn-sm" onclick="App.openInviteModal(null,'admin')" style="flex-shrink:0">
@@ -2352,16 +2440,20 @@ const App = {
 
   enterBuilding(buildingId) {
     Audit.log('BUILDING_ENTER', 'Super admin entered building '+sanitize(buildingId), this.S.user?.id, 'medium');
-    const admin = this.S.accounts.find(a => a.buildingId === buildingId && a.role === 'admin');
-    if (admin) {
-      this.S._prevUser = this.S.user;
-      this.S.user = {...admin};
-      this.S.selectedGroup = 'CNA';
-      document.getElementById('sidebar').style.display = 'block';
-      document.getElementById('main').className = 'main';
-      this.render();
-      this.showToast(`Viewing ${this.S.buildings.find(b=>b.id===buildingId)?.name}`);
-    }
+    const building = this.S.buildings.find(b => b.id === buildingId);
+    if (!building) { this.showToast('Building not found', 'warn'); return; }
+    // Prefer an explicit admin account; fall back to superadmin acting as facility admin
+    const admin = this.S.accounts.find(a => a.buildingId === buildingId && (a.role === 'admin' || a.role === 'superadmin'));
+    this.S._prevUser = this.S.user;
+    this.S.user = admin
+      ? { ...admin, role: 'admin', buildingId }
+      : { ...this.S.user, role: 'admin', buildingId };
+    this.S.selectedGroup = 'CNA';
+    this.S.appMode = 'schedule';
+    document.getElementById('sidebar').style.display = 'block';
+    document.getElementById('main').className = 'main';
+    this.render();
+    this.showToast(`Viewing ${sanitize(building.name)}`);
   },
 
   backToPlatform() {
@@ -2369,9 +2461,23 @@ const App = {
       this.S.user = this.S._prevUser;
       this.S._prevUser = null;
       this.S.panelOpen = false;
+      this.S.activeBuildingId = null;
       document.getElementById('right-panel').classList.remove('open');
       this.render();
     }
+  },
+
+  switchBuilding(buildingId) {
+    if (!buildingId) return;
+    this.S.activeBuildingId = buildingId;
+    // Update user's active buildingId for all downstream use
+    this.S.user = { ...this.S.user, buildingId };
+    this.S.selectedGroup = 'CNA';
+    this.S.panelOpen = false;
+    document.getElementById('right-panel')?.classList.remove('open');
+    const b = this.S.buildings.find(x => x.id === buildingId);
+    this.render();
+    if (b) this.showToast(`Switched to ${sanitize(b.name)}`);
   },
 
   addAdminToBuilding(buildingId) {
@@ -2548,7 +2654,7 @@ const App = {
       </button>
     </div>`;
     const nav = [
-      ['dashboard','Dashboard','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>'],
+      ['dashboard','Hiring','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5h0c2.8 0 5 2.2 5 5"/><line x1="12" y1="3" x2="12" y2="9"/><line x1="9" y1="6" x2="15" y2="6"/></svg>'],
       ['employees','Employees','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5h0c2.8 0 5 2.2 5 5"/><circle cx="12.5" cy="5" r="2"/><path d="M16 13.5c0-2.2-1.6-4-3.5-4"/></svg>'],
       ['docreview','Doc Review','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="1" width="12" height="14" rx="1.5"/><path d="M5 5h6M5 8h6M5 11h4"/></svg>'],
       ['schedule','Schedule','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="13" rx="1.5"/><path d="M1 6h14M5 1v3M11 1v3"/></svg>'],
@@ -2638,7 +2744,7 @@ const App = {
     return `
       ${this.hrHipaaBar()}
       <div style="margin-bottom:20px">
-        <div class="hr-page-title">Dashboard</div>
+        <div class="hr-page-title">Hiring</div>
         <div class="hr-page-sub">${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})}</div>
       </div>
       <div class="hr-stat-grid">
@@ -6465,6 +6571,42 @@ const App = {
     this.render();
   },
 
+  // ── COMPANY HELPERS ──────────────────────────────────────────
+  _selectCoColor(color, el) {
+    document.getElementById('co-color').value = color;
+    document.querySelectorAll('#co-color-swatches [data-color]').forEach(s => s.style.border = '2px solid transparent');
+    el.style.border = '2px solid #111';
+  },
+
+  saveCompany() {
+    if(this.S.user?.role !== 'superadmin') { this.showToast('Unauthorized','warn'); return; }
+    const name = sanitizeInput(document.getElementById('co-name').value.trim(), 120);
+    if (!name) { this.showToast('Company name is required','warn'); return; }
+    const color = document.getElementById('co-color').value || '#2563EB';
+    if (!this.S.companies) this.S.companies = [];
+    this.S.companies.push({ id:'co'+Date.now(), name, color });
+    Audit.log('COMPANY_CREATED', `Created company ${sanitize(name)}`, this.S.user?.id, 'medium');
+    this.persistData();
+    this.closeModal('modal-company');
+    document.getElementById('co-name').value = '';
+    this.showToast(`${sanitize(name)} created`);
+    this.renderSAMain();
+  },
+
+  openAddBuildingToCompany(companyId) {
+    this.S._pendingCompanyId = companyId;
+    this._populateBuildingModalCompanies(companyId);
+    this.openModal('modal-building');
+  },
+
+  _populateBuildingModalCompanies(selectedId) {
+    const sel = document.getElementById('b-company');
+    if (!sel) return;
+    const companies = this.S.companies || [];
+    sel.innerHTML = '<option value="">— Independent / No Company —</option>' +
+      companies.map(co => `<option value="${co.id}"${co.id===selectedId?' selected':''}>${sanitize(co.name)}</option>`).join('');
+  },
+
   // ── SAVE BUILDING ────────────────────────────────────────────
   saveBuilding() {
     if(this.S.user?.role !== 'superadmin') { this.showToast('Unauthorized','warn'); return; }
@@ -6474,13 +6616,17 @@ const App = {
     const beds=document.getElementById('b-beds').value;
     const adminName=sanitizeInput(document.getElementById('b-admin-name').value.trim(), 100);
     const adminEmail=sanitizeInput(document.getElementById('b-admin-email').value.trim().toLowerCase(), 254);
-    if(!name||!adminName||!adminEmail){this.showToast('Building name and admin info are required','warn');return;}
+    const companyId=document.getElementById('b-company')?.value||'';
+    if(!name||!adminName||!adminEmail){this.showToast('Facility name and admin info are required','warn');return;}
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail)){this.showToast('Invalid admin email','warn');return;}
     const colors=['#2563EB','#7C3AED','#059669','#D97706','#DC2626','#DB2777','#0891B2'];
     const bId=`b${Date.now()}`;
-    this.S.buildings.push({id:bId,name,address:addr,phone,beds:parseInt(beds)||0,color:colors[this.S.buildings.length%colors.length]});
+    const building = {id:bId,name,address:addr,phone,beds:parseInt(beds)||0,color:colors[this.S.buildings.length%colors.length]};
+    if (companyId) building.companyId = companyId;
+    this.S.buildings.push(building);
     this.S.accounts.push({id:`a${Date.now()}`,name:adminName,email:adminEmail,role:'admin',buildingId:bId});
     Audit.log('BUILDING_CREATED', `Created building ${sanitize(name)} admin ${sanitize(adminEmail)}`, this.S.user?.id, 'high');
+    this.S._pendingCompanyId = null;
     this.persistData();
     this.closeModal('modal-building');
     this.showToast(`${sanitize(name)} created — invite sent to ${sanitize(adminEmail)}`);
@@ -6578,6 +6724,7 @@ Tap the link below to view and claim:\nhttps://managemystaffing.com/claim?token=
   persistData() {
     const payload = {
       v:1, savedAt:Date.now(),
+      companies:this.S.companies,
       buildings:this.S.buildings, accounts:this.S.accounts,
       employees:this.S.employees, shifts:this.S.shifts,
       schedulePatterns:this.S.schedulePatterns,
@@ -6606,6 +6753,7 @@ Tap the link below to view and claim:\nhttps://managemystaffing.com/claim?token=
       const d = JSON.parse(raw);
       if (!d || d.v !== 1) return false;
       // Restore each collection — only overwrite if saved data exists
+      if (Array.isArray(d.companies))                                this.S.companies        = d.companies;
       if (Array.isArray(d.buildings) && d.buildings.length)        this.S.buildings        = d.buildings;
       if (Array.isArray(d.accounts)  && d.accounts.length)         this.S.accounts         = d.accounts;
       if (Array.isArray(d.employees) && d.employees.length)        this.S.employees        = d.employees;
@@ -6625,6 +6773,7 @@ Tap the link below to view and claim:\nhttps://managemystaffing.com/claim?token=
     // Always apply whatever the server sends — empty arrays are valid (fresh account = blank slate).
     // Never fall back to seed data for real users.
     if (!data) return;
+    if (Array.isArray(data.companies))        this.S.companies        = data.companies;
     if (Array.isArray(data.buildings))        this.S.buildings        = data.buildings;
     if (Array.isArray(data.accounts))         this.S.accounts         = data.accounts;
     if (Array.isArray(data.employees))        this.S.employees        = data.employees;
@@ -6642,6 +6791,7 @@ Tap the link below to view and claim:\nhttps://managemystaffing.com/claim?token=
     if (!confirm('Reset ALL facility data to demo seed? This will erase all employees, buildings, and shifts entered by admins. This cannot be undone.')) return;
     localStorage.removeItem(SEC.DATA_KEY);
     // Re-seed
+    this.S.companies        = [...SEED_COMPANIES];
     this.S.buildings        = [...SEED_BUILDINGS];
     this.S.accounts         = [...SEED_ACCOUNTS];
     this.S.employees        = [...SEED_EMPLOYEES];
@@ -6658,6 +6808,7 @@ Tap the link below to view and claim:\nhttps://managemystaffing.com/claim?token=
     if (id === 'modal-building') {
       const passEl = document.getElementById('b-admin-pass');
       if (passEl && !passEl.value) passEl.value = genTempPw();
+      this._populateBuildingModalCompanies(this.S._pendingCompanyId || '');
     }
   },
   closeModal(id) { document.getElementById(id)?.classList.remove('open'); },
