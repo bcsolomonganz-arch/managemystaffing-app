@@ -129,17 +129,25 @@ function loadData() {
     console.log(`[mms] SA password reset to null — next login sets new permanent password.`);
   }
 
-  // Ensure seed accounts always exist and are up-to-date
+  // Ensure seed accounts always exist and have the correct immutable fields
   for (const seed of [SEED_SA, SEED_DEMO]) {
     const existing = data.accounts.find(a => a.id === seed.id);
     if (!existing) {
       data.accounts.push(seed);
       dirty = true;
       console.log(`[mms] Seeded missing account: ${seed.email}`);
-    } else if (existing.email !== seed.email) {
-      existing.email = seed.email;
-      dirty = true;
-      console.log(`[mms] Updated email for account ${seed.id}: ${seed.email}`);
+    } else {
+      if (existing.email !== seed.email) {
+        existing.email = seed.email;
+        dirty = true;
+        console.log(`[mms] Updated email for account ${seed.id}: ${seed.email}`);
+      }
+      // Always enforce the correct role for seed accounts — role must never be escalated
+      if (existing.role !== seed.role) {
+        console.warn(`[mms] WARN: seed account ${seed.id} had role='${existing.role}', correcting to '${seed.role}'`);
+        existing.role = seed.role;
+        dirty = true;
+      }
     }
   }
 
@@ -263,6 +271,16 @@ app.post('/api/data', requireAuth, requireAdmin, (req, res) => {
   const payload = req.body;
   if (!payload || typeof payload !== 'object') {
     return res.status(400).json({ error: 'Invalid payload' });
+  }
+  // Guard: seed accounts cannot have their roles overwritten via this endpoint
+  if (Array.isArray(payload.accounts)) {
+    for (const seed of [SEED_SA, SEED_DEMO]) {
+      const acct = payload.accounts.find(a => a.id === seed.id);
+      if (acct && acct.role !== seed.role) {
+        console.warn(`[mms] WARN: POST /api/data attempted to change role of ${seed.id} to '${acct.role}' — blocked`);
+        acct.role = seed.role;
+      }
+    }
   }
   try {
     saveData(payload);

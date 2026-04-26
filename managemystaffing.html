@@ -1289,7 +1289,9 @@ const App = {
           if (vResp.ok) {
             const {user} = await vResp.json();
             if (user.demo) {
-              // Demo session — always use seed data only
+              // Demo session — always use seed data only; enforce admin role
+              user.role = 'admin';
+              user._demo = true;
               _authToken = sessionToken;
               this.S.buildings = [...SEED_BUILDINGS];
               this.S.accounts  = [...SEED_ACCOUNTS];
@@ -1489,12 +1491,16 @@ const App = {
         _authToken = token;
         // Demo accounts use seed data only — nothing is read from or written to the server
         if (user.demo) {
+          // Enforce admin role client-side regardless of JWT contents
+          user.role = 'admin';
+          user._demo = true;
           this.S.buildings = [...SEED_BUILDINGS];
           this.S.accounts  = [...SEED_ACCOUNTS];
           this.S.employees = [...SEED_EMPLOYEES];
           this.S.shifts    = generateShifts(this.S.employees);
           this.S.schedulePatterns = [];
-          // Don't persist the token for demo sessions (sessionStorage only)
+          // Store demo token in sessionStorage only — clear any SA localStorage token
+          localStorage.removeItem('mms_token');
           try { sessionStorage.setItem('mms_demo_token', token); } catch(e2) {}
         } else {
           localStorage.setItem('mms_token', token);
@@ -1585,7 +1591,7 @@ const App = {
     this.render();
     // Show or hide DEMO MODE banner
     const demoBanner = document.getElementById('demo-mode-banner');
-    if (demoBanner) demoBanner.style.display = u._demo ? 'flex' : 'none';
+    if (demoBanner) demoBanner.style.display = (u._demo || u.demo) ? 'flex' : 'none';
     // Footer audit link: admin/superadmin only
     const footerAudit = document.getElementById('footer-audit-link');
     if (footerAudit) footerAudit.innerHTML = ['admin','superadmin'].includes(u.role)
