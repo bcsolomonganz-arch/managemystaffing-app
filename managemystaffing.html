@@ -487,20 +487,20 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
     <div class="login-logo">
       <div class="login-logo-icon" style="background:transparent;padding:0;width:52px;height:52px">
         <svg viewBox="0 0 100 92" xmlns="http://www.w3.org/2000/svg" width="52" height="52">
-          <rect x="68" y="4" width="13" height="24" rx="4" fill="#6B9E7A"/>
-          <path d="M50 5 L0 52 Q0 54 2 54 L98 54 Q100 54 100 52 Z" fill="#6B9E7A"/>
-          <rect x="2" y="50" width="96" height="42" rx="6" fill="#6B9E7A"/>
-          <rect x="35" y="15" width="12" height="10" rx="2.5" fill="white"/>
-          <rect x="51" y="15" width="12" height="10" rx="2.5" fill="white"/>
-          <rect x="35" y="28" width="12" height="10" rx="2.5" fill="white"/>
-          <rect x="51" y="28" width="12" height="10" rx="2.5" fill="white"/>
-          <rect x="62" y="57" width="11" height="9" rx="2" fill="white"/>
-          <rect x="76" y="57" width="11" height="9" rx="2" fill="white"/>
-          <rect x="62" y="69" width="11" height="9" rx="2" fill="white"/>
-          <rect x="76" y="69" width="11" height="9" rx="2" fill="white"/>
-          <rect x="6" y="63" width="30" height="9" rx="4.5" fill="white"/>
-          <rect x="16" y="53" width="9" height="29" rx="4.5" fill="white"/>
-          <rect x="40" y="68" width="20" height="24" rx="3" fill="white"/>
+          <rect x="70" y="2" width="14" height="26" rx="5" fill="#6B9E7A"/>
+          <path d="M50 5 L0 52 Q0 56 4 56 L96 56 Q100 56 100 52 Z" fill="#6B9E7A"/>
+          <rect x="3" y="50" width="94" height="42" rx="6" fill="#6B9E7A"/>
+          <rect x="38" y="20" width="9" height="9" rx="2" fill="white"/>
+          <rect x="52" y="20" width="9" height="9" rx="2" fill="white"/>
+          <rect x="38" y="32" width="9" height="9" rx="2" fill="white"/>
+          <rect x="52" y="32" width="9" height="9" rx="2" fill="white"/>
+          <rect x="63" y="57" width="10" height="9" rx="2" fill="white"/>
+          <rect x="76" y="57" width="10" height="9" rx="2" fill="white"/>
+          <rect x="63" y="69" width="10" height="9" rx="2" fill="white"/>
+          <rect x="76" y="69" width="10" height="9" rx="2" fill="white"/>
+          <rect x="7"  y="71" width="26" height="8" rx="4" fill="white"/>
+          <rect x="16" y="62" width="8"  height="26" rx="4" fill="white"/>
+          <rect x="41" y="70" width="18" height="22" rx="3" fill="white"/>
         </svg>
       </div>
       <div>
@@ -867,28 +867,30 @@ let _authToken = localStorage.getItem('mms_token') || null;
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 const LOGO_SVG = `<svg viewBox="0 0 100 92" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%">
-  <!-- Chimney (renders behind roof) -->
-  <rect x="68" y="4" width="13" height="24" rx="4" fill="#6B9E7A"/>
-  <!-- Roof -->
-  <path d="M50 5 L0 52 Q0 54 2 54 L98 54 Q100 54 100 52 Z" fill="#6B9E7A"/>
+  <!-- Chimney (behind roof) -->
+  <rect x="70" y="2" width="14" height="26" rx="5" fill="#6B9E7A"/>
+  <!-- Roof — eave corners flare outward via quadratic bezier -->
+  <path d="M50 5 L0 52 Q0 56 4 56 L96 56 Q100 56 100 52 Z" fill="#6B9E7A"/>
   <!-- House body -->
-  <rect x="2" y="50" width="96" height="42" rx="6" fill="#6B9E7A"/>
-  <!-- Upper center window 2×2 -->
-  <rect x="35" y="15" width="12" height="10" rx="2.5" fill="white"/>
-  <rect x="51" y="15" width="12" height="10" rx="2.5" fill="white"/>
-  <rect x="35" y="28" width="12" height="10" rx="2.5" fill="white"/>
-  <rect x="51" y="28" width="12" height="10" rx="2.5" fill="white"/>
-  <!-- Lower right window 2×2 -->
-  <rect x="62" y="57" width="11" height="9" rx="2" fill="white"/>
-  <rect x="76" y="57" width="11" height="9" rx="2" fill="white"/>
-  <rect x="62" y="69" width="11" height="9" rx="2" fill="white"/>
-  <rect x="76" y="69" width="11" height="9" rx="2" fill="white"/>
-  <!-- Medical cross (left) -->
-  <rect x="6" y="63" width="30" height="9" rx="4.5" fill="white"/>
-  <rect x="16" y="53" width="9" height="29" rx="4.5" fill="white"/>
-  <!-- Door (centered bottom) -->
-  <rect x="40" y="68" width="20" height="24" rx="3" fill="white"/>
+  <rect x="3" y="50" width="94" height="42" rx="6" fill="#6B9E7A"/>
+  <!-- Upper 2×2 window grid (gable, horizontally centered) -->
+  <rect x="38" y="20" width="9" height="9" rx="2" fill="white"/>
+  <rect x="52" y="20" width="9" height="9" rx="2" fill="white"/>
+  <rect x="38" y="32" width="9" height="9" rx="2" fill="white"/>
+  <rect x="52" y="32" width="9" height="9" rx="2" fill="white"/>
+  <!-- Lower right 2×2 window grid -->
+  <rect x="63" y="57" width="10" height="9" rx="2" fill="white"/>
+  <rect x="76" y="57" width="10" height="9" rx="2" fill="white"/>
+  <rect x="63" y="69" width="10" height="9" rx="2" fill="white"/>
+  <rect x="76" y="69" width="10" height="9" rx="2" fill="white"/>
+  <!-- Medical cross — equal arms, rounded caps, lower left -->
+  <rect x="7"  y="71" width="26" height="8" rx="4" fill="white"/>
+  <rect x="16" y="62" width="8"  height="26" rx="4" fill="white"/>
+  <!-- Door — bottom center, reaches bottom edge -->
+  <rect x="41" y="70" width="18" height="22" rx="3" fill="white"/>
 </svg>`;
+
+const SYNC_ICON = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 8A6 6 0 1 1 8 2"/><path d="M14 2v6h-6"/></svg>';
 
 const PRESETS = {
   weekdays:[1,1,1,1,1,0,0],
@@ -2923,20 +2925,20 @@ const App = {
       <div class="login-logo">
         <div class="login-logo-icon" style="background:transparent;padding:0;width:52px;height:52px">
           <svg viewBox="0 0 100 92" xmlns="http://www.w3.org/2000/svg" width="52" height="52">
-            <rect x="68" y="4" width="13" height="24" rx="4" fill="#6B9E7A"/>
-            <path d="M50 5 L0 52 Q0 54 2 54 L98 54 Q100 54 100 52 Z" fill="#6B9E7A"/>
-            <rect x="2" y="50" width="96" height="42" rx="6" fill="#6B9E7A"/>
-            <rect x="35" y="15" width="12" height="10" rx="2.5" fill="white"/>
-            <rect x="51" y="15" width="12" height="10" rx="2.5" fill="white"/>
-            <rect x="35" y="28" width="12" height="10" rx="2.5" fill="white"/>
-            <rect x="51" y="28" width="12" height="10" rx="2.5" fill="white"/>
-            <rect x="62" y="57" width="11" height="9" rx="2" fill="white"/>
-            <rect x="76" y="57" width="11" height="9" rx="2" fill="white"/>
-            <rect x="62" y="69" width="11" height="9" rx="2" fill="white"/>
-            <rect x="76" y="69" width="11" height="9" rx="2" fill="white"/>
-            <rect x="6" y="63" width="30" height="9" rx="4.5" fill="white"/>
-            <rect x="16" y="53" width="9" height="29" rx="4.5" fill="white"/>
-            <rect x="40" y="68" width="20" height="24" rx="3" fill="white"/>
+            <rect x="70" y="2" width="14" height="26" rx="5" fill="#6B9E7A"/>
+            <path d="M50 5 L0 52 Q0 56 4 56 L96 56 Q100 56 100 52 Z" fill="#6B9E7A"/>
+            <rect x="3" y="50" width="94" height="42" rx="6" fill="#6B9E7A"/>
+            <rect x="38" y="20" width="9" height="9" rx="2" fill="white"/>
+            <rect x="52" y="20" width="9" height="9" rx="2" fill="white"/>
+            <rect x="38" y="32" width="9" height="9" rx="2" fill="white"/>
+            <rect x="52" y="32" width="9" height="9" rx="2" fill="white"/>
+            <rect x="63" y="57" width="10" height="9" rx="2" fill="white"/>
+            <rect x="76" y="57" width="10" height="9" rx="2" fill="white"/>
+            <rect x="63" y="69" width="10" height="9" rx="2" fill="white"/>
+            <rect x="76" y="69" width="10" height="9" rx="2" fill="white"/>
+            <rect x="7"  y="71" width="26" height="8" rx="4" fill="white"/>
+            <rect x="16" y="62" width="8"  height="26" rx="4" fill="white"/>
+            <rect x="41" y="70" width="18" height="22" rx="3" fill="white"/>
           </svg>
         </div>
         <div>
@@ -3098,6 +3100,70 @@ const App = {
     } finally {
       this.S.pccSyncing = false;
       if (btn) { btn.disabled = false; btn.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 8A6 6 0 1 1 8 2"/><path d="M14 2v6h-6"/></svg> Sync PCC'; }
+    }
+  },
+
+  // ── PCC STAFFING SYNC (daily hours → PPD fields) ────────────
+  async syncPCCStaffing() {
+    if (!IS_SERVER_MODE) return this.showToast('PCC sync requires server connection', 'warn');
+    const date = this.S.ppdDate || TODAY;
+    const btn  = document.getElementById('pcc-staffing-btn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin">↻</span> Syncing…'; }
+    try {
+      const r = await fetch(`/api/pcc/staffing?date=${date}`, {
+        headers: { 'Authorization': `Bearer ${_authToken}` },
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'PCC error');
+      const { hours, rn24 } = data;
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+      set('ppd-nm-hrs',  hours.nm  || '');
+      set('ppd-rn-hrs',  hours.rn  || '');
+      set('ppd-lpn-hrs', hours.lpn || '');
+      set('ppd-cna-hrs', hours.cna || '');
+      set('ppd-cma-hrs', hours.cma || '');
+      this.recalcPPD();
+      const info = document.getElementById('pcc-staffing-info');
+      if (info) info.innerHTML = `<span style="color:var(--green)">✓ Staffing synced · ${new Date().toLocaleTimeString()}${rn24 ? ' · RN 24h ✓' : ''}</span>`;
+      this.showToast(`PCC staffing hours loaded for ${date}`);
+    } catch(e) {
+      this.showToast('PCC staffing error: ' + e.message, 'warn');
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = SYNC_ICON + ' Sync PCC Staffing'; }
+    }
+  },
+
+  // ── PCC MONTHLY STAFFING SYNC (range → CMS Monthly fields) ──
+  async syncPCCMonthly() {
+    if (!IS_SERVER_MODE) return this.showToast('PCC sync requires server connection', 'warn');
+    // Determine month range from the date in the PPD Calculator or current month
+    const ref   = this.S.ppdDate || TODAY;
+    const start = ref.slice(0, 8) + '01';
+    const end   = ref.slice(0, 7) + '-' + new Date(+ref.slice(0,4), +ref.slice(5,7), 0).getDate();
+    const btn   = document.getElementById('pcc-monthly-btn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin">↻</span> Loading…'; }
+    try {
+      const r = await fetch(`/api/pcc/staffing/range?start=${start}&end=${end}`, {
+        headers: { 'Authorization': `Bearer ${_authToken}` },
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'PCC error');
+      const { avgDaily, rn24Days, daysInPeriod } = data;
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+      set('cms-mo-rn',      avgDaily.rn      || '');
+      set('cms-mo-nursing', avgDaily.nursing  || '');
+      set('cms-mo-rn24',    rn24Days          || '');
+      // Pre-fill census from PPD field if available
+      const ppdCensus = document.getElementById('ppd-census')?.value;
+      if (ppdCensus) set('cms-mo-census', ppdCensus);
+      this.recalcCMSMonthly();
+      const info = document.getElementById('pcc-monthly-info');
+      if (info) info.innerHTML = `<span style="color:var(--green)">✓ ${daysInPeriod} days · RN ${avgDaily.rn} avg hrs · 24h coverage ${rn24Days}d · synced ${new Date().toLocaleTimeString()}</span>`;
+      this.showToast(`PCC monthly staffing loaded: ${start} – ${end}`);
+    } catch(e) {
+      this.showToast('PCC monthly sync error: ' + e.message, 'warn');
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = SYNC_ICON + ' Pull PCC Monthly Data'; }
     }
   },
 
@@ -4420,11 +4486,16 @@ const App = {
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;padding-bottom:2px">
           <button id="pcc-sync-btn" class="pcc-sync-btn" onclick="App.syncPCCCensus()" ${!IS_SERVER_MODE ? 'disabled title="PCC sync requires server mode"' : ''}>
-            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 8A6 6 0 1 1 8 2"/><path d="M14 2v6h-6"/></svg>
-            Sync PCC Census
+            ${SYNC_ICON} Sync PCC Census
+          </button>
+          <button id="pcc-staffing-btn" class="pcc-sync-btn" onclick="App.syncPCCStaffing()" ${!IS_SERVER_MODE ? 'disabled title="PCC sync requires server mode"' : ''}>
+            ${SYNC_ICON} Sync PCC Staffing
           </button>
           <div id="pcc-sync-info" style="font-size:11px;color:var(--g400)">
-            ${this.S.pccLastSync ? '<span style="color:var(--green)">✓ Last synced ' + new Date(this.S.pccLastSync).toLocaleTimeString() + '</span>' : IS_SERVER_MODE ? 'Click to pull live census from PointClickCare' : 'Requires server connection'}
+            ${this.S.pccLastSync ? '<span style="color:var(--green)">✓ Census synced ' + new Date(this.S.pccLastSync).toLocaleTimeString() + '</span>' : IS_SERVER_MODE ? 'Pull live census from PointClickCare' : 'Requires server connection'}
+          </div>
+          <div id="pcc-staffing-info" style="font-size:11px;color:var(--g400)">
+            ${IS_SERVER_MODE ? 'Pull RN/LPN/CNA/CMA/NM hours from PCC' : ''}
           </div>
         </div>
         <div style="font-size:12px;color:var(--g400);padding-bottom:10px;margin-left:auto">Hours auto-filled from<br>scheduled shifts · editable</div>
@@ -4516,7 +4587,15 @@ const App = {
 
           <!-- Monthly view (manual inputs) -->
           <div id="cms-monthly-view" style="display:none">
-            <div style="font-size:13px;color:var(--g600);margin-bottom:16px">Enter your facility's 30-day average daily hours to estimate the monthly staffing star rating.</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+              <div style="font-size:13px;color:var(--g600)">Enter your facility's 30-day average daily hours to estimate the monthly staffing star rating.</div>
+              <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+                <button id="pcc-monthly-btn" class="pcc-sync-btn" onclick="App.syncPCCMonthly()" ${!IS_SERVER_MODE ? 'disabled title="PCC sync requires server mode"' : ''}>
+                  ${SYNC_ICON} Pull PCC Monthly Data
+                </button>
+                <div id="pcc-monthly-info" style="font-size:11px;color:var(--g400);text-align:right">${IS_SERVER_MODE ? 'Auto-fill from PCC: RN avg, total nursing avg, RN 24h days' : ''}</div>
+              </div>
+            </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px">
               <div>
                 <label style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Avg Daily RN Hours</label>

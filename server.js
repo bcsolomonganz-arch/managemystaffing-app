@@ -456,6 +456,132 @@ app.get('/api/pcc/census', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
+// ── GET /api/pcc/staffing?date=YYYY-MM-DD ────────────────────────────────────
+// Returns total hours by staff type (rn/lpn/cna/cma/nm) for a single date from PCC.
+// Maps PCC position codes/titles to MMS staff types using flexible regex matching.
+app.get('/api/pcc/staffing', requireAuth, requireAdmin, async (req, res) => {
+  if (!PCC_CLIENT_ID || !PCC_CLIENT_SECRET || !PCC_FACILITY_ID) {
+    return res.status(503).json({
+      error: 'PCC not configured. Set PCC_CLIENT_ID, PCC_CLIENT_SECRET, PCC_FACILITY_ID in Azure App Settings.',
+    });
+  }
+  const date = (req.query.date || new Date().toISOString().slice(0, 10)).replace(/[^0-9-]/g, '');
+  try {
+    const token   = await getPCCToken();
+    const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' };
+    if (PCC_ORG_UUID) headers['x-pcc-appkey'] = PCC_ORG_UUID;
+
+    const url  = `${PCC_BASE}/partner/v1/facilities/${PCC_FACILITY_ID}/staffShifts?date=${date}`;
+    const resp = await fetch(url, { headers });
+    if (!resp.ok) {
+      const txt = await resp.text();
+      return res.status(502).json({ error: `PCC staffing API ${resp.status}: ${txt.slice(0, 300)}` });
+    }
+    const body   = await resp.json();
+    const shifts = body.data || body.shifts || body || [];
+
+    const hours = { rn: 0, lpn: 0, cna: 0, cma: 0, nm: 0 };
+    for (const s of (Array.isArray(shifts) ? shifts : [])) {
+      const hrs = parseFloat(s.workedHours ?? s.scheduledHours ?? s.hours ?? 0) || 0;
+      const key = (s.positionCode || s.jobCode || s.position || '').toUpperCase();
+      const ttl = (s.positionDesc || s.jobTitle || s.title || '').toUpperCase();
+      const hay = key + ' ' + ttl;
+      if (/\bRN\b|REGISTERED NURSE/.test(hay))                                     hours.rn  += hrs;
+      else if (/\bLPN\b|\bLVN\b|LICENSED PRACTICAL|LICENSED VOCATIONAL/.test(hay)) hours.lpn += hrs;
+      else if (/\bCNA\b|NURSE AID|NURSE ASSISTANT|CERTIFIED NURSING/.test(hay))    hours.cna += hrs;
+      else if (/\bCMA\b|MED AIDE|MEDICATION AIDE|MEDICATION TECH/.test(hay))       hours.cma += hrs;
+      else if (/DIRECTOR OF NURSING|\bDON\b|NURSE MANAGER|DIR OF NURS/.test(hay))  hours.nm  += hrs;
+    }
+
+    res.json({
+      ok:     true,
+      date,
+      hours,
+      rn24:   hours.rn >= 24,
+      shifts: Array.isArray(shifts) ? shifts.length : 0,
+    });
+  } catch (e) {
+    console.error('[mms] PCC staffing error:', e.message);
+    res.status(502).json({ error: `PCC staffing request failed: ${e.message}` });
+  }
+});
+
+// ── GET /api/pcc/staffing/range?start=YYYY-MM-DD&end=YYYY-MM-DD ──────────────
+// Returns per-day hours + monthly averages (rn/lpn/cna/cma/nm) for CMS star calcs.
+// Max range: 31 days.
+app.get('/api/pcc/staffing/range', requireAuth, requireAdmin, async (req, res) => {
+  if (!PCC_CLIENT_ID || !PCC_CLIENT_SECRET || !PCC_FACILITY_ID) {
+    return res.status(503).json({ error: 'PCC not configured' });
+  }
+  const today  = new Date().toISOString().slice(0, 10);
+  const start  = (req.query.start || today.slice(0, 8) + '01').replace(/[^0-9-]/g, '');
+  const end    = (req.query.end   || today).replace(/[^0-9-]/g, '');
+  const startMs = new Date(start).getTime();
+  const endMs   = new Date(end).getTime();
+  if (isNaN(startMs) || isNaN(endMs) || endMs < startMs || endMs - startMs > 32 * 86400000) {
+    return res.status(400).json({ error: 'Invalid date range (max 31 days)' });
+  }
+  try {
+    const token   = await getPCCToken();
+    const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' };
+    if (PCC_ORG_UUID) headers['x-pcc-appkey'] = PCC_ORG_UUID;
+
+    const url  = `${PCC_BASE}/partner/v1/facilities/${PCC_FACILITY_ID}/staffShifts?startDate=${start}&endDate=${end}`;
+    const resp = await fetch(url, { headers });
+    if (!resp.ok) {
+      const txt = await resp.text();
+      return res.status(502).json({ error: `PCC staffing range API ${resp.status}: ${txt.slice(0, 300)}` });
+    }
+    const body   = await resp.json();
+    const shifts = body.data || body.shifts || body || [];
+
+    // Aggregate per date
+    const byDate = {};
+    for (const s of (Array.isArray(shifts) ? shifts : [])) {
+      const d   = (s.shiftDate || s.date || start).slice(0, 10);
+      if (!byDate[d]) byDate[d] = { rn: 0, lpn: 0, cna: 0, cma: 0, nm: 0 };
+      const hrs = parseFloat(s.workedHours ?? s.scheduledHours ?? s.hours ?? 0) || 0;
+      const key = (s.positionCode || s.jobCode || s.position || '').toUpperCase();
+      const ttl = (s.positionDesc || s.jobTitle || s.title || '').toUpperCase();
+      const hay = key + ' ' + ttl;
+      if (/\bRN\b|REGISTERED NURSE/.test(hay))                                     byDate[d].rn  += hrs;
+      else if (/\bLPN\b|\bLVN\b|LICENSED PRACTICAL|LICENSED VOCATIONAL/.test(hay)) byDate[d].lpn += hrs;
+      else if (/\bCNA\b|NURSE AID|NURSE ASSISTANT|CERTIFIED NURSING/.test(hay))    byDate[d].cna += hrs;
+      else if (/\bCMA\b|MED AIDE|MEDICATION AIDE|MEDICATION TECH/.test(hay))       byDate[d].cma += hrs;
+      else if (/DIRECTOR OF NURSING|\bDON\b|NURSE MANAGER|DIR OF NURS/.test(hay))  byDate[d].nm  += hrs;
+    }
+
+    const days = Object.keys(byDate).sort();
+    const n    = days.length || 1;
+    let totRn = 0, totLpn = 0, totCna = 0, totCma = 0, totNm = 0, rn24Days = 0;
+    for (const d of days) {
+      const r = byDate[d];
+      totRn  += r.rn;  totLpn += r.lpn; totCna += r.cna;
+      totCma += r.cma; totNm  += r.nm;
+      if (r.rn >= 24) rn24Days++;
+    }
+
+    res.json({
+      ok:           true,
+      start, end,
+      daysInPeriod: n,
+      rn24Days,
+      avgDaily: {
+        rn:      +(totRn  / n).toFixed(2),
+        lpn:     +(totLpn / n).toFixed(2),
+        cna:     +(totCna / n).toFixed(2),
+        cma:     +(totCma / n).toFixed(2),
+        nm:      +(totNm  / n).toFixed(2),
+        nursing: +((totRn + totLpn + totCna + totCma + totNm) / n).toFixed(2),
+      },
+      byDate,
+    });
+  } catch (e) {
+    console.error('[mms] PCC staffing range error:', e.message);
+    res.status(502).json({ error: `PCC staffing range failed: ${e.message}` });
+  }
+});
+
 // ── GET /jobs.xml — public XML job feed (Indeed / LinkedIn job crawler format) ─
 app.get('/jobs.xml', (_req, res) => {
   try {
@@ -659,4 +785,5 @@ app.listen(PORT, () => {
   console.log(`[mms] ManageMyStaffing running on http://localhost:${PORT}`);
   console.log(`[mms] Data file: ${DATA_FILE}`);
   console.log(`[mms] Messaging: ACS=${!!ACS_CONNECTION_STRING} Email=${!!ACS_FROM_EMAIL} SMS=${!!ACS_FROM_PHONE}`);
+  console.log(`[mms] PCC integration: ${PCC_CLIENT_ID && PCC_CLIENT_SECRET && PCC_FACILITY_ID ? `ENABLED (facilityId=${PCC_FACILITY_ID})` : 'not configured'}`);
 });
