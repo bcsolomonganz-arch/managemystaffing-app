@@ -2596,13 +2596,15 @@ const App = {
 
   // ── ENTER COMPANY DASHBOARD ──────────────────────────────────
   enterCompany(coId) {
+    const co = (this.S.companies || []).find(c => c.id === coId);
+    if (!co) { this.showToast('Company not found — try refreshing the page', 'warn'); return; }
     this.S.activeCompanyId = coId;
     this.S.saPage = 'company';
-    this.renderSAMain();
+    this.renderCompanyDashboard(co);
   },
 
-  renderCompanyDashboard() {
-    const co = (this.S.companies || []).find(c => c.id === this.S.activeCompanyId);
+  renderCompanyDashboard(coArg) {
+    const co = coArg || (this.S.companies || []).find(c => c.id === this.S.activeCompanyId);
     if (!co) { this.S.saPage = 'overview'; this.renderSAMain(); return; }
     const buildings = this.S.buildings.filter(b => b.companyId === co.id);
     const coStaff = this.S.employees.filter(e => buildings.some(b => b.id === e.buildingId)).length;
