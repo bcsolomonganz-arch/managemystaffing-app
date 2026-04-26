@@ -1831,6 +1831,11 @@ const App = {
       document.getElementById('main').className = 'main';
       this.renderSASidebar();
       this.renderSAMain();
+    } else if (u.role === 'hrcandidate') {
+      document.getElementById('sidebar').style.display = 'none';
+      document.getElementById('main').className = 'main';
+      document.getElementById('main').style.marginLeft = '0';
+      this.renderCandidatePortal();
     } else if (this.S.appMode === 'hr') {
       document.getElementById('sidebar').style.display = 'block';
       document.getElementById('main').className = 'main';
@@ -1853,11 +1858,13 @@ const App = {
       ? '<span class="role-badge role-super">Super Admin</span>'
       : u.role === 'admin'
       ? '<span class="role-badge role-admin">Admin</span>'
-      : `<span class="role-badge role-emp">${sanitize(u.group)}</span>`;
+      : u.role === 'hrcandidate'
+      ? '<span class="role-badge" style="background:#FFF7ED;color:#C2410C;border:1px solid #FED7AA">New Hire</span>'
+      : `<span class="role-badge role-emp">${sanitize(u.group||'Employee')}</span>`;
 
     // Month nav only for non-superadmin; building switcher for multi-building admins
     let nav = '';
-    if (u.role !== 'superadmin') {
+    if (u.role !== 'superadmin' && u.role !== 'hrcandidate') {
       // Building switcher — show if user has multiple buildings
       const userBuildingIds = u.buildingIds?.length ? u.buildingIds : (u.buildingId ? [u.buildingId] : []);
       const activeBId = this.S.activeBuildingId || u.buildingId || userBuildingIds[0];
@@ -3662,14 +3669,33 @@ const App = {
             <label style="font-size:11px;font-weight:700;color:var(--g500);display:block;margin-bottom:4px">NOTES / ADDITIONAL CONTENT</label>
             <textarea id="ob-content-${i}" rows="2" placeholder="Any additional notes, instructions, or required information for this step..." style="width:100%;box-sizing:border-box;padding:7px 10px;border:1.5px solid var(--g200);border-radius:7px;font-size:13px;font-family:inherit;resize:vertical">${sanitize(hasContent)}</textarea>
           </div>
-          ${hasFiles.length ? `<div style="margin-bottom:12px">
-            <label style="font-size:11px;font-weight:700;color:var(--g500);display:block;margin-bottom:6px">ATTACHMENTS</label>
-            ${hasFiles.map((f,fi)=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#fff;border:1px solid var(--g200);border-radius:6px;margin-bottom:4px">
-              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 1h8l3 3v11H1V1z"/><path d="M12 1v4h3"/></svg>
-              <span style="flex:1;font-size:12px;color:var(--g700)">${sanitize(f.name)}</span>
-              <button class="btn btn-ghost btn-sm" style="color:var(--red);padding:2px 6px;font-size:11px" onclick="App.removeHRStepFile('${st}',${i},${fi})">Remove</button>
-            </div>`).join('')}
-          </div>` : ''}
+          <div style="margin-bottom:14px">
+            <label style="font-size:11px;font-weight:700;color:var(--g500);display:block;margin-bottom:6px">DOCUMENTS / ATTACHMENTS</label>
+            <div id="ob-drop-${i}"
+              ondragover="event.preventDefault();this.style.borderColor='var(--blue)';this.style.background='var(--blue-l)'"
+              ondragleave="this.style.borderColor='var(--g300)';this.style.background='#fff'"
+              ondrop="event.preventDefault();this.style.borderColor='var(--g300)';this.style.background='#fff';App.hrDropFiles('${st}',${i},event.dataTransfer.files)"
+              style="border:2px dashed var(--g300);border-radius:8px;padding:16px;text-align:center;background:#fff;cursor:pointer;transition:all .15s;margin-bottom:8px"
+              onclick="document.getElementById('ob-file-input-${i}').click()">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--g400)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              <div style="font-size:12px;font-weight:600;color:var(--g600)">Drop PDF or Word doc here</div>
+              <div style="font-size:11px;color:var(--g400);margin-top:2px">or click to browse · .pdf, .docx supported</div>
+              <input type="file" id="ob-file-input-${i}" accept=".pdf,.docx,.doc" multiple style="display:none"
+                onchange="App.hrDropFiles('${st}',${i},this.files)">
+            </div>
+            ${hasFiles.map((f,fi)=>`
+              <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#fff;border:1px solid var(--g200);border-radius:6px;margin-bottom:4px">
+                <div style="width:28px;height:28px;border-radius:6px;background:${f.type==='application/pdf'||f.name?.endsWith('.pdf')?'#FEF2F2':'#EFF6FF'};display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="${f.type==='application/pdf'||f.name?.endsWith('.pdf')?'#DC2626':'#2563EB'}" stroke-width="1.5" stroke-linecap="round"><rect x="2" y="1" width="12" height="14" rx="1.5"/><path d="M5 5h6M5 8h6M5 11h4"/></svg>
+                </div>
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:12px;font-weight:600;color:var(--g700);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${sanitize(f.name)}</div>
+                  <div style="font-size:11px;color:var(--g400)">${f.size ? Math.round(f.size/1024)+'KB' : ''}</div>
+                </div>
+                ${f.dataUrl && (f.name?.endsWith('.pdf') || f.type==='application/pdf') ? `<button class="btn btn-ghost btn-sm" style="font-size:11px;padding:3px 8px;color:var(--blue-d)" onclick="App.previewStepFile('${st}',${i},${fi})">View</button>` : ''}
+                <button class="btn btn-ghost btn-sm" style="color:var(--red);padding:3px 8px;font-size:11px" onclick="App.removeHRStepFile('${st}',${i},${fi})">✕</button>
+              </div>`).join('')}
+          </div>
           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
             <div style="display:flex;gap:6px">
               <button class="btn btn-ghost btn-sm" style="padding:3px 8px;color:var(--g400);font-size:11px" onclick="App.moveHRStep('${st}',${i},-1)" ${i===0?'disabled':''}>↑ Move Up</button>
@@ -3720,6 +3746,226 @@ const App = {
       </div>`;
   },
 
+  renderCandidatePortal() {
+    const u = this.S.user;
+    // Find hrEmployee record linked to this account
+    const acct = this.S.accounts.find(a => a.email === u.email && a.role === 'hrcandidate');
+    const emp = acct?.hrEmployeeId
+      ? this.S.hrEmployees.find(e => e.id === acct.hrEmployeeId)
+      : this.S.hrEmployees.find(e => e.email === u.email);
+
+    if (!emp) {
+      document.getElementById('main').innerHTML = `
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:70vh;text-align:center">
+          <div style="font-size:40px;margin-bottom:12px">📋</div>
+          <div style="font-size:18px;font-weight:700;color:var(--g900);margin-bottom:8px">No onboarding package found</div>
+          <div style="font-size:14px;color:var(--g500)">Please contact your facility administrator.</div>
+        </div>`;
+      return;
+    }
+
+    const state = emp.onboardingState || 'TX';
+    const pkg = this.S.hrOnboarding[state];
+    if (!pkg) { document.getElementById('main').innerHTML = '<div style="padding:40px;text-align:center;color:var(--g400)">Onboarding package not configured.</div>'; return; }
+
+    const steps = pkg.steps;
+    const docs = emp.docs || {};
+    const activeIdx = this.S._candidateStep ?? steps.findIndex(s => !docs[s.id]?.completedAt) ?? 0;
+    const step = steps[activeIdx];
+    if (!step) { document.getElementById('main').innerHTML = '<div style="padding:40px;text-align:center;font-size:18px;font-weight:700;color:var(--green)">✓ All steps complete!</div>'; return; }
+
+    const completedCount = steps.filter(s => docs[s.id]?.completedAt).length;
+
+    const sidebar = steps.map((s, i) => {
+      const done = !!docs[s.id]?.completedAt;
+      const active = i === activeIdx;
+      return `<div onclick="App.S._candidateStep=${i};App.renderCandidatePortal()"
+        style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;border-radius:8px;margin:2px 0;
+        background:${active?'var(--blue-l)':'transparent'};border:${active?'1.5px solid var(--blue-m)':'1.5px solid transparent'}">
+        <div style="width:22px;height:22px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;
+          background:${done?'var(--green)':active?'var(--blue)':'var(--g200)'};color:${done||active?'#fff':'var(--g500)'}">
+          ${done?'✓':(i+1)}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:${active?'700':'500'};color:${active?'var(--blue-d)':'var(--g700)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${sanitize(s.title)}</div>
+          ${done?'<div style="font-size:10px;color:var(--green);font-weight:600">Complete</div>':''}
+        </div>
+      </div>`;
+    }).join('');
+
+    const docFiles = step.files || [];
+    const pdfFiles = docFiles.filter(f => f.name?.endsWith('.pdf') || f.type === 'application/pdf');
+    const otherFiles = docFiles.filter(f => !f.name?.endsWith('.pdf') && f.type !== 'application/pdf');
+
+    const fileViewer = pdfFiles.length ? `
+      <div style="margin-bottom:16px">
+        <div style="font-size:11px;font-weight:700;color:var(--g500);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">Document</div>
+        ${pdfFiles.map((f,fi) => `
+          <div style="margin-bottom:8px">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--g50);border:1px solid var(--g200);border-radius:8px;margin-bottom:6px">
+              <span style="font-size:12px;font-weight:600;color:var(--g700)">${sanitize(f.name)}</span>
+              <button class="btn btn-ghost btn-sm" onclick="App.candidateViewPDF(${fi},${activeIdx})" style="font-size:12px;color:var(--blue-d)">
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2"/></svg>
+                View PDF
+              </button>
+            </div>
+            <iframe id="candidate-pdf-${fi}" style="display:none;width:100%;height:600px;border:1px solid var(--g200);border-radius:8px" src="${f.dataUrl}"></iframe>
+          </div>`).join('')}
+      </div>` : '';
+
+    const wordFiles = otherFiles.length ? `
+      <div style="margin-bottom:16px">
+        <div style="font-size:11px;font-weight:700;color:var(--g500);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Documents</div>
+        ${otherFiles.map(f=>`
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--g50);border:1px solid var(--g200);border-radius:8px;margin-bottom:4px">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="#2563EB" stroke-width="1.5" stroke-linecap="round"><rect x="2" y="1" width="12" height="14" rx="1.5"/><path d="M5 5h6M5 8h6M5 11h4"/></svg>
+            <span style="font-size:12px;font-weight:600;color:var(--g700);flex:1">${sanitize(f.name)}</span>
+            <a href="${f.dataUrl}" download="${sanitize(f.name)}" class="btn btn-ghost btn-sm" style="font-size:11px;color:var(--blue-d)">Download</a>
+          </div>`).join('')}
+      </div>` : '';
+
+    const existing = docs[step.id] || {};
+
+    document.getElementById('main').innerHTML = `
+      <div style="display:grid;grid-template-columns:260px 1fr;gap:0;height:calc(100vh - var(--header));overflow:hidden">
+        <div style="border-right:1px solid var(--g200);background:#fff;overflow-y:auto;padding:16px 12px">
+          <div style="margin-bottom:16px;padding:0 2px">
+            <div style="font-size:13px;font-weight:700;color:var(--g900)">${sanitize(emp.name)}</div>
+            <div style="font-size:11px;color:var(--g500);margin-top:2px">${sanitize(emp.role||'')} · ${sanitize(pkg.name)}</div>
+            <div style="margin-top:8px;background:var(--g100);border-radius:6px;height:6px;overflow:hidden">
+              <div style="background:var(--blue);height:100%;width:${Math.round(completedCount/steps.length*100)}%;transition:width .4s;border-radius:6px"></div>
+            </div>
+            <div style="font-size:11px;color:var(--g500);margin-top:4px">${completedCount} of ${steps.length} complete</div>
+          </div>
+          ${sidebar}
+        </div>
+        <div style="overflow-y:auto;padding:28px 32px">
+          <div style="max-width:760px">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+              <div style="width:28px;height:28px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700">${activeIdx+1}</div>
+              <h2 style="font-size:20px;font-weight:800;color:var(--g900)">${sanitize(step.title)}</h2>
+            </div>
+            <p style="font-size:13px;color:var(--g500);margin-bottom:20px;margin-left:38px">${sanitize(step.desc||'')}</p>
+
+            ${fileViewer}
+            ${wordFiles}
+
+            <div style="background:#fff;border:1.5px solid var(--g200);border-radius:10px;padding:20px;margin-bottom:16px">
+              <div style="font-size:13px;font-weight:700;color:var(--g900);margin-bottom:12px">Your Information</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+                <div><label style="font-size:11px;font-weight:700;color:var(--g500);display:block;margin-bottom:4px">FULL LEGAL NAME</label>
+                  <input id="cand-name" value="${sanitize(existing.legalName||emp.name||'')}" style="width:100%;padding:8px 10px;border:1.5px solid var(--g200);border-radius:7px;font-size:13px;font-family:inherit"></div>
+                <div><label style="font-size:11px;font-weight:700;color:var(--g500);display:block;margin-bottom:4px">DATE</label>
+                  <input id="cand-date" type="date" value="${existing.date||TODAY}" style="width:100%;padding:8px 10px;border:1.5px solid var(--g200);border-radius:7px;font-size:13px;font-family:inherit"></div>
+              </div>
+              <div style="margin-bottom:12px"><label style="font-size:11px;font-weight:700;color:var(--g500);display:block;margin-bottom:4px">NOTES / ADDITIONAL INFORMATION</label>
+                <textarea id="cand-notes" rows="3" placeholder="Any additional information or questions..." style="width:100%;padding:8px 10px;border:1.5px solid var(--g200);border-radius:7px;font-size:13px;font-family:inherit;resize:vertical">${sanitize(existing.notes||'')}</textarea>
+              </div>
+              <div>
+                <label style="font-size:11px;font-weight:700;color:var(--g500);display:block;margin-bottom:6px">SIGNATURE</label>
+                <div style="border:1.5px solid var(--g200);border-radius:8px;overflow:hidden;background:#FAFAFA;position:relative">
+                  <canvas id="sig-canvas" width="700" height="140" style="display:block;width:100%;cursor:crosshair;touch-action:none"></canvas>
+                  <button onclick="App.clearSignature()" style="position:absolute;top:6px;right:8px;font-size:11px;color:var(--g400);background:transparent;border:1px solid var(--g300);border-radius:5px;padding:2px 8px;cursor:pointer">Clear</button>
+                </div>
+                ${existing.signature ? `<div style="margin-top:4px;font-size:11px;color:var(--green);display:flex;align-items:center;gap:4px"><svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="2,6 5,9 10,3"/></svg>Signature saved</div>` : ''}
+              </div>
+            </div>
+
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <button class="btn btn-secondary" onclick="App.S._candidateStep=${Math.max(0,activeIdx-1)};App.renderCandidatePortal()" ${activeIdx===0?'disabled':''}>← Previous</button>
+              <button class="btn btn-primary" onclick="App.completeOnboardingStep(${activeIdx})">
+                ${activeIdx===steps.length-1?'Submit & Finish':'Complete & Continue →'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+
+    // Init signature canvas
+    requestAnimationFrame(() => App._initSigCanvas(activeIdx, existing.signature));
+  },
+
+  candidateViewPDF(fileIdx, stepIdx) {
+    const iframe = document.getElementById(`candidate-pdf-${fileIdx}`);
+    if (iframe) {
+      const isHidden = iframe.style.display === 'none';
+      iframe.style.display = isHidden ? 'block' : 'none';
+    }
+  },
+
+  _sigData: null,
+  _initSigCanvas(stepIdx, savedSig) {
+    const canvas = document.getElementById('sig-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (savedSig) {
+      const img = new Image();
+      img.onload = () => ctx.drawImage(img, 0, 0);
+      img.src = savedSig;
+    }
+    this._sigData = null;
+    let drawing = false, lastX = 0, lastY = 0;
+    const getPos = e => {
+      const r = canvas.getBoundingClientRect();
+      const src = e.touches ? e.touches[0] : e;
+      return [(src.clientX - r.left) * (canvas.width / r.width), (src.clientY - r.top) * (canvas.height / r.height)];
+    };
+    const start = e => { e.preventDefault(); drawing = true; [lastX,lastY] = getPos(e); ctx.beginPath(); ctx.moveTo(lastX,lastY); };
+    const draw  = e => { e.preventDefault(); if (!drawing) return; const [x,y]=getPos(e); ctx.lineTo(x,y); ctx.stroke(); lastX=x; lastY=y; };
+    const stop  = () => { drawing = false; this._sigData = canvas.toDataURL(); };
+    canvas.onmousedown = start; canvas.onmousemove = draw; canvas.onmouseup = stop; canvas.onmouseleave = stop;
+    canvas.ontouchstart = start; canvas.ontouchmove = draw; canvas.ontouchend = stop;
+  },
+
+  clearSignature() {
+    const canvas = document.getElementById('sig-canvas');
+    if (canvas) { canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height); this._sigData = null; }
+  },
+
+  completeOnboardingStep(stepIdx) {
+    const u = this.S.user;
+    const acct = this.S.accounts.find(a => a.email === u.email && a.role === 'hrcandidate');
+    const emp = acct?.hrEmployeeId
+      ? this.S.hrEmployees.find(e => e.id === acct.hrEmployeeId)
+      : this.S.hrEmployees.find(e => e.email === u.email);
+    if (!emp) return;
+
+    const state = emp.onboardingState || 'TX';
+    const step = this.S.hrOnboarding[state]?.steps[stepIdx];
+    if (!step) return;
+
+    if (!emp.docs) emp.docs = {};
+    emp.docs[step.id] = {
+      completedAt: new Date().toISOString(),
+      legalName: document.getElementById('cand-name')?.value?.trim() || emp.name,
+      date: document.getElementById('cand-date')?.value || TODAY,
+      notes: document.getElementById('cand-notes')?.value?.trim() || '',
+      signature: this._sigData || emp.docs[step.id]?.signature || null,
+    };
+
+    // Update overall status
+    const totalSteps = this.S.hrOnboarding[state].steps.length;
+    const doneCount = Object.values(emp.docs).filter(d => d.completedAt).length;
+    if (doneCount >= totalSteps) {
+      emp.status = 'review';
+      emp.progress = 'Awaiting admin review';
+    } else {
+      emp.status = 'onboarding';
+      emp.progress = `${doneCount}/${totalSteps} steps complete`;
+    }
+
+    this.persistData();
+    this.showToast(`Step ${stepIdx+1} completed`);
+
+    const nextIdx = stepIdx + 1;
+    this.S._candidateStep = nextIdx < totalSteps ? nextIdx : stepIdx;
+    this.renderCandidatePortal();
+  },
+
   toggleHRStep(state, idx) {
     const exp = this.S.hrExpandedStep;
     if (exp && exp.state === state && exp.idx === idx) {
@@ -3747,6 +3993,37 @@ const App = {
   removeHRStepFile(state, stepIdx, fileIdx) {
     const s = this.S.hrOnboarding[state].steps[stepIdx];
     if (s.files) { s.files.splice(fileIdx, 1); this.persistData(); this.renderHRMain(); }
+  },
+
+  hrDropFiles(state, stepIdx, fileList) {
+    const s = this.S.hrOnboarding[state].steps[stepIdx];
+    if (!s.files) s.files = [];
+    const allowed = ['application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/msword'];
+    Array.from(fileList).forEach(file => {
+      if (!allowed.includes(file.type) && !file.name.match(/\.(pdf|docx?|doc)$/i)) {
+        this.showToast(`${file.name}: only PDF and Word files are supported`, 'warn'); return;
+      }
+      if (file.size > 10 * 1024 * 1024) { this.showToast(`${file.name} is too large (max 10 MB)`, 'warn'); return; }
+      const reader = new FileReader();
+      reader.onload = e => {
+        s.files.push({ name: file.name, type: file.type, size: file.size, dataUrl: e.target.result, addedAt: new Date().toISOString() });
+        this.persistData();
+        this.renderHRMain();
+      };
+      reader.readAsDataURL(file);
+    });
+  },
+
+  previewStepFile(state, stepIdx, fileIdx) {
+    const f = this.S.hrOnboarding[state].steps[stepIdx].files[fileIdx];
+    if (!f?.dataUrl) return;
+    const w = window.open('', '_blank');
+    if (f.name?.endsWith('.pdf') || f.type === 'application/pdf') {
+      w.document.write(`<html><body style="margin:0"><iframe src="${f.dataUrl}" style="width:100%;height:100vh;border:none"></iframe></body></html>`);
+    } else {
+      const a = w.document.createElement('a');
+      a.href = f.dataUrl; a.download = f.name; a.click(); w.close();
+    }
   },
 
   // ── INVITE SYSTEM ────────────────────────────────────────────
@@ -4942,20 +5219,72 @@ const App = {
     }
   },
 
-  sendHRInvite() {
+  async sendHRInvite() {
     const name = document.getElementById('hr-invite-name')?.value?.trim();
-    const email = document.getElementById('hr-invite-email')?.value?.trim();
+    const email = document.getElementById('hr-invite-email')?.value?.trim().toLowerCase();
     const role = document.getElementById('hr-invite-role')?.value;
     const facId = document.getElementById('hr-invite-facility')?.value;
+    const inviteType = document.querySelector('input[name="hr-invite-type"]:checked')?.value || 'application';
     if (!name || !email) { this.showToast('Enter name and email','warn'); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { this.showToast('Invalid email address','warn'); return; }
+
     const fac = HR_FACILITIES.find(f=>f.id===facId);
     const initials = name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
     const id = 'hre' + Date.now();
-    this.S.hrEmployees.push({id, initials, name, email, role, facilityId: facId, status:'invited', progress:'Invite sent', slxId:null, hourlyRate:null});
+    const state = fac?.state || 'TX';
+
+    // Default password = their email address (they should change on first login)
+    const defaultPw = email;
+    const ph = hashPw(email, defaultPw);
+
+    // Create hrEmployee record
+    this.S.hrEmployees.push({
+      id, initials, name, email, role, facilityId: facId,
+      status: 'invited', progress: 'Invite sent',
+      slxId: null, hourlyRate: null,
+      onboardingState: state,
+      invitedAt: new Date().toISOString(),
+      inviteType,
+    });
+
+    // Create a corresponding account so they can log in
+    // role = 'hrcandidate', buildingId = building for this facility
+    const bldg = this.S.buildings.find(b => b.name?.includes(fac?.name?.split(' ')[0]) || true) || this.S.buildings[0];
+    const bId = this.S.user?.buildingId || bldg?.id || null;
+    const existingAcct = this.S.accounts.find(a => a.email === email);
+    if (!existingAcct) {
+      this.S.accounts.push({ id: 'achr'+Date.now(), name, email, role: 'hrcandidate', buildingId: bId, hrEmployeeId: id, ph });
+    }
+
     this.persistData();
     this.closeModal('modal-hr-invite');
-    this.showToast(`Invite sent to ${name}`);
-    if (this.S.hrPage === 'employees' || this.S.hrPage === 'dashboard') this.renderHRMain();
+    document.getElementById('hr-invite-name').value = '';
+    document.getElementById('hr-invite-email').value = '';
+
+    // Try server invite if available
+    if (IS_SERVER_MODE && _authToken) {
+      try {
+        const r = await fetch('/api/invite', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},
+          body: JSON.stringify({ name, email, role: 'hrcandidate', buildingId: bId, hrEmployeeId: id,
+            customMessage: `You have been invited to complete your onboarding at ${fac?.name||'your facility'}. Your default password is your email address — please change it after your first login.` }),
+        });
+        if (r.ok) {
+          this.showToast(`Onboarding invite sent to ${name} at ${email}`);
+        } else {
+          this.showToast(`Account created — email invite may not have sent. Share login link manually.`, 'warn');
+        }
+        const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${_authToken}`}});
+        if (dResp.ok) this.applyServerData(await dResp.json());
+      } catch(e) {
+        this.showToast(`Account created for ${name} — password: their email address`, 'warn');
+      }
+    } else {
+      this.showToast(`Invite sent to ${name} — their password is their email address`);
+    }
+
+    if (this.S.hrPage === 'dashboard' || this.S.hrPage === 'employees') this.renderHRMain();
   },
 
   openPPDCalc() {
