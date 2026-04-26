@@ -136,6 +136,16 @@ function loadData() {
     dirty = true;
   }
 
+  // ── Migration: strip seed time-clock records (empId starts with 'tc-') ───────
+  if (!data._tcSeedStripped) {
+    const before = (data.hrTimeClock || []).length;
+    data.hrTimeClock = (data.hrTimeClock || []).filter(r => !String(r.empId||'').startsWith('tc-'));
+    const stripped = before - (data.hrTimeClock || []).length;
+    if (stripped) console.log(`[mms] Migration: stripped ${stripped} seed time-clock records.`);
+    data._tcSeedStripped = true;
+    dirty = true;
+  }
+
   // ── Password reset: if RESET_SA_PASSWORD=1 env var is set, clear the SA
   //    password hash so the next login accepts any password as the new permanent one.
   //    Remove the env var after triggering to prevent repeated resets.

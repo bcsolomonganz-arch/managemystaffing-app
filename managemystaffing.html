@@ -1272,7 +1272,7 @@ const App = {
     hrEmployees: [],
     hrOnboarding: JSON.parse(JSON.stringify(SEED_HR_ONBOARDING)),
     hrAccounts: [],
-    hrTimeClock: null,
+    hrTimeClock: [],
     hrAuditLog: [],
     hrDataPeriod: 'current',          // 'current' | 'quarter' | 'ytd'
     hrLaborBudget: {                  // editable budget targets
@@ -2929,7 +2929,7 @@ const App = {
   },
 
   renderHRTimeClock() {
-    if (!this.S.hrTimeClock) this.S.hrTimeClock = generateHRTimeClock();
+    if (!Array.isArray(this.S.hrTimeClock)) this.S.hrTimeClock = [];
     if (!this.S.tcSort) this.S.tcSort = {col:'date', dir:-1};
     const recs   = this.S.hrTimeClock;
     const sort   = this.S.tcSort;
@@ -3081,11 +3081,16 @@ const App = {
               <th></th>
             </tr>
           </thead>
-          <tbody>${rows}</tbody>
+          <tbody>${rows || `<tr><td colspan="9" style="padding:60px;text-align:center;color:var(--g400)">
+            <svg viewBox="0 0 48 48" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" style="margin:0 auto 14px;display:block;opacity:.3"><circle cx="24" cy="24" r="20"/><path d="M24 14v10l6 6"/></svg>
+            <div style="font-weight:700;font-size:14px;color:var(--g600);margin-bottom:6px">No punch records yet</div>
+            <div style="font-size:12px;max-width:280px;margin:0 auto">Import a CSV file or punch records will appear here as employees clock in and out.</div>
+            <button class="btn btn-primary btn-sm" style="margin-top:16px" onclick="App.showToast('CSV import — coming soon','warn')">Import CSV</button>
+          </td></tr>`}</tbody>
         </table>
-        <div style="padding:10px 16px;font-size:11px;color:var(--g400);text-align:center;border-top:1px solid var(--g100)">
+        ${recs.length > 0 ? `<div style="padding:10px 16px;font-size:11px;color:var(--g400);text-align:center;border-top:1px solid var(--g100)">
           Showing ${Math.min(50,recs.length)} of ${recs.length} records · <strong>Score:</strong> 90–100 <span style="color:var(--green)">●</span> Good · 70–89 <span style="color:var(--amber)">●</span> Fair · &lt;70 <span style="color:var(--red)">●</span> Needs attention
-        </div>
+        </div>` : ''}
       </div>`;
   },
 
