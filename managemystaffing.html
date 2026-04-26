@@ -10,6 +10,8 @@
 <meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=()">
 <meta name="robots" content="noindex, nofollow">
 <title>ManageMyStaffing — HIPAA Compliant</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg viewBox='0 0 100 92' xmlns='http://www.w3.org/2000/svg'><rect x='70' y='2' width='14' height='26' rx='5' fill='%236B9E7A'/><path d='M50 5 L0 52 Q0 56 4 56 L96 56 Q100 56 100 52 Z' fill='%236B9E7A'/><rect x='3' y='50' width='94' height='42' rx='6' fill='%236B9E7A'/><rect x='38' y='20' width='9' height='9' rx='2' fill='white'/><rect x='52' y='20' width='9' height='9' rx='2' fill='white'/><rect x='38' y='32' width='9' height='9' rx='2' fill='white'/><rect x='52' y='32' width='9' height='9' rx='2' fill='white'/><rect x='63' y='57' width='10' height='9' rx='2' fill='white'/><rect x='76' y='57' width='10' height='9' rx='2' fill='white'/><rect x='63' y='69' width='10' height='9' rx='2' fill='white'/><rect x='76' y='69' width='10' height='9' rx='2' fill='white'/><rect x='7' y='71' width='26' height='8' rx='4' fill='white'/><rect x='16' y='62' width='8' height='26' rx='4' fill='white'/><rect x='41' y='70' width='18' height='22' rx='3' fill='white'/></svg>">
+<link rel="apple-touch-icon" href="data:image/svg+xml,<svg viewBox='0 0 100 92' xmlns='http://www.w3.org/2000/svg'><rect width='100' height='100' rx='20' fill='%23F0F7F3'/><rect x='70' y='2' width='14' height='26' rx='5' fill='%236B9E7A'/><path d='M50 5 L0 52 Q0 56 4 56 L96 56 Q100 56 100 52 Z' fill='%236B9E7A'/><rect x='3' y='50' width='94' height='42' rx='6' fill='%236B9E7A'/><rect x='38' y='20' width='9' height='9' rx='2' fill='white'/><rect x='52' y='20' width='9' height='9' rx='2' fill='white'/><rect x='38' y='32' width='9' height='9' rx='2' fill='white'/><rect x='52' y='32' width='9' height='9' rx='2' fill='white'/><rect x='63' y='57' width='10' height='9' rx='2' fill='white'/><rect x='76' y='57' width='10' height='9' rx='2' fill='white'/><rect x='63' y='69' width='10' height='9' rx='2' fill='white'/><rect x='76' y='69' width='10' height='9' rx='2' fill='white'/><rect x='7' y='71' width='26' height='8' rx='4' fill='white'/><rect x='16' y='62' width='8' height='26' rx='4' fill='white'/><rect x='41' y='70' width='18' height='22' rx='3' fill='white'/></svg>">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -511,7 +513,7 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
     <div class="demo-bar">
       <strong>Quick Demo Access</strong>
       <div class="demo-links">
-        <div class="demo-link" onclick="App.quickLogin('superadmin@managemystaffing.com','SuperAdmin@2026!')">
+        <div class="demo-link" onclick="App.quickLogin('solomong@managemystaffing.com','demo')">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           Super Admin
           <span class="demo-link-role">Platform View</span>
@@ -610,6 +612,14 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
       <div class="grid-2">
         <div class="form-group"><label>Phone</label><input type="tel" id="b-phone" placeholder="555-0100"></div>
         <div class="form-group"><label>Bed Count</label><input type="number" id="b-beds" placeholder="120" min="1"></div>
+      </div>
+      <div class="form-group"><label>State <span style="font-size:11px;color:var(--g400);font-weight:400">(used to auto-assign onboarding package)</span></label>
+        <select id="b-state" style="width:100%;padding:8px 10px;border:1.5px solid var(--g200);border-radius:8px;font-size:13px;font-family:inherit">
+          <option value="">— Select state —</option>
+          <option value="TX">Texas (TX)</option>
+          <option value="OK">Oklahoma (OK)</option>
+          <option value="OTHER">Other</option>
+        </select>
       </div>
       <div class="section-label">Primary Admin Account</div>
       <div class="grid-2">
@@ -1047,7 +1057,7 @@ const SEED_COMPANIES = [
 ];
 
 const SEED_BUILDINGS = [
-  {id:'b1',name:'Kirkland Court',address:'421 Harmony Ln, Springfield, IL 62701',phone:'555-0200',beds:120,color:'#0891B2',companyId:'co_skyblue'},
+  {id:'b1',name:'Kirkland Court',address:'421 Harmony Ln, Springfield, IL 62701',phone:'555-0200',beds:120,color:'#0891B2',companyId:'co_skyblue',state:'TX'},
   {id:'b2',name:'Sunrise Skilled Care',address:'89 Sunrise Blvd, Riverside, CA 92501',phone:'555-0201',beds:96,color:'#7C3AED'},
   {id:'b3',name:'Willowbrook Care Center',address:'1144 Willow Dr, Lakewood, CO 80401',phone:'555-0202',beds:80,color:'#059669'},
   {id:'b4',name:'Golden Acres Rehabilitation',address:'775 Golden Ave, Hillside, TX 76001',phone:'555-0203',beds:64,color:'#D97706'},
@@ -1150,31 +1160,33 @@ const SEED_HR_EMPLOYEES = [
   {id:'hre7',initials:'PP',name:'Priya Patel',email:'priya.p@email.com',role:'CMA',facilityId:'hf1',status:'review',progress:'Awaiting review',slxId:null,hourlyRate:null},
 ];
 const SEED_HR_ONBOARDING = {
-  TX:{name:'Tulia Health and Rehabilitation — Texas document package',steps:[
-    {id:'tx1',type:'form',title:'Employment Application',desc:'Personal info, education, employment history, references'},
-    {id:'tx2',type:'form',title:'ID Verification',desc:'Upload valid government-issued photo ID or driver\'s license'},
-    {id:'tx3',type:'form',title:'New Hire Info',desc:'Demographics, job details, schedule'},
-    {id:'tx4',type:'form',title:'Emergency Contacts',desc:'Primary & secondary emergency contacts, physician'},
-    {id:'tx5',type:'form',title:'Federal W-4',desc:'IRS employee withholding certificate (2026)'},
-    {id:'tx6',type:'form',title:'Form I-9',desc:'USCIS employment eligibility verification'},
-    {id:'tx7',type:'form',title:'TX DPS Background Check',desc:'Texas DPS criminal conviction history verification'},
-    {id:'tx8',type:'form',title:'Direct Deposit',desc:'Bank routing & account for payroll'},
-    {id:'tx9',type:'video',title:'Training Videos',desc:'Orientation, safety, HIPAA compliance'},
-    {id:'tx10',type:'form',title:'Policy Acknowledgment',desc:'Employee handbook, HIPAA confidentiality'},
-  ]},
-  OK:{name:'Oklahoma Care Center — Oklahoma document package',steps:[
-    {id:'ok1',type:'form',title:'Employment Application',desc:'Personal info, education, employment history, references'},
-    {id:'ok2',type:'form',title:'ID Verification',desc:'Upload valid government-issued photo ID or driver\'s license'},
-    {id:'ok3',type:'form',title:'New Hire Info',desc:'Demographics, job details, schedule'},
-    {id:'ok4',type:'form',title:'Emergency Contacts',desc:'Primary & secondary emergency contacts, physician'},
-    {id:'ok5',type:'form',title:'Federal W-4',desc:'IRS employee withholding certificate (2026)'},
-    {id:'ok6',type:'form',title:'OK State W-4',desc:'Oklahoma employee withholding allowance certificate'},
-    {id:'ok7',type:'form',title:'Form I-9',desc:'USCIS employment eligibility verification'},
-    {id:'ok8',type:'form',title:'OK Background Check',desc:'OK Long Term Care Security Act — consent & fingerprint'},
-    {id:'ok9',type:'form',title:'Direct Deposit',desc:'Bank routing & account for payroll'},
-    {id:'ok10',type:'video',title:'Training Videos',desc:'Orientation, safety, HIPAA compliance'},
-    {id:'ok11',type:'form',title:'Policy Acknowledgment',desc:'Employee handbook, HIPAA confidentiality'},
-  ]},
+  co_skyblue: {
+    TX:{name:'SkyBlue Healthcare — Texas onboarding package',steps:[
+      {id:'tx1',type:'form',title:'Employment Application',desc:'Personal info, education, employment history, references'},
+      {id:'tx2',type:'form',title:'ID Verification',desc:'Upload valid government-issued photo ID or driver\'s license'},
+      {id:'tx3',type:'form',title:'New Hire Info',desc:'Demographics, job details, schedule'},
+      {id:'tx4',type:'form',title:'Emergency Contacts',desc:'Primary & secondary emergency contacts, physician'},
+      {id:'tx5',type:'form',title:'Federal W-4',desc:'IRS employee withholding certificate (2026)'},
+      {id:'tx6',type:'form',title:'Form I-9',desc:'USCIS employment eligibility verification'},
+      {id:'tx7',type:'form',title:'TX DPS Background Check',desc:'Texas DPS criminal conviction history verification'},
+      {id:'tx8',type:'form',title:'Direct Deposit',desc:'Bank routing & account for payroll'},
+      {id:'tx9',type:'video',title:'Training Videos',desc:'Orientation, safety, HIPAA compliance'},
+      {id:'tx10',type:'form',title:'Policy Acknowledgment',desc:'Employee handbook, HIPAA confidentiality'},
+    ]},
+    OK:{name:'SkyBlue Healthcare — Oklahoma onboarding package',steps:[
+      {id:'ok1',type:'form',title:'Employment Application',desc:'Personal info, education, employment history, references'},
+      {id:'ok2',type:'form',title:'ID Verification',desc:'Upload valid government-issued photo ID or driver\'s license'},
+      {id:'ok3',type:'form',title:'New Hire Info',desc:'Demographics, job details, schedule'},
+      {id:'ok4',type:'form',title:'Emergency Contacts',desc:'Primary & secondary emergency contacts, physician'},
+      {id:'ok5',type:'form',title:'Federal W-4',desc:'IRS employee withholding certificate (2026)'},
+      {id:'ok6',type:'form',title:'OK State W-4',desc:'Oklahoma employee withholding allowance certificate'},
+      {id:'ok7',type:'form',title:'Form I-9',desc:'USCIS employment eligibility verification'},
+      {id:'ok8',type:'form',title:'OK Background Check',desc:'OK Long Term Care Security Act — consent & fingerprint'},
+      {id:'ok9',type:'form',title:'Direct Deposit',desc:'Bank routing & account for payroll'},
+      {id:'ok10',type:'video',title:'Training Videos',desc:'Orientation, safety, HIPAA compliance'},
+      {id:'ok11',type:'form',title:'Policy Acknowledgment',desc:'Employee handbook, HIPAA confidentiality'},
+    ]},
+  },
 };
 const SEED_HR_ACCOUNTS = [
   {id:'ha0',initials:'SA',name:'Super Admin',email:'solomong@managemycensus.com',role:'Owner',status:'active'},
@@ -1399,6 +1411,8 @@ const App = {
     hrBudgetEditing: false,
     hrOpenShifts: [],                 // real open shifts (not demo)
     staffingSlots: {},                // {buildingId: {group: {shiftType: N}}}
+    buildingShiftTypes: {},          // {buildingId: {group: [{type, name, start, end}]}} — overrides defaults
+    shiftTemplates: [],              // [{id, group, name, start, end}] — custom shift type templates per group
     hrScheduleOffset: 0,    // payroll period offset (0=current, -1=prev, +1=next)
     hrScheduleDepts: [],    // selected dept filters ([] = all)
     // Job postings (HR Recruiting)
@@ -1458,10 +1472,10 @@ const App = {
           if (vResp.ok) {
             const {user} = await vResp.json();
             if (user.demo) {
-              // Demo session — always use seed data only; enforce admin role
-              user.role = 'admin';
+              // Demo session — always use seed data only; preserve JWT role
               user._demo = true;
               _authToken = sessionToken;
+              this.S.companies = [...SEED_COMPANIES];
               this.S.buildings = [...SEED_BUILDINGS];
               this.S.accounts  = [...SEED_ACCOUNTS];
               this.S.employees = [...SEED_EMPLOYEES];
@@ -1664,9 +1678,8 @@ const App = {
         _authToken = token;
         // Demo accounts use seed data only — nothing is read from or written to the server
         if (user.demo) {
-          // Enforce admin role client-side regardless of JWT contents
-          user.role = 'admin';
           user._demo = true;
+          this.S.companies = [...SEED_COMPANIES];
           this.S.buildings = [...SEED_BUILDINGS];
           this.S.accounts  = [...SEED_ACCOUNTS];
           this.S.employees = [...SEED_EMPLOYEES];
@@ -1744,7 +1757,7 @@ const App = {
     sessionStorage.removeItem(SEC.SESSION_KEY+'_demo');
     sessionStorage.removeItem('mms_lock_hash');
     this.S.user = null; this.S.panelOpen = false; this._sessionLocked = false;
-    this.S.appMode = 'schedule'; this.S.hrPage = 'dashboard';
+    this.S.appMode = 'schedule'; this.S.hrPage = 'dashboard'; this.S.activeBuildingId = null;
     document.getElementById('lock-screen').classList.remove('active');
     document.getElementById('session-warning').style.display = 'none';
     const demoBanner = document.getElementById('demo-mode-banner');
@@ -1856,8 +1869,8 @@ const App = {
   // ── PRIVACY NOTICE (HIPAA §164.520) ──────────────────────
   _checkPrivacyNotice() {
     if (!this.S.user) return false;
-    // Demo account skips the HIPAA notice
-    if (this.S.user.id === 'sa-demo') return true;
+    // Demo accounts skip the HIPAA notice
+    if (this.S.user._demo || this.S.user.demo || this.S.user.id === 'sa-demo') return true;
     const k = SEC.PRIVACY_PFX + fnv32(this.S.user.email || this.S.user.id);
     if (!localStorage.getItem(k)) {
       document.getElementById('modal-privacy').classList.add('open');
@@ -1945,6 +1958,8 @@ const App = {
       ? '<span class="role-badge role-super">Super Admin</span>'
       : u.role === 'admin'
       ? '<span class="role-badge role-admin">Admin</span>'
+      : u.role === 'regionaladmin'
+      ? '<span class="role-badge" style="background:#F0FDF4;color:#166534;border:1px solid #BBF7D0">Regional Admin</span>'
       : u.role === 'hrcandidate'
       ? '<span class="role-badge" style="background:#FFF7ED;color:#C2410C;border:1px solid #FED7AA">New Hire</span>'
       : `<span class="role-badge role-emp">${sanitize(u.group||'Employee')}</span>`;
@@ -2404,13 +2419,15 @@ const App = {
 
   renderSuperAdmin() { this.renderSAOverview(); }, // legacy alias
   _buildFacilityCard(b) {
-    const admins = this.S.accounts.filter(a => (a.buildingId === b.id || (a.buildingIds||[]).includes(b.id)) && a.role === 'admin');
+    const admins = this.S.accounts.filter(a =>
+      (a.buildingId === b.id || (a.buildingIds||[]).includes(b.id)) &&
+      (a.role === 'admin' || a.role === 'regionaladmin'));
     const staff = this.S.employees.filter(e => e.buildingId === b.id);
     const openShifts = this.S.shifts.filter(s => s.buildingId === b.id && s.status === 'open' && s.date >= TODAY).length;
     const primaryAdmin = admins[0];
     const bInitials = primaryAdmin ? sanitize(primaryAdmin.name.split(' ').map(w=>w[0]).join('').slice(0,2)) : '';
     return `
-      <div class="building-card" style="--accent:${b.color}">
+      <div class="building-card" style="--accent:${b.color};cursor:pointer" onclick="App.enterBuilding('${b.id}')">
         <div style="position:absolute;top:0;left:0;right:0;height:4px;background:${b.color}"></div>
         <div class="building-name">${sanitize(b.name)}</div>
         <div class="building-addr"><svg viewBox="0 0 16 20" width="11" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M8 1C4.69 1 2 3.69 2 7c0 4.5 6 12 6 12s6-7.5 6-12c0-3.31-2.69-6-6-6z"/><circle cx="8" cy="7" r="2"/></svg> ${sanitize(b.address||'')}</div>
@@ -2431,8 +2448,8 @@ const App = {
           </div>
         ` : '<div style="font-size:13px;color:var(--g400);padding:8px 0;margin-bottom:8px">No admin assigned</div>'}
         <div class="building-actions">
-          <button class="btn btn-secondary btn-sm" onclick="App.enterBuilding('${b.id}')">Enter Dashboard →</button>
-          <button class="btn btn-ghost btn-sm" onclick="App.addAdminToBuilding('${b.id}')">+ Add Admin</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();App.enterBuilding('${b.id}')">Enter Dashboard →</button>
+          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.addAdminToBuilding('${b.id}')">+ Add Admin</button>
         </div>
       </div>`;
   },
@@ -2441,7 +2458,7 @@ const App = {
     const buildings = this.S.buildings;
     const companies = this.S.companies || [];
     const totalStaff = this.S.employees.length;
-    const totalAdmins = this.S.accounts.filter(a => a.role === 'admin').length;
+    const totalAdmins = this.S.accounts.filter(a => a.role === 'admin' || a.role === 'regionaladmin').length;
     const totalOpen = this.S.shifts.filter(s => s.status === 'open' && s.date >= TODAY).length;
 
     // Company tiles
@@ -2523,7 +2540,7 @@ const App = {
   _buildCompanyCard(co) {
     const coBuildings = this.S.buildings.filter(b => b.companyId === co.id);
     const coStaff = this.S.employees.filter(e => coBuildings.some(b => b.id === e.buildingId));
-    const coAdmins = this.S.accounts.filter(a => a.role === 'admin' && coBuildings.some(b => b.id === (a.buildingId || '')));
+    const coAdmins = this.S.accounts.filter(a => (a.role === 'admin' || a.role === 'regionaladmin') && coBuildings.some(b => b.id === (a.buildingId || '') || (a.buildingIds||[]).includes(b.id)));
     const coOpen = this.S.shifts.filter(s => s.status === 'open' && s.date >= TODAY && coBuildings.some(b => b.id === s.buildingId)).length;
     return `
       <div class="building-card" style="--accent:${co.color||'var(--blue)'}">
@@ -2541,8 +2558,9 @@ const App = {
           <div class="building-stat"><div class="building-stat-val" style="${coOpen>0?'color:var(--red)':''}">${coOpen}</div><div class="building-stat-label">Open</div></div>
         </div>
         <div class="building-actions" style="margin-top:14px">
-          <button class="btn btn-secondary btn-sm" onclick="App.enterCompany('${co.id}')">Enter Company →</button>
-          <button class="btn btn-ghost btn-sm" onclick="App.openEditCompany('${co.id}')">Edit</button>
+          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();App.enterCompany('${co.id}')">Enter Company →</button>
+          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.openEditCompany('${co.id}')">Edit</button>
+          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.openRegionalAdminModal('${co.id}')" style="color:var(--g600)" title="Invite a regional admin for this company">+ Regional Admin</button>
         </div>
       </div>`;
   },
@@ -2694,7 +2712,8 @@ const App = {
     if (this.S.appMode === 'hr') { this.renderHRSidebar(); return; }
 
     const u = this.S.user;
-    const building = this.S.buildings.find(b => b.id === (u.buildingId || 'b1'));
+    const effBuildingId = this.S.activeBuildingId || u.buildingId || 'b1';
+    const building = this.S.buildings.find(b => b.id === effBuildingId);
 
     // ── EMPLOYEE: personal sidebar ───────────────────────────
     if (u.role === 'employee') {
@@ -2760,12 +2779,39 @@ const App = {
       return;
     }
 
-    // ── ADMIN: standard group sidebar ───────────────────────
+    // ── REGIONAL ADMIN: building picker if no active building ───
+    if (u.role === 'regionaladmin' && !this.S.activeBuildingId) {
+      const buildingIds = u.buildingIds || [];
+      const myBuildings = (this.S.buildings || []).filter(b => buildingIds.includes(b.id));
+      const modeToggle = `<div class="mode-toggle">
+        <button class="mode-toggle-btn active" onclick="App.switchMode('schedule')">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 6h14"/><path d="M5 2v4"/><path d="M11 2v4"/></svg>
+          Schedule
+        </button>
+        <button class="mode-toggle-btn" onclick="App.switchMode('hr')">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5"/><path d="M11 9v6M8 12h6"/></svg>
+          HR
+        </button>
+      </div>`;
+      const bItems = myBuildings.map(b => `
+        <div class="group-item" onclick="App.enterRegionalBuilding('${b.id}')" style="cursor:pointer">
+          <div class="group-icon" style="background:${b.color||'var(--blue)'}22;color:${b.color||'var(--blue)'}">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="14" height="11" rx="1"/><path d="M5 15V9h6v6"/><path d="M1 8l7-6 7 6"/></svg>
+          </div>
+          ${sanitize(b.name)}
+        </div>`).join('');
+      document.getElementById('sidebar').innerHTML = `${modeToggle}
+        <div class="sidebar-section-title">My Portfolio</div>
+        ${bItems || '<div style="padding:12px 16px;font-size:12px;color:var(--g400)">No buildings assigned</div>'}`;
+      return;
+    }
+
+    // ── ADMIN / REGIONAL ADMIN (with active building): standard group sidebar ──
     const sel = this.S.selectedGroup;
     const groups = DISPLAY_GROUPS;
     let groupItems = '';
     groups.forEach(g => {
-      const count = this.S.employees.filter(e => getActualGroups(g).includes(e.group) && e.buildingId === (u.buildingId||'b1') && !e.inactive).length;
+      const count = this.S.employees.filter(e => getActualGroups(g).includes(e.group) && e.buildingId === effBuildingId && !e.inactive).length;
       const col = G_COLORS[g];
       groupItems += `<div class="group-item ${sel===g?'active':''}" onclick="App.selectGroup('${g}')">
         <div class="group-icon" style="background:${col}22;color:${col}">${G_ICONS[g]}</div>${g}
@@ -2774,7 +2820,7 @@ const App = {
 
     let empList = '';
     if (sel) {
-      const emps = this.S.employees.filter(e => getActualGroups(sel).includes(e.group) && e.buildingId === (u.buildingId||'b1') && !e.inactive);
+      const emps = this.S.employees.filter(e => getActualGroups(sel).includes(e.group) && e.buildingId === effBuildingId && !e.inactive);
       emps.forEach(emp => {
         const working = this.S.shifts.some(s => s.date === TODAY && s.employeeId === emp.id);
         empList += `<div class="emp-item">
@@ -2799,8 +2845,12 @@ const App = {
         HR
       </button>
     </div>`;
+    const regionalBackBtn = u.role === 'regionaladmin'
+      ? `<div style="padding:4px 8px 0"><button class="btn btn-ghost btn-sm" onclick="App.exitRegionalBuilding()" style="color:var(--g500);font-size:11px;gap:4px"><svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 1L3 6l5 5"/></svg> All Buildings</button></div>`
+      : '';
     document.getElementById('sidebar').innerHTML = `
       ${modeToggle}
+      ${regionalBackBtn}
       ${bname}
       <div class="sidebar-section-title">Staff Groups</div>
       ${groupItems}
@@ -3926,7 +3976,7 @@ const App = {
   openAddShiftsModal() {
     const g = this.S.selectedGroup;
     if (!g) { this.showToast('Select a department from the sidebar first', 'warn'); return; }
-    const bId = this.S.user?.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     // Start on Monday of current week
     const startD = new Date(TODAY + 'T12:00:00');
     const dow = startD.getDay();
@@ -3936,10 +3986,17 @@ const App = {
       const d = new Date(startD); d.setDate(d.getDate() + i);
       dates.push(d.toISOString().slice(0, 10));
     }
+    // Pre-select the first saved template for this group, or fall back to the effective default
+    const savedTemplates = (this.S.shiftTemplates || []).filter(t => t.group === g);
+    const defaultType = savedTemplates.length ? savedTemplates[0].id : this.getEffectiveShiftTypes(bId, g)[0].type;
     this.S._addShiftState = {
       group: g, buildingId: bId,
-      shiftType: SHIFT_TYPES(g)[0].type,
+      shiftType: defaultType,
       slots: 1, selectedDays: [], dates,
+      // custom shift fields (used when shiftType === '__custom__')
+      customName: '', customStart: '7:00 AM', customEnd: '3:00 PM',
+      // builtin shift type editing
+      editingBuiltinType: null, editingBuiltinName: '', editingBuiltinStart: '', editingBuiltinEnd: '',
     };
     this._renderAddShiftsBody();
     this.openModal('modal-add-shifts');
@@ -3948,18 +4005,112 @@ const App = {
   _renderAddShiftsBody() {
     const st = this.S._addShiftState;
     const g = st.group;
+    const bId = st.buildingId;
     const col = G_COLORS[g] || 'var(--blue)';
-    const shiftDefs = SHIFT_TYPES(g);
+    const builtins = this.getEffectiveShiftTypes(bId, g);
+    const customs = (this.S.shiftTemplates || []).filter(t => t.group === g);
     const DOW = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 
-    const typeTabs = shiftDefs.map(sd =>
-      `<button onclick="App.S._addShiftState.shiftType='${sd.type}';App._renderAddShiftsBody()"
-        style="padding:7px 14px;border-radius:8px;border:2px solid ${sd.type===st.shiftType?col:'var(--g200)'};
-          background:${sd.type===st.shiftType?col+'18':'#fff'};color:${sd.type===st.shiftType?col:'var(--g600)'};
-          font-size:13px;font-weight:${sd.type===st.shiftType?'700':'500'};cursor:pointer">
-        ${sd.type} <span style="font-size:10px;opacity:.75">${sd.start}</span>
-      </button>`
-    ).join('');
+    const makeBuiltinTab = (sd) => {
+      const id = sd.type;
+      const sel = st.shiftType === id;
+      const editing = st.editingBuiltinType === id;
+      const base = `padding:7px 12px;border-radius:8px;border:2px solid ${editing?'var(--amber,#D97706)':sel?col:'var(--g200)'};
+        background:${editing?'#FFF7ED':sel?col+'18':'#fff'};color:${editing?'#92400E':sel?col:'var(--g600)'};
+        font-size:13px;font-weight:${sel||editing?'700':'500'};cursor:pointer;display:inline-flex;align-items:center;gap:6px`;
+      const editBtn = `<span onclick="event.stopPropagation();App.editBuiltinShiftType('${id}')"
+          style="margin-left:2px;opacity:.6;font-size:10px;padding:1px 4px;border-radius:4px;
+            background:${sel?col+'30':'var(--g100)'};color:${sel?col:'var(--g500)'};cursor:pointer" title="Edit shift type">✏</span>`;
+      const delBtn = `<span onclick="event.stopPropagation();App.deleteBuiltinShiftType('${id}')"
+          style="margin-left:1px;opacity:.5;font-size:11px;padding:1px 3px;border-radius:4px;
+            background:${sel?col+'30':'var(--g100)'};color:${sel?col:'var(--g500)'};cursor:pointer" title="Remove shift type">✕</span>`;
+      return `<button onclick="App.S._addShiftState.shiftType='${id}';App._renderAddShiftsBody()" style="${base}">
+        ${sd.name||sd.type}<span style="font-size:10px;opacity:.75">${sd.start}</span>${editBtn}${delBtn}
+      </button>`;
+    };
+
+    const makeCustomTab = (t) => {
+      const id = t.id;
+      const sel = st.shiftType === id;
+      const base = `padding:7px 12px;border-radius:8px;border:2px solid ${sel?col:'var(--g200)'};
+        background:${sel?col+'18':'#fff'};color:${sel?col:'var(--g600)'};
+        font-size:13px;font-weight:${sel?'700':'500'};cursor:pointer;display:inline-flex;align-items:center;gap:6px`;
+      const deleteBtn = `<span onclick="event.stopPropagation();App.deleteShiftTemplate('${id}')"
+          style="margin-left:2px;opacity:.55;font-size:11px;line-height:1;padding:1px 3px;border-radius:4px;
+            background:${sel?col+'30':'var(--g100)'};color:${sel?col:'var(--g500)'};cursor:pointer" title="Delete template">✕</span>`;
+      return `<button onclick="App.S._addShiftState.shiftType='${id}';App._renderAddShiftsBody()" style="${base}">
+        ${t.name}<span style="font-size:10px;opacity:.75">${t.start}</span>${deleteBtn}
+      </button>`;
+    };
+
+    const makePlainTab = (id, label) => {
+      const sel = st.shiftType === id;
+      const base = `padding:7px 12px;border-radius:8px;border:2px solid ${sel?col:'var(--g200)'};
+        background:${sel?col+'18':'#fff'};color:${sel?col:'var(--g600)'};
+        font-size:13px;font-weight:${sel?'700':'500'};cursor:pointer;display:inline-flex;align-items:center;gap:6px`;
+      return `<button onclick="App.S._addShiftState.shiftType='${id}';App._renderAddShiftsBody()" style="${base}">${label}</button>`;
+    };
+
+    const builtinTabs = builtins.map(makeBuiltinTab).join('');
+    const customTabs  = customs.map(makeCustomTab).join('');
+    const customBtn   = makePlainTab('__custom__', '+ Custom');
+
+    // Inline editor for a builtin shift type
+    const editingBst = st.editingBuiltinType ? builtins.find(s => s.type === st.editingBuiltinType) : null;
+    const builtinEditPanel = editingBst ? `
+      <div style="background:#FFF7ED;border:1.5px solid #FCD34D;border-radius:8px;padding:14px;margin-top:10px">
+        <div style="font-size:12px;font-weight:700;color:#92400E;margin-bottom:10px">Edit "${editingBst.name||editingBst.type}" shift type</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px">
+          <div>
+            <div class="form-lbl">Display Name</div>
+            <input type="text" id="edit-bst-name" maxlength="30" value="${sanitize(st.editingBuiltinName||editingBst.name||editingBst.type)}"
+              oninput="App.S._addShiftState.editingBuiltinName=this.value"
+              style="width:100%;padding:6px 10px;border:1.5px solid var(--g200);border-radius:7px;font-size:13px;box-sizing:border-box">
+          </div>
+          <div>
+            <div class="form-lbl">Start Time</div>
+            <input type="time" id="edit-bst-start" value="${this._timeToInput(st.editingBuiltinStart||editingBst.start)}"
+              onchange="App.S._addShiftState.editingBuiltinStart=App._inputToTime(this.value)"
+              style="width:100%;padding:6px 10px;border:1.5px solid var(--g200);border-radius:7px;font-size:13px;box-sizing:border-box">
+          </div>
+          <div>
+            <div class="form-lbl">End Time</div>
+            <input type="time" id="edit-bst-end" value="${this._timeToInput(st.editingBuiltinEnd||editingBst.end)}"
+              onchange="App.S._addShiftState.editingBuiltinEnd=App._inputToTime(this.value)"
+              style="width:100%;padding:6px 10px;border:1.5px solid var(--g200);border-radius:7px;font-size:13px;box-sizing:border-box">
+          </div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="App.saveBuiltinShiftTypeEdit()" style="background:#D97706;border-color:#D97706">Save Changes</button>
+          <button class="btn btn-ghost btn-sm" onclick="App.S._addShiftState.editingBuiltinType=null;App._renderAddShiftsBody()">Cancel</button>
+        </div>
+      </div>` : '';
+
+    const isCustom = st.shiftType === '__custom__';
+    const customFields = isCustom ? `
+      <div style="background:var(--g50);border:1px solid var(--g200);border-radius:8px;padding:14px;margin-top:10px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px">
+          <div>
+            <div class="form-lbl">Shift Name</div>
+            <input type="text" placeholder="e.g. 12hr Day" maxlength="30" value="${sanitize(st.customName||'')}"
+              oninput="App.S._addShiftState.customName=this.value"
+              style="width:100%;padding:6px 10px;border:1.5px solid var(--g200);border-radius:7px;font-size:13px;box-sizing:border-box">
+          </div>
+          <div>
+            <div class="form-lbl">Start Time</div>
+            <input type="time" value="${this._timeToInput(st.customStart||'7:00 AM')}"
+              onchange="App.S._addShiftState.customStart=App._inputToTime(this.value)"
+              style="width:100%;padding:6px 10px;border:1.5px solid var(--g200);border-radius:7px;font-size:13px;box-sizing:border-box">
+          </div>
+          <div>
+            <div class="form-lbl">End Time</div>
+            <input type="time" value="${this._timeToInput(st.customEnd||'3:00 PM')}"
+              onchange="App.S._addShiftState.customEnd=App._inputToTime(this.value)"
+              style="width:100%;padding:6px 10px;border:1.5px solid var(--g200);border-radius:7px;font-size:13px;box-sizing:border-box">
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--g500);margin-top:2px">This shift type will be saved for <strong style="color:${col}">${g}</strong> shifts.</div>
+      </div>` : '';
 
     const makeDay = (idx) => {
       const d = new Date(st.dates[idx] + 'T12:00:00');
@@ -3978,11 +4129,15 @@ const App = {
 
     document.getElementById('modal-add-shifts-body').innerHTML = `
       <div style="margin-bottom:16px">
-        <div class="form-lbl">Shift Type</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">${typeTabs}</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <div class="form-lbl" style="margin:0">Shift Type</div>
+          ${customs.length ? `<span style="font-size:11px;color:var(--g400)">${g} templates saved</span>` : ''}
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">${builtinTabs}${customTabs}${customBtn}</div>
+        ${builtinEditPanel}${customFields}
       </div>
       <div style="margin-bottom:20px">
-        <div class="form-lbl">Open slots per selected day</div>
+        <div class="form-lbl">Slots Added to Shift</div>
         <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
           <button onclick="if(App.S._addShiftState.slots>1){App.S._addShiftState.slots--;App._renderAddShiftsBody()}"
             style="width:32px;height:32px;border:1.5px solid var(--g200);border-radius:8px;background:#fff;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1">−</button>
@@ -4014,6 +4169,36 @@ const App = {
       </div>`;
   },
 
+  // Convert "7:00 AM" → "07:00" for <input type="time">
+  _timeToInput(display) {
+    if (!display) return '07:00';
+    const m = display.match(/(\d+):(\d+)\s*(AM|PM)/i);
+    if (!m) return '07:00';
+    let h = parseInt(m[1]); const min = m[2]; const ap = m[3].toUpperCase();
+    if (ap === 'PM' && h < 12) h += 12;
+    if (ap === 'AM' && h === 12) h = 0;
+    return `${String(h).padStart(2,'0')}:${min}`;
+  },
+
+  // Convert "07:00" → "7:00 AM" for display/storage
+  _inputToTime(val) {
+    if (!val) return '7:00 AM';
+    const [hStr, min] = val.split(':');
+    let h = parseInt(hStr); const ap = h >= 12 ? 'PM' : 'AM';
+    if (h > 12) h -= 12; if (h === 0) h = 12;
+    return `${h}:${min} ${ap}`;
+  },
+
+  // Returns shift def {type, name, start, end} for either a built-in type name or a template id
+  resolveShiftDef(group, shiftType, bId) {
+    const effectiveBId = bId || this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
+    const builtin = this.getEffectiveShiftTypes(effectiveBId, group).find(s => s.type === shiftType);
+    if (builtin) return builtin;
+    const tmpl = (this.S.shiftTemplates || []).find(t => t.id === shiftType);
+    if (tmpl) return { type: tmpl.id, name: tmpl.name, start: tmpl.start, end: tmpl.end };
+    return null;
+  },
+
   toggleShiftDay(mode, idx) {
     const st = mode === 'add' ? this.S._addShiftState : this.S._assignShiftState;
     const arr = st.selectedDays;
@@ -4031,11 +4216,114 @@ const App = {
     else this._renderAssignShiftBody();
   },
 
+  saveShiftTemplate(group, name, start, end) {
+    if (!this.S.shiftTemplates) this.S.shiftTemplates = [];
+    const id = 'tmpl_' + Date.now().toString(36);
+    this.S.shiftTemplates.push({ id, group, name: name.trim(), start, end });
+    this.persistData();
+    Audit.log('SHIFT_TEMPLATE_SAVED', `Saved shift template "${name}" for ${group}`, this.S.user?.id, 'low');
+    return id;
+  },
+
+  deleteShiftTemplate(id) {
+    if (!this.S.shiftTemplates) return;
+    const tmpl = this.S.shiftTemplates.find(t => t.id === id);
+    if (!tmpl) return;
+    this.S.shiftTemplates = this.S.shiftTemplates.filter(t => t.id !== id);
+    // If currently selected, reset to first effective builtin type
+    if (this.S._addShiftState?.shiftType === id) {
+      const st = this.S._addShiftState;
+      st.shiftType = this.getEffectiveShiftTypes(st.buildingId, st.group)[0].type;
+    }
+    this.persistData();
+    this._renderAddShiftsBody();
+    this.showToast(`Template "${tmpl.name}" removed`);
+  },
+
+  // Returns effective shift types for a building+group (custom overrides or built-in defaults)
+  getEffectiveShiftTypes(bId, g) {
+    const custom = this.S.buildingShiftTypes?.[bId]?.[g];
+    return (custom && custom.length) ? custom : SHIFT_TYPES(g);
+  },
+
+  // Ensures buildingShiftTypes[bId][g] is initialized from the current effective defaults
+  _initBuildingShiftTypes(bId, g) {
+    if (!this.S.buildingShiftTypes) this.S.buildingShiftTypes = {};
+    if (!this.S.buildingShiftTypes[bId]) this.S.buildingShiftTypes[bId] = {};
+    if (!this.S.buildingShiftTypes[bId][g]) {
+      this.S.buildingShiftTypes[bId][g] = SHIFT_TYPES(g).map(s => ({...s}));
+    }
+  },
+
+  // Toggle inline edit panel for a builtin shift type
+  editBuiltinShiftType(typeId) {
+    const st = this.S._addShiftState;
+    if (st.editingBuiltinType === typeId) {
+      st.editingBuiltinType = null;
+    } else {
+      const bst = this.getEffectiveShiftTypes(st.buildingId, st.group).find(s => s.type === typeId);
+      if (!bst) return;
+      st.editingBuiltinType = typeId;
+      st.editingBuiltinName  = bst.name || bst.type;
+      st.editingBuiltinStart = bst.start;
+      st.editingBuiltinEnd   = bst.end;
+    }
+    this._renderAddShiftsBody();
+  },
+
+  // Save the inline edit for the currently-editing builtin shift type
+  saveBuiltinShiftTypeEdit() {
+    const st = this.S._addShiftState;
+    const { buildingId: bId, group: g, editingBuiltinType: typeId } = st;
+    if (!typeId) return;
+    this._initBuildingShiftTypes(bId, g);
+    const t = this.S.buildingShiftTypes[bId][g].find(s => s.type === typeId);
+    if (!t) return;
+    t.name  = (st.editingBuiltinName  || t.name  || typeId).trim();
+    t.start = st.editingBuiltinStart  || t.start;
+    t.end   = st.editingBuiltinEnd    || t.end;
+    st.editingBuiltinType = null;
+    this.persistData();
+    this.showToast('Shift type updated');
+    this._renderAddShiftsBody();
+  },
+
+  // Delete a builtin shift type for the current building+group
+  deleteBuiltinShiftType(typeId) {
+    const st = this.S._addShiftState;
+    const { buildingId: bId, group: g } = st;
+    this._initBuildingShiftTypes(bId, g);
+    const types = this.S.buildingShiftTypes[bId][g];
+    const idx = types.findIndex(s => s.type === typeId);
+    if (idx < 0) return;
+    if (types.length <= 1) { this.showToast('Cannot remove the last shift type', 'warn'); return; }
+    types.splice(idx, 1);
+    if (st.shiftType === typeId) st.shiftType = types[0].type;
+    if (st.editingBuiltinType === typeId) st.editingBuiltinType = null;
+    this.persistData();
+    this.showToast('Shift type removed');
+    this._renderAddShiftsBody();
+  },
+
   saveAddShifts() {
     const st = this.S._addShiftState;
     if (!st?.selectedDays?.length) { this.showToast('Select at least one day', 'warn'); return; }
-    const { group: g, buildingId: bId, shiftType, slots } = st;
-    const shiftDef = SHIFT_TYPES(g).find(s => s.type === shiftType) || {};
+    const { group: g, buildingId: bId, slots } = st;
+    let { shiftType } = st;
+
+    // Handle custom shift type
+    let shiftDef;
+    if (shiftType === '__custom__') {
+      const name = (st.customName || '').trim();
+      if (!name) { this.showToast('Enter a name for this shift type', 'warn'); return; }
+      if (!st.customStart || !st.customEnd) { this.showToast('Enter start and end times', 'warn'); return; }
+      const tmplId = this.saveShiftTemplate(g, name, st.customStart, st.customEnd);
+      shiftType = tmplId;
+      shiftDef = { type: shiftType, name, start: st.customStart, end: st.customEnd };
+    } else {
+      shiftDef = this.resolveShiftDef(g, shiftType) || {};
+    }
+
     const pickerStart = new Date(st.dates[0] + 'T12:00:00');
     const end = new Date(TODAY + 'T12:00:00');
     end.setDate(end.getDate() + 90);
@@ -4089,7 +4377,7 @@ const App = {
     const g = st.group;
     const col = G_COLORS[g] || 'var(--blue)';
     const DOW = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-    const shiftDef = SHIFT_TYPES(g).find(s => s.type === st.shiftType) || {};
+    const shiftDef = this.resolveShiftDef(g, st.shiftType) || {};
     const ag = getActualGroups(g);
     const emps = this.S.employees.filter(e =>
       e.buildingId === st.buildingId && ag.includes(e.group) && !e.inactive
@@ -4157,7 +4445,7 @@ const App = {
     const emp = this.S.employees.find(e => e.id === st.empId);
     if (!emp) { this.showToast('Employee not found', 'warn'); return; }
     const { group: g, buildingId: bId, shiftType } = st;
-    const shiftDef = SHIFT_TYPES(g).find(s => s.type === shiftType) || {};
+    const shiftDef = this.resolveShiftDef(g, shiftType) || {};
     const pickerStart = new Date(st.dates[0] + 'T12:00:00');
     const end = new Date(TODAY + 'T12:00:00');
     end.setDate(end.getDate() + 90);
@@ -4426,14 +4714,75 @@ const App = {
     this.showToast('Budget targets saved');
   },
 
+  // Returns the companyId that owns the current onboarding context
+  _getActiveOBCoId() {
+    if (this.S.user?.role === 'superadmin') {
+      return this.S.activeCompanyId || Object.keys(this.S.hrOnboarding || {})[0] || 'co_skyblue';
+    }
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId;
+    const bld = (this.S.buildings || []).find(b => b.id === bId);
+    return bld?.companyId || Object.keys(this.S.hrOnboarding || {})[0] || 'co_skyblue';
+  },
+
+  // Returns the package {name, steps} for (coId, state), or null
+  _getActiveOBPkg(state) {
+    const coId = this._getActiveOBCoId();
+    return ((this.S.hrOnboarding || {})[coId] || {})[state] || null;
+  },
+
   renderHROnboarding() {
-    const st  = this.S.hrOnboardingState || 'TX';
-    const pkg = this.S.hrOnboarding[st];
+    const coId = this._getActiveOBCoId();
+    const coTemplates = (this.S.hrOnboarding || {})[coId] || {};
+    const coName = (this.S.companies || []).find(c => c.id === coId)?.name || 'This Company';
+    const role = this.S.user?.role;
+    const isRegionalOrSuper = role === 'superadmin' || role === 'regionaladmin';
     const exp = this.S.hrExpandedStep;   // {state, idx} or null
-    const tabs = Object.keys(this.S.hrOnboarding).map(k=>{
-      const p = this.S.hrOnboarding[k];
-      return `<button class="btn btn-${k===st?'primary':'secondary'} btn-sm" onclick="App.S.hrOnboardingState='${k}';App.S.hrExpandedStep=null;App.renderHRMain()">${k==='TX'?'Texas (TX)':'Oklahoma (OK)'} — ${p.steps.length} steps</button>`;
-    }).join('');
+
+    // Auto-select state based on role
+    let st;
+    if (!isRegionalOrSuper) {
+      // Regular admin: auto-detect from their building's state field
+      const bId = this.S.activeBuildingId || this.S.user?.buildingId;
+      const bld = (this.S.buildings || []).find(b => b.id === bId);
+      st = bld?.state || Object.keys(coTemplates)[0] || 'TX';
+    } else {
+      st = this.S.hrOnboardingState || Object.keys(coTemplates)[0] || 'TX';
+    }
+
+    const stateLabel = k => k === 'TX' ? 'Texas (TX)' : k === 'OK' ? 'Oklahoma (OK)' : k;
+    const saveBtn = `<button class="btn btn-secondary btn-sm" onclick="App.saveHROBPackage('${st}')" style="display:flex;align-items:center;gap:5px">
+      <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H4L2 4v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1z"/><path d="M11 2v4H5V2M8 9v4"/></svg>
+      Save
+    </button>`;
+
+    // Empty state: company has no onboarding templates yet
+    if (Object.keys(coTemplates).length === 0) {
+      return `
+        ${this.hrHipaaBar()}
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+          <div><div class="hr-page-title">Onboarding Flow</div><div class="hr-page-sub">Configure the steps new employees must complete</div></div>
+        </div>
+        <div class="hr-section" style="padding:48px;text-align:center">
+          <div style="width:56px;height:56px;border-radius:14px;background:var(--g100);display:flex;align-items:center;justify-content:center;margin:0 auto 16px">
+            <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="var(--g400)" stroke-width="1.5" stroke-linecap="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          </div>
+          <div style="font-size:16px;font-weight:700;color:var(--g800);margin-bottom:8px">No onboarding package set up yet</div>
+          <div style="font-size:13px;color:var(--g500);max-width:340px;margin:0 auto 24px">${sanitize(coName)} doesn't have any onboarding steps configured. Add a state package to get started.</div>
+          <div style="display:flex;gap:10px;justify-content:center">
+            <button class="btn btn-primary" onclick="App.addHRStateTemplate('${coId}','TX')">+ Add Texas (TX) Package</button>
+            <button class="btn btn-secondary" onclick="App.addHRStateTemplate('${coId}','OK')">+ Add Oklahoma (OK) Package</button>
+          </div>
+        </div>`;
+    }
+
+    // State tabs: only shown for regional admin / super admin (who manage multiple states)
+    const tabs = isRegionalOrSuper ? Object.keys(coTemplates).map(k => {
+      const p = coTemplates[k];
+      return `<button class="btn btn-${k===st?'primary':'secondary'} btn-sm" onclick="App.S.hrOnboardingState='${k}';App.S.hrExpandedStep=null;App.renderHRMain()">${stateLabel(k)} — ${p.steps.length} steps</button>`;
+    }).join('') : '';
+
+    const pkg = coTemplates[st] || null;
+    if (!pkg) return `${this.hrHipaaBar()}<div style="padding:40px;text-align:center;color:var(--g400)">No onboarding package found for ${stateLabel(st)}. Contact your regional admin.</div>`;
 
     const steps = pkg.steps.map((s, i) => {
       const isExp = exp && exp.state === st && exp.idx === i;
@@ -4532,13 +4881,19 @@ const App = {
         </div>`;
     }).join('');
 
+    const unusedStates = isRegionalOrSuper ? ['TX','OK'].filter(k => !coTemplates[k]) : [];
+    const addStateBtn = unusedStates.map(k =>
+      `<button class="btn btn-ghost btn-sm" onclick="App.addHRStateTemplate('${coId}','${k}')">+ Add ${k==='TX'?'Texas':'Oklahoma'}</button>`
+    ).join('');
+    const stateSubtitle = isRegionalOrSuper ? 'click step to edit' : `${stateLabel(st)} package · click step to edit`;
+
     return `
       ${this.hrHipaaBar()}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
-        <div><div class="hr-page-title">Onboarding Flow</div><div class="hr-page-sub">State-specific document packages · click step to edit</div></div>
-        <button class="btn btn-primary btn-sm" onclick="App.addHRStep('${st}')">+ Add Step</button>
+        <div><div class="hr-page-title">Onboarding Flow</div><div class="hr-page-sub">${sanitize(coName)} · ${stateSubtitle}</div></div>
+        <div style="display:flex;gap:8px">${addStateBtn}${saveBtn}<button class="btn btn-primary btn-sm" onclick="App.addHRStep('${st}')">+ Add Step</button></div>
       </div>
-      <div style="display:flex;gap:8px;margin-bottom:16px">${tabs}</div>
+      ${tabs ? `<div style="display:flex;gap:8px;margin-bottom:16px">${tabs}</div>` : ''}
       <div class="hr-section">
         <div style="padding:14px 18px;border-bottom:1px solid var(--g100);background:var(--g50)">
           <div style="font-size:12px;font-weight:700;color:var(--g600)">${sanitize(pkg.name)}</div>
@@ -4567,7 +4922,10 @@ const App = {
     }
 
     const state = emp.onboardingState || 'TX';
-    const pkg = this.S.hrOnboarding[state];
+    // Find the company for this employee's building, then look up that company's package
+    const empBld = (this.S.buildings || []).find(b => b.id === (this.S.user?.buildingId || this.S.activeBuildingId));
+    const empCoId = empBld?.companyId || Object.keys(this.S.hrOnboarding || {})[0] || 'co_skyblue';
+    const pkg = ((this.S.hrOnboarding || {})[empCoId] || {})[state] || null;
     if (!pkg) { document.getElementById('main').innerHTML = '<div style="padding:40px;text-align:center;color:var(--g400)">Onboarding package not configured.</div>'; return; }
 
     const steps = pkg.steps;
@@ -4737,7 +5095,10 @@ const App = {
     if (!emp) return;
 
     const state = emp.onboardingState || 'TX';
-    const step = this.S.hrOnboarding[state]?.steps[stepIdx];
+    const empBld2 = (this.S.buildings || []).find(b => b.id === (this.S.user?.buildingId || this.S.activeBuildingId));
+    const empCoId2 = empBld2?.companyId || Object.keys(this.S.hrOnboarding || {})[0] || 'co_skyblue';
+    const empPkg2 = ((this.S.hrOnboarding || {})[empCoId2] || {})[state] || null;
+    const step = empPkg2?.steps[stepIdx];
     if (!step) return;
 
     if (!emp.docs) emp.docs = {};
@@ -4750,7 +5111,7 @@ const App = {
     };
 
     // Update overall status
-    const totalSteps = this.S.hrOnboarding[state].steps.length;
+    const totalSteps = empPkg2?.steps.length || 0;
     const doneCount = Object.values(emp.docs).filter(d => d.completedAt).length;
     if (doneCount >= totalSteps) {
       emp.status = 'review';
@@ -4779,7 +5140,7 @@ const App = {
   },
 
   saveHRStep(state, idx) {
-    const s = this.S.hrOnboarding[state].steps[idx];
+    const s = this._obPkg(state).steps[idx];
     const get = id => document.getElementById(id)?.value ?? '';
     s.title   = get(`ob-title-${idx}`).trim() || s.title;
     s.desc    = get(`ob-desc-${idx}`).trim();
@@ -4792,13 +5153,30 @@ const App = {
     this.showToast('Step saved');
   },
 
+  // Save button for the whole onboarding page — saves any open step then persists
+  saveHROBPackage(state) {
+    const exp = this.S.hrExpandedStep;
+    if (exp && exp.state === state) {
+      // Save any currently expanded step's edits first
+      const s = this._obPkg(state).steps[exp.idx];
+      const get = id => document.getElementById(id)?.value ?? '';
+      s.title   = get(`ob-title-${exp.idx}`).trim() || s.title;
+      s.desc    = get(`ob-desc-${exp.idx}`).trim();
+      s.type    = get(`ob-type-${exp.idx}`) || s.type;
+      s.url     = get(`ob-url-${exp.idx}`).trim();
+      s.content = get(`ob-content-${exp.idx}`).trim();
+    }
+    this.persistData();
+    this.showToast('Onboarding flow saved');
+  },
+
   removeHRStepFile(state, stepIdx, fileIdx) {
-    const s = this.S.hrOnboarding[state].steps[stepIdx];
+    const s = this._obPkg(state).steps[stepIdx];
     if (s.files) { s.files.splice(fileIdx, 1); this.persistData(); this.renderHRMain(); }
   },
 
   hrDropFiles(state, stepIdx, fileList) {
-    const s = this.S.hrOnboarding[state].steps[stepIdx];
+    const s = this._obPkg(state).steps[stepIdx];
     if (!s.files) s.files = [];
     const allowed = ['application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/msword'];
     Array.from(fileList).forEach(file => {
@@ -4817,7 +5195,7 @@ const App = {
   },
 
   previewStepFile(state, stepIdx, fileIdx) {
-    const f = this.S.hrOnboarding[state].steps[stepIdx].files[fileIdx];
+    const f = this._obPkg(state).steps[stepIdx].files[fileIdx];
     if (!f?.dataUrl) return;
     const w = window.open('', '_blank');
     if (f.name?.endsWith('.pdf') || f.type === 'application/pdf') {
@@ -4987,6 +5365,65 @@ const App = {
       showErr('Connection error. Please try again.');
       if(btn){btn.disabled=false;btn.textContent='Send Invitation';}
     }
+  },
+
+  openRegionalAdminModal(coId) {
+    document.getElementById('ra-name').value = '';
+    document.getElementById('ra-email').value = '';
+    document.getElementById('ra-error-msg').style.display = 'none';
+    document.getElementById('ra-error-msg').textContent = '';
+    this.S._raCoId = coId || null;
+    // Populate buildings checklist — filtered to company if coId provided
+    const buildings = coId
+      ? (this.S.buildings || []).filter(b => b.companyId === coId)
+      : (this.S.buildings || []);
+    const listEl = document.getElementById('ra-buildings-list');
+    listEl.innerHTML = buildings.map(b => `
+      <label style="display:flex;align-items:center;gap:8px;padding:6px 4px;cursor:pointer;border-radius:6px;user-select:none"
+        onmouseover="this.style.background='var(--g50)'" onmouseout="this.style.background=''">
+        <input type="checkbox" name="ra-bld" value="${b.id}" style="width:15px;height:15px;accent-color:var(--blue)">
+        <span style="font-size:13px;font-weight:500;color:var(--g800)">${sanitize(b.name)}</span>
+        <span style="font-size:11px;color:var(--g400);margin-left:auto">${b.state||''}</span>
+      </label>`).join('') || '<div style="padding:8px;font-size:12px;color:var(--g400)">No buildings available</div>';
+    this.openModal('modal-regional-admin');
+  },
+
+  async saveRegionalAdmin() {
+    const name  = document.getElementById('ra-name')?.value.trim();
+    const email = document.getElementById('ra-email')?.value.trim();
+    const buildingIds = [...document.querySelectorAll('input[name="ra-bld"]:checked')].map(el => el.value);
+    const errEl = document.getElementById('ra-error-msg');
+    const showErr = msg => { if(errEl){errEl.textContent=msg;errEl.style.display='block';} };
+    if (!name)  { showErr('Name is required.'); return; }
+    if (!email) { showErr('Email is required.'); return; }
+    if (!buildingIds.length) { showErr('Select at least one building.'); return; }
+    const btn = document.getElementById('ra-send-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    if (IS_SERVER_MODE && _authToken) {
+      try {
+        const r = await fetch('/api/invite', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},
+          body: JSON.stringify({ name, email, role: 'regionaladmin', buildingIds }),
+        });
+        const data = await r.json();
+        if (!r.ok) { showErr(data.error || 'Failed to create account.'); if(btn){btn.disabled=false;btn.textContent='Send Invitation';} return; }
+        this.closeModal('modal-regional-admin');
+        this.showToast(data.emailWarning ? 'Account created — email failed, share invite manually.' : `Invitation sent to ${email}`, data.emailWarning ? 'warn' : undefined);
+        const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${_authToken}`}});
+        if (dResp.ok) { this.applyServerData(await dResp.json()); this.render(); }
+      } catch(e) { showErr('Connection error. Please try again.'); if(btn){btn.disabled=false;btn.textContent='Send Invitation';} }
+    } else {
+      // Demo / local mode: create account in-memory
+      const id = 'ra' + Date.now();
+      const newAcct = { id, name, email, role: 'regionaladmin', buildingIds, ph: null };
+      this.S.accounts.push(newAcct);
+      this.persistData();
+      this.closeModal('modal-regional-admin');
+      this.showToast(`Regional admin ${name} created`);
+      this.render();
+    }
+    if (btn) { btn.disabled = false; btn.textContent = 'Send Invitation'; }
   },
 
   // ── PCC ─────────────────────────────────────────────────────
@@ -5890,8 +6327,8 @@ const App = {
     const emp = this.S.hrEmployees.find(e => e.id === empId);
     if (!emp) return;
     const fac  = HR_FACILITIES.find(f => f.id === emp.facilityId);
-    const stKey = fac?.state || 'TX';
-    const pkg  = this.S.hrOnboarding[stKey];
+    const stKey = emp.onboardingState || fac?.state || 'TX';
+    const pkg  = this._getActiveOBPkg(stKey) || Object.values((this.S.hrOnboarding || {})).reduce((acc,co) => acc || co[stKey], null);
     const docs = emp.docs || {};
 
     // Infer step completion from employee status
@@ -5971,8 +6408,9 @@ const App = {
   viewHRDoc(empId, stepId) {
     const emp  = this.S.hrEmployees.find(e => e.id === empId);
     const fac  = HR_FACILITIES.find(f => f.id === emp?.facilityId);
-    const stKey = fac?.state || 'TX';
-    const step = this.S.hrOnboarding[stKey]?.steps.find(s => s.id === stepId);
+    const stKey = emp?.onboardingState || fac?.state || 'TX';
+    const pkgForView = this._getActiveOBPkg(stKey) || Object.values((this.S.hrOnboarding || {})).reduce((acc,co) => acc || co[stKey], null);
+    const step = pkgForView?.steps.find(s => s.id === stepId);
     if (!step) return;
     if (step.url) {
       window.open(step.url, '_blank');
@@ -5987,8 +6425,15 @@ const App = {
     this.showToast('Resubmission request sent');
   },
 
+  _obPkg(state) {
+    const coId = this._getActiveOBCoId();
+    if (!this.S.hrOnboarding[coId]) this.S.hrOnboarding[coId] = {};
+    if (!this.S.hrOnboarding[coId][state]) this.S.hrOnboarding[coId][state] = {name: state + ' package', steps: []};
+    return this.S.hrOnboarding[coId][state];
+  },
+
   moveHRStep(state, idx, dir) {
-    const steps = this.S.hrOnboarding[state].steps;
+    const steps = this._obPkg(state).steps;
     const newIdx = idx + dir;
     if (newIdx < 0 || newIdx >= steps.length) return;
     [steps[idx], steps[newIdx]] = [steps[newIdx], steps[idx]];
@@ -5997,7 +6442,7 @@ const App = {
 
   removeHRStep(state, idx) {
     if (!confirm('Remove this onboarding step?')) return;
-    this.S.hrOnboarding[state].steps.splice(idx,1);
+    this._obPkg(state).steps.splice(idx,1);
     this.persistData(); this.renderHRMain();
   },
 
@@ -6005,10 +6450,21 @@ const App = {
     const title = prompt('Step title:');
     if (!title) return;
     const desc = prompt('Step description:') || '';
-    const type = prompt('Type (form / video):', 'form') || 'form';
+    const type = prompt('Type (form / video / ack / upload):', 'form') || 'form';
     const id = state.toLowerCase() + '_' + Date.now();
-    this.S.hrOnboarding[state].steps.push({id, type:type.trim(), title:title.trim(), desc:desc.trim()});
+    this._obPkg(state).steps.push({id, type:type.trim(), title:title.trim(), desc:desc.trim()});
     this.persistData(); this.renderHRMain(); this.showToast('Step added');
+  },
+
+  // Adds a blank state template (TX or OK) to a company's onboarding
+  addHRStateTemplate(coId, state) {
+    if (!this.S.hrOnboarding) this.S.hrOnboarding = {};
+    if (!this.S.hrOnboarding[coId]) this.S.hrOnboarding[coId] = {};
+    if (this.S.hrOnboarding[coId][state]) { this.showToast(`${state} package already exists`,'warn'); return; }
+    const coName = (this.S.companies||[]).find(c=>c.id===coId)?.name || coId;
+    this.S.hrOnboarding[coId][state] = {name:`${coName} — ${state==='TX'?'Texas':'Oklahoma'} onboarding package`, steps:[]};
+    this.S.hrOnboardingState = state;
+    this.persistData(); this.renderHRMain(); this.showToast(`${state} onboarding package created`);
   },
 
   updateInvitePackageLabel() {
@@ -6033,7 +6489,9 @@ const App = {
     const fac = HR_FACILITIES.find(f=>f.id===facId);
     const initials = name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
     const id = 'hre' + Date.now();
-    const state = fac?.state || 'TX';
+    // Auto-assign state from building's state field, fall back to HR_FACILITIES state
+    const invBuilding = (this.S.buildings||[]).find(b => b.id === (this.S.user?.buildingId || this.S.activeBuildingId));
+    const state = invBuilding?.state || fac?.state || 'TX';
 
     // Default password = their email address (they should change on first login)
     const defaultPw = email;
@@ -6489,6 +6947,70 @@ const App = {
     this.recalcPPD();
   },
 
+  // ── REGIONAL ADMIN ──────────────────────────────────────────
+  enterRegionalBuilding(bId) {
+    this.S.activeBuildingId = bId;
+    this.S.selectedGroup = 'CNA';
+    this.render();
+  },
+
+  exitRegionalBuilding() {
+    this.S.activeBuildingId = null;
+    this.render();
+  },
+
+  renderRegionalDashboard() {
+    const u = this.S.user;
+    const buildingIds = u.buildingIds || [];
+    const myBuildings = (this.S.buildings || []).filter(b => buildingIds.includes(b.id));
+    if (myBuildings.length === 0) {
+      return `<div style="padding:60px;text-align:center;color:var(--g400)">
+        <svg viewBox="0 0 48 48" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="margin:0 auto 12px;display:block;opacity:.35"><rect x="4" y="8" width="40" height="32" rx="3"/><path d="M16 40V24h16v16"/><path d="M4 20l20-12 20 12"/></svg>
+        <div style="font-size:14px;font-weight:600;color:var(--g500);margin-bottom:6px">No buildings in your portfolio</div>
+        <div style="font-size:12px">Contact your super admin to assign buildings to your account.</div>
+      </div>`;
+    }
+    const tiles = myBuildings.map(b => {
+      const empCount = (this.S.employees || []).filter(e => e.buildingId === b.id && !e.inactive).length;
+      const todayCount = (this.S.shifts || []).filter(s => s.date === TODAY && s.buildingId === b.id && s.status === 'scheduled').length;
+      const openCount = (this.S.shifts || []).filter(s => s.buildingId === b.id && s.status === 'open').length;
+      return `<div style="background:#fff;border:1.5px solid var(--g150);border-radius:14px;padding:20px;cursor:pointer;transition:box-shadow .15s,border-color .15s"
+        onclick="App.enterRegionalBuilding('${b.id}')"
+        onmouseover="this.style.boxShadow='0 4px 16px rgba(0,0,0,.08)';this.style.borderColor='var(--blue-m)'"
+        onmouseout="this.style.boxShadow='';this.style.borderColor='var(--g150)'">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+          <div style="width:44px;height:44px;border-radius:12px;background:${b.color||'var(--blue)'}22;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <svg viewBox="0 0 16 16" width="20" height="20" fill="none" stroke="${b.color||'var(--blue)'}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="14" height="11" rx="1"/><path d="M5 15V9h6v6"/><path d="M1 8l7-6 7 6"/></svg>
+          </div>
+          <div>
+            <div style="font-weight:700;font-size:15px;color:var(--g900)">${sanitize(b.name)}</div>
+            <div style="font-size:12px;color:var(--g500);margin-top:2px">${b.state?b.state+' · ':''}${b.beds||'?'} beds</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">
+          <div style="text-align:center;padding:10px;background:var(--g50);border-radius:8px">
+            <div style="font-size:20px;font-weight:800;color:var(--g900)">${empCount}</div>
+            <div style="font-size:10px;color:var(--g500);font-weight:600;margin-top:2px">Staff</div>
+          </div>
+          <div style="text-align:center;padding:10px;background:var(--g50);border-radius:8px">
+            <div style="font-size:20px;font-weight:800;color:var(--blue)">${todayCount}</div>
+            <div style="font-size:10px;color:var(--g500);font-weight:600;margin-top:2px">Today</div>
+          </div>
+          <div style="text-align:center;padding:10px;background:var(--g50);border-radius:8px">
+            <div style="font-size:20px;font-weight:800;color:${openCount>0?'#DC2626':'#16A34A'}">${openCount}</div>
+            <div style="font-size:10px;color:var(--g500);font-weight:600;margin-top:2px">Open</div>
+          </div>
+        </div>
+        <button class="btn btn-primary btn-sm" style="width:100%;justify-content:center">Enter Building →</button>
+      </div>`;
+    }).join('');
+    return `<div style="padding:24px">
+      <div style="font-size:22px;font-weight:800;color:var(--g900);margin-bottom:4px">Regional Portfolio</div>
+      <div style="font-size:13px;color:var(--g500);margin-bottom:24px">${myBuildings.length} building${myBuildings.length===1?'':'s'} in your portfolio</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px">${tiles}</div>
+    </div>`;
+  },
+
   // ── MAIN AREA ───────────────────────────────────────────────
   renderMain() {
     const u = this.S.user;
@@ -6499,6 +7021,12 @@ const App = {
     // ── EMPLOYEE: personal schedule view ────────────────────
     if (u.role === 'employee') {
       document.getElementById('main').innerHTML = this.renderMySchedule();
+      return;
+    }
+
+    // ── REGIONAL ADMIN: building portfolio if no building selected ──
+    if (u.role === 'regionaladmin' && !this.S.activeBuildingId) {
+      document.getElementById('main').innerHTML = this.renderRegionalDashboard();
       return;
     }
 
@@ -6520,11 +7048,12 @@ const App = {
     const isClinical = CLINICAL.includes(g);
 
     let viewTabs = '';
-    if (u.role === 'admin') {
+    if (u.role === 'admin' || u.role === 'regionaladmin') {
       viewTabs = `<div class="view-tabs">
         ${['month','day','shift'].map(v=>`<div class="view-tab ${this.S.calView===v?'active':''}" onclick="App.setCalView('${v}')">${v==='shift'?'Week':v.charAt(0).toUpperCase()+v.slice(1)}</div>`).join('')}
       </div>`;
     }
+    const bId = this.S.activeBuildingId || u.buildingId || 'b1';
     const groupPill = g ? `<div class="group-pill" style="background:${G_COLORS[g]}11;border:1.5px solid ${G_COLORS[g]}33;color:${G_COLORS[g]}">${G_ICONS[g]} ${g}</div>` : '';
     const hasSlots = g && Object.keys(((this.S.staffingSlots||{})[bId]||{})[g]||{}).some(k=>((this.S.staffingSlots||{})[bId]||{})[g][k]>0);
     const addShiftsBtn = `<button class="btn btn-primary btn-sm" onclick="App.openAddShiftsModal()" style="display:flex;align-items:center;gap:6px;font-weight:600">
@@ -6540,7 +7069,6 @@ const App = {
       <div class="filter-tab ${this.S.filter==='open'?'active open':''}" onclick="App.setFilter('open')">Open Only</div>
     </div>`;
 
-    const bId = u.buildingId || 'b1';
     const ms = this.getMonthShifts().filter(s=>s.buildingId===bId||!s.buildingId);
     const open = ms.filter(s=>s.status==='open').length;
     const sched = ms.filter(s=>s.status==='scheduled').length;
@@ -6548,7 +7076,7 @@ const App = {
     const stats = `<div class="stat-row">
       <div class="stat-card"><div class="stat-value">${sched}</div><div class="stat-label">Scheduled Shifts</div><div class="stat-change" style="color:var(--blue)">↑ ${pct}% coverage</div></div>
       <div class="stat-card"><div class="stat-value" style="color:var(--g600)">${open}</div><div class="stat-label">Open Shifts</div><div class="stat-change" style="color:var(--g500)">Need coverage</div></div>
-      <div class="stat-card"><div class="stat-value">${this.S.employees.filter(e=>e.buildingId===(u.buildingId||'b1')&&!e.inactive).length}</div><div class="stat-label">Total Staff</div><div class="stat-change" style="color:var(--g400)">${DISPLAY_GROUPS.length} departments</div></div>
+      <div class="stat-card"><div class="stat-value">${this.S.employees.filter(e=>e.buildingId===bId&&!e.inactive).length}</div><div class="stat-label">Total Staff</div><div class="stat-change" style="color:var(--g400)">${DISPLAY_GROUPS.length} departments</div></div>
     </div>`;
 
     let calHtml = '';
@@ -7771,12 +8299,14 @@ const App = {
     const adminName=sanitizeInput(document.getElementById('b-admin-name').value.trim(), 100);
     const adminEmail=sanitizeInput(document.getElementById('b-admin-email').value.trim().toLowerCase(), 254);
     const companyId=document.getElementById('b-company')?.value||'';
+    const bState=document.getElementById('b-state')?.value||'';
     if(!name||!adminName||!adminEmail){this.showToast('Facility name and admin info are required','warn');return;}
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail)){this.showToast('Invalid admin email','warn');return;}
     const colors=['#2563EB','#7C3AED','#059669','#D97706','#DC2626','#DB2777','#0891B2'];
     const bId=`b${Date.now()}`;
     const building = {id:bId,name,address:addr,phone,beds:parseInt(beds)||0,color:colors[this.S.buildings.length%colors.length]};
     if (companyId) building.companyId = companyId;
+    if (bState) building.state = bState;
     this.S.buildings.push(building);
     this.S.accounts.push({id:`a${Date.now()}`,name:adminName,email:adminEmail,role:'admin',buildingId:bId});
     Audit.log('BUILDING_CREATED', `Created building ${sanitize(name)} admin ${sanitize(adminEmail)}`, this.S.user?.id, 'high');
@@ -7887,6 +8417,9 @@ Tap the link below to view and claim:\nhttps://managemystaffing.com/claim?token=
       jobPostings:this.S.jobPostings,
       demos:this.S.demos,
       billingData:this.S.billingData,
+      shiftTemplates:this.S.shiftTemplates,
+      staffingSlots:this.S.staffingSlots,
+      buildingShiftTypes:this.S.buildingShiftTypes,
     };
     if (IS_SERVER_MODE && _authToken && !this.S.user?.demo) {
       fetch('/api/data',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},body:JSON.stringify(payload)})
@@ -7914,11 +8447,21 @@ Tap the link below to view and claim:\nhttps://managemystaffing.com/claim?token=
       if (Array.isArray(d.shifts)    && d.shifts.length)           this.S.shifts           = d.shifts;
       if (Array.isArray(d.schedulePatterns))                        this.S.schedulePatterns = d.schedulePatterns;
       if (Array.isArray(d.hrEmployees)  && d.hrEmployees.length)   this.S.hrEmployees   = d.hrEmployees;
-      if (d.hrOnboarding && d.hrOnboarding.TX)                      this.S.hrOnboarding  = d.hrOnboarding;
+      if (d.hrOnboarding) {
+        // Migrate old flat {TX, OK} format → company-keyed {co_skyblue: {TX, OK}}
+        if (d.hrOnboarding.TX && !d.hrOnboarding.co_skyblue) {
+          this.S.hrOnboarding = { co_skyblue: { TX: d.hrOnboarding.TX, OK: d.hrOnboarding.OK } };
+        } else if (typeof d.hrOnboarding === 'object') {
+          this.S.hrOnboarding = d.hrOnboarding;
+        }
+      }
       if (Array.isArray(d.hrAccounts)   && d.hrAccounts.length)    this.S.hrAccounts    = d.hrAccounts;
       if (Array.isArray(d.jobPostings))                              this.S.jobPostings   = d.jobPostings;
       if (Array.isArray(d.demos))                                    this.S.demos         = d.demos;
       if (d.billingData && typeof d.billingData === 'object')        this.S.billingData   = d.billingData;
+      if (Array.isArray(d.shiftTemplates))                             this.S.shiftTemplates     = d.shiftTemplates;
+      if (d.staffingSlots && typeof d.staffingSlots === 'object')     this.S.staffingSlots      = d.staffingSlots;
+      if (d.buildingShiftTypes && typeof d.buildingShiftTypes === 'object') this.S.buildingShiftTypes = d.buildingShiftTypes;
       return true;
     } catch(e) { return false; }
   },
@@ -7936,6 +8479,17 @@ Tap the link below to view and claim:\nhttps://managemystaffing.com/claim?token=
     if (Array.isArray(data.jobPostings))      this.S.jobPostings      = data.jobPostings;
     if (Array.isArray(data.demos))            this.S.demos            = data.demos;
     if (data.billingData && typeof data.billingData === 'object') this.S.billingData = data.billingData;
+    if (Array.isArray(data.shiftTemplates))   this.S.shiftTemplates   = data.shiftTemplates;
+    if (data.staffingSlots && typeof data.staffingSlots === 'object') this.S.staffingSlots = data.staffingSlots;
+    if (data.buildingShiftTypes && typeof data.buildingShiftTypes === 'object') this.S.buildingShiftTypes = data.buildingShiftTypes;
+    if (data.hrOnboarding && typeof data.hrOnboarding === 'object') {
+      if (data.hrOnboarding.TX && !data.hrOnboarding.co_skyblue) {
+        // migrate old flat format
+        this.S.hrOnboarding = { co_skyblue: { TX: data.hrOnboarding.TX, OK: data.hrOnboarding.OK } };
+      } else {
+        this.S.hrOnboarding = data.hrOnboarding;
+      }
+    }
   },
 
   // Super-admin only: wipe all persisted data and reload with seed data.
@@ -8070,6 +8624,34 @@ App.init().catch(e => {
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="App.closeModal('modal-invite')">Cancel</button>
       <button class="btn btn-primary" id="invite-send-btn" onclick="App.sendInvite()">Send Invitation</button>
+    </div>
+  </div>
+</div>
+
+<!-- REGIONAL ADMIN INVITE MODAL -->
+<div class="modal-overlay" id="modal-regional-admin" role="dialog" aria-modal="true" aria-label="Invite Regional Admin">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-header">
+      <span class="modal-title">
+        <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5"/><path d="M11 7h4M13 9V5M13 7h.01"/></svg>
+        Invite Regional Admin
+      </span>
+      <button class="modal-close" onclick="App.closeModal('modal-regional-admin')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="ra-error-msg" class="login-error-msg"></div>
+      <div class="form-group"><label>Full Name *</label><input type="text" id="ra-name" placeholder="Jane Smith" maxlength="100"></div>
+      <div class="form-group"><label>Email Address *</label><input type="email" id="ra-email" placeholder="jane@company.com" maxlength="254"></div>
+      <div class="form-group">
+        <label>Buildings in Portfolio *</label>
+        <div id="ra-buildings-list" style="border:1.5px solid var(--g200);border-radius:8px;padding:8px;max-height:200px;overflow-y:auto;background:#fff"></div>
+        <p style="font-size:11px;color:var(--g400);margin-top:4px">Select all buildings this admin will manage.</p>
+      </div>
+      <p style="font-size:12px;color:var(--g500);margin-top:4px">Regional admins can manage schedules and HR for all assigned buildings and see multi-building analytics.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="App.closeModal('modal-regional-admin')">Cancel</button>
+      <button class="btn btn-primary" id="ra-send-btn" onclick="App.saveRegionalAdmin()">Send Invitation</button>
     </div>
   </div>
 </div>

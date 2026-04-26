@@ -188,6 +188,25 @@ function loadData() {
     }
   }
 
+  // ── Enforce SkyBlue Healthcare company + Kirkland Court link (always) ────────
+  // Run on every load to repair data if it ever gets corrupted or overwritten.
+  if (!data.companies) data.companies = [];
+  if (!data.companies.find(c => c.id === 'co_skyblue')) {
+    data.companies.push({ id: 'co_skyblue', name: 'SkyBlue Healthcare', color: '#0891B2' });
+    console.log('[mms] Restored SkyBlue Healthcare company.');
+    dirty = true;
+  }
+  if (data.buildings) {
+    data.buildings.forEach(b => {
+      if (b.name === 'Kirkland Court' && !b.companyId) {
+        b.companyId = 'co_skyblue';
+        console.log('[mms] Restored companyId on Kirkland Court.');
+        dirty = true;
+      }
+    });
+  }
+  data._skyblueSeeded = true;
+
   if (dirty) writeAtomic(DATA_FILE, data);
   return data;
 }
