@@ -1961,8 +1961,10 @@ const App = {
       ['demos',    'Demo Portal',   '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 8.5a6 6 0 1 1-12 0V5"/><path d="M5 2h6l1 3H4z"/><path d="M8 8.5V14M5 14h6"/></svg>'],
       ['billing',  'Billing',       '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 7h14"/><path d="M4 11h2M9 11h3"/></svg>'],
     ];
+    // 'company' is a drill-down of 'overview' — keep overview active
+    const activePg = pg === 'company' ? 'overview' : pg;
     const items = nav.map(([id, label, icon]) =>
-      `<div class="sa-nav-item${pg===id?' active':''}" onclick="App.navigateSA('${id}')">${icon}${label}</div>`
+      `<div class="sa-nav-item${activePg===id?' active':''}" onclick="App.navigateSA('${id}')">${icon}${label}</div>`
     ).join('');
     document.getElementById('sidebar').innerHTML = `
       <div style="padding:16px 14px 8px;display:flex;align-items:center;gap:8px">
@@ -1983,6 +1985,7 @@ const App = {
   renderSAMain() {
     const pages = {
       overview: () => this.renderSAOverview(),
+      company:  () => this.renderCompanyDashboard(),
       demos:    () => this.renderSADemos(),
       billing:  () => this.renderSABilling(),
     };
@@ -2386,67 +2389,51 @@ const App = {
     const totalAdmins = this.S.accounts.filter(a => a.role === 'admin').length;
     const totalOpen = this.S.shifts.filter(s => s.status === 'open' && s.date >= TODAY).length;
 
-    // Build grouped sections
-    let facilitySections = '';
+    // Company tiles
+    const companyCards = companies.map(co => this._buildCompanyCard(co)).join('');
 
-    if (companies.length === 0) {
-      // No companies yet — flat grid
-      const cards = buildings.map(b => this._buildFacilityCard(b)).join('');
-      facilitySections = `<div class="buildings-grid">${cards || '<div style="color:var(--g400);font-size:14px;padding:20px 0">No facilities added yet.</div>'}</div>`;
-    } else {
-      // Group by company
-      companies.forEach(co => {
-        const coBuildings = buildings.filter(b => b.companyId === co.id);
-        const cards = coBuildings.map(b => this._buildFacilityCard(b)).join('');
-        facilitySections += `
-          <div style="margin-bottom:32px">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-              <div style="display:flex;align-items:center;gap:10px">
-                <div style="width:10px;height:10px;border-radius:50%;background:${co.color||'var(--blue)'}"></div>
-                <span style="font-size:16px;font-weight:700;color:var(--g900)">${sanitize(co.name)}</span>
-                <span style="font-size:12px;color:var(--g400);font-weight:500">${coBuildings.length} facilit${coBuildings.length===1?'y':'ies'}</span>
-              </div>
-              <button class="btn btn-ghost btn-sm" onclick="App.openAddBuildingToCompany('${co.id}')" style="font-size:12px">+ Add Facility</button>
-            </div>
-            <div class="buildings-grid">${cards || '<div style="color:var(--g400);font-size:13px;padding:12px 0">No facilities in this company yet.</div>'}</div>
-          </div>`;
-      });
-      // Ungrouped buildings
-      const ungrouped = buildings.filter(b => !b.companyId);
-      if (ungrouped.length > 0) {
-        const cards = ungrouped.map(b => this._buildFacilityCard(b)).join('');
-        facilitySections += `
-          <div style="margin-bottom:32px">
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-              <div style="width:10px;height:10px;border-radius:50%;background:var(--g300)"></div>
-              <span style="font-size:16px;font-weight:700;color:var(--g900)">Independent Facilities</span>
-              <span style="font-size:12px;color:var(--g400);font-weight:500">${ungrouped.length} facilit${ungrouped.length===1?'y':'ies'}</span>
-            </div>
-            <div class="buildings-grid">${cards}</div>
-          </div>`;
-      }
-    }
+    // Ungrouped buildings (no companyId)
+    const ungrouped = buildings.filter(b => !b.companyId);
+    const ungroupedSection = ungrouped.length ? `
+      <div style="margin-top:32px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+          <div style="width:10px;height:10px;border-radius:50%;background:var(--g300)"></div>
+          <span style="font-size:15px;font-weight:700;color:var(--g700)">Ungrouped Facilities</span>
+          <span style="font-size:12px;color:var(--g400)">${ungrouped.length} facilit${ungrouped.length===1?'y':'ies'}</span>
+        </div>
+        <div class="buildings-grid">${ungrouped.map(b => this._buildFacilityCard(b)).join('')}</div>
+      </div>` : '';
+
+    const emptyState = companies.length === 0 && ungrouped.length === 0 ? `
+      <div style="text-align:center;padding:64px 32px;background:#fff;border:1.5px dashed var(--g200);border-radius:14px">
+        <svg viewBox="0 0 48 48" width="48" height="48" fill="none" stroke="var(--g300)" stroke-width="1.5" stroke-linecap="round" style="margin:0 auto 16px;display:block"><rect x="4" y="16" width="40" height="28" rx="3"/><path d="M16 16V10a8 8 0 0 1 16 0v6"/></svg>
+        <div style="font-size:17px;font-weight:700;color:var(--g600);margin-bottom:8px">No companies yet</div>
+        <div style="font-size:13px;color:var(--g400);margin-bottom:20px">Create your first company to start grouping facilities.</div>
+        <button class="btn btn-primary" onclick="App.openAddCompanyModal()">+ Add Company</button>
+      </div>` : '';
 
     document.getElementById('main').innerHTML = `
       <div class="sa-page">
         <div class="sa-hero">
           <h1>Platform Overview</h1>
-          <p>Manage all facilities and companies from one place.</p>
+          <p>Manage companies and facilities from one place.</p>
         </div>
         <div class="sa-stats-row">
           <div class="sa-stat-card"><div class="sa-stat-val">${companies.length}</div><div class="sa-stat-label">Companies</div></div>
-          <div class="sa-stat-card"><div class="sa-stat-val">${buildings.length}</div><div class="sa-stat-label">Buildings</div></div>
+          <div class="sa-stat-card"><div class="sa-stat-val">${buildings.length}</div><div class="sa-stat-label">Facilities</div></div>
           <div class="sa-stat-card"><div class="sa-stat-val">${totalAdmins}</div><div class="sa-stat-label">Admins</div></div>
           <div class="sa-stat-card"><div class="sa-stat-val">${totalStaff}</div><div class="sa-stat-label">Total Staff</div></div>
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
-          <h2 style="font-size:18px;font-weight:700">Facilities</h2>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-secondary btn-sm" onclick="App.openModal('modal-company')">+ Add Company</button>
-            <button class="btn btn-primary btn-sm" onclick="App.openModal('modal-building')">+ Add Facility</button>
-          </div>
+          <h2 style="font-size:18px;font-weight:700">Companies</h2>
+          <button class="btn btn-primary btn-sm" onclick="App.openAddCompanyModal()">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/></svg>
+            Add Company
+          </button>
         </div>
-        ${facilitySections}
+        ${emptyState}
+        ${companies.length ? `<div class="buildings-grid">${companyCards}</div>` : ''}
+        ${ungroupedSection}
         ${IS_SERVER_MODE && !this.S.user?.demo ? `
         <div style="margin-top:32px;padding:16px 20px;background:var(--blue-l);border:1px solid var(--blue-m);border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:16px">
           <div style="display:flex;align-items:center;gap:10px">
@@ -2475,6 +2462,123 @@ const App = {
           </button>
         </div>`}
       </div>`;
+  },
+
+  // ── COMPANY CARD (on SA overview) ────────────────────────────
+  _buildCompanyCard(co) {
+    const coBuildings = this.S.buildings.filter(b => b.companyId === co.id);
+    const coStaff = this.S.employees.filter(e => coBuildings.some(b => b.id === e.buildingId));
+    const coAdmins = this.S.accounts.filter(a => a.role === 'admin' && coBuildings.some(b => b.id === (a.buildingId || '')));
+    const coOpen = this.S.shifts.filter(s => s.status === 'open' && s.date >= TODAY && coBuildings.some(b => b.id === s.buildingId)).length;
+    return `
+      <div class="building-card" style="--accent:${co.color||'var(--blue)'}">
+        <div style="position:absolute;top:0;left:0;right:0;height:4px;background:${co.color||'var(--blue)'}"></div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+          <div style="width:32px;height:32px;border-radius:8px;background:${co.color||'var(--blue)'}22;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="${co.color||'var(--blue)'}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="16" height="12" rx="1.5"/><path d="M6 7V5a6 6 0 0 1 8 0v2"/></svg>
+          </div>
+          <div class="building-name" style="margin-bottom:0">${sanitize(co.name)}</div>
+        </div>
+        <div class="building-stats" style="margin-top:12px">
+          <div class="building-stat"><div class="building-stat-val">${coBuildings.length}</div><div class="building-stat-label">Facilities</div></div>
+          <div class="building-stat"><div class="building-stat-val">${coStaff.length}</div><div class="building-stat-label">Staff</div></div>
+          <div class="building-stat"><div class="building-stat-val">${coAdmins.length}</div><div class="building-stat-label">Admins</div></div>
+          <div class="building-stat"><div class="building-stat-val" style="${coOpen>0?'color:var(--red)':''}">${coOpen}</div><div class="building-stat-label">Open</div></div>
+        </div>
+        <div class="building-actions" style="margin-top:14px">
+          <button class="btn btn-secondary btn-sm" onclick="App.enterCompany('${co.id}')">Enter Company →</button>
+          <button class="btn btn-ghost btn-sm" onclick="App.openEditCompany('${co.id}')">Edit</button>
+        </div>
+      </div>`;
+  },
+
+  // ── ENTER COMPANY DASHBOARD ──────────────────────────────────
+  enterCompany(coId) {
+    this.S.activeCompanyId = coId;
+    this.S.saPage = 'company';
+    this.renderSAMain();
+  },
+
+  renderCompanyDashboard() {
+    const co = (this.S.companies || []).find(c => c.id === this.S.activeCompanyId);
+    if (!co) { this.S.saPage = 'overview'; this.renderSAMain(); return; }
+    const buildings = this.S.buildings.filter(b => b.companyId === co.id);
+    const coStaff = this.S.employees.filter(e => buildings.some(b => b.id === e.buildingId)).length;
+    const coAdmins = this.S.accounts.filter(a => a.role === 'admin' && buildings.some(b => b.id === (a.buildingId || ''))).length;
+    const coOpen = this.S.shifts.filter(s => s.status === 'open' && s.date >= TODAY && buildings.some(b => b.id === s.buildingId)).length;
+
+    const buildingCards = buildings.length
+      ? `<div class="buildings-grid">${buildings.map(b => this._buildFacilityCard(b)).join('')}</div>`
+      : `<div style="text-align:center;padding:56px 32px;background:#fff;border:1.5px dashed var(--g200);border-radius:14px">
+           <svg viewBox="0 0 48 48" width="44" height="44" fill="none" stroke="var(--g300)" stroke-width="1.5" stroke-linecap="round" style="margin:0 auto 14px;display:block"><rect x="6" y="14" width="36" height="28" rx="2"/><path d="M16 14V9a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v5"/><line x1="24" y1="22" x2="24" y2="34"/><line x1="18" y1="28" x2="30" y2="28"/></svg>
+           <div style="font-size:16px;font-weight:700;color:var(--g600);margin-bottom:8px">No facilities yet</div>
+           <div style="font-size:13px;color:var(--g400);margin-bottom:20px">Add the first facility to ${sanitize(co.name)}.</div>
+           <button class="btn btn-primary" onclick="App.openAddBuildingToCompany('${co.id}')">+ Add Facility</button>
+         </div>`;
+
+    document.getElementById('main').innerHTML = `
+      <div class="sa-page">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px">
+          <button class="btn btn-ghost btn-sm" onclick="App.S.saPage='overview';App.renderSAMain()" style="display:flex;align-items:center;gap:5px;color:var(--g500)">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M10 12L6 8l4-4"/></svg>
+            All Companies
+          </button>
+          <span style="color:var(--g300)">/</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="width:10px;height:10px;border-radius:50%;background:${co.color||'var(--blue)'}"></div>
+            <span style="font-size:15px;font-weight:700;color:var(--g900)">${sanitize(co.name)}</span>
+          </div>
+        </div>
+
+        <div class="sa-stats-row" style="margin-bottom:28px">
+          <div class="sa-stat-card"><div class="sa-stat-val">${buildings.length}</div><div class="sa-stat-label">Facilities</div></div>
+          <div class="sa-stat-card"><div class="sa-stat-val">${coStaff}</div><div class="sa-stat-label">Staff</div></div>
+          <div class="sa-stat-card"><div class="sa-stat-val">${coAdmins}</div><div class="sa-stat-label">Admins</div></div>
+          <div class="sa-stat-card"><div class="sa-stat-val" style="${coOpen>0?'color:var(--red)':''}">${coOpen}</div><div class="sa-stat-label">Open Shifts</div></div>
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+          <h2 style="font-size:18px;font-weight:700">Facilities</h2>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" onclick="App.openEditCompany('${co.id}')">Edit Company</button>
+            <button class="btn btn-primary btn-sm" onclick="App.openAddBuildingToCompany('${co.id}')">
+              <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/></svg>
+              Add Facility
+            </button>
+          </div>
+        </div>
+        ${buildingCards}
+      </div>`;
+  },
+
+  openAddCompanyModal() {
+    this.S._editingCompanyId = null;
+    document.getElementById('co-name').value = '';
+    document.getElementById('co-color').value = '#2563EB';
+    document.querySelectorAll('#co-color-swatches .co-swatch').forEach(sw => { sw.style.outline = ''; });
+    const title = document.querySelector('#modal-company .modal-title');
+    if (title) title.lastChild.textContent = 'Add Company';
+    const saveBtn = document.querySelector('#modal-company .btn-primary');
+    if (saveBtn) { saveBtn.textContent = 'Create Company'; saveBtn.onclick = () => App.saveCompany(); }
+    this.openModal('modal-company');
+  },
+
+  openEditCompany(coId) {
+    const co = (this.S.companies || []).find(c => c.id === coId);
+    if (!co) return;
+    this.S._editingCompanyId = coId;
+    document.getElementById('co-name').value = co.name || '';
+    document.getElementById('co-color').value = co.color || '#2563EB';
+    // Highlight the matching swatch
+    document.querySelectorAll('#co-color-swatches .co-swatch').forEach(sw => {
+      sw.style.outline = sw.dataset.color === co.color ? '2.5px solid var(--g900)' : '';
+    });
+    // Change modal title and button label
+    const title = document.querySelector('#modal-company .modal-title');
+    if (title) title.lastChild.textContent = 'Edit Company';
+    const saveBtn = document.querySelector('#modal-company .btn-primary');
+    if (saveBtn) { saveBtn.textContent = 'Save Changes'; saveBtn.onclick = () => App.saveCompany(); }
+    this.openModal('modal-company');
   },
 
   enterBuilding(buildingId) {
@@ -7292,12 +7396,28 @@ const App = {
     if (!name) { this.showToast('Company name is required','warn'); return; }
     const color = document.getElementById('co-color').value || '#2563EB';
     if (!this.S.companies) this.S.companies = [];
-    this.S.companies.push({ id:'co'+Date.now(), name, color });
-    Audit.log('COMPANY_CREATED', `Created company ${sanitize(name)}`, this.S.user?.id, 'medium');
+    const editId = this.S._editingCompanyId;
+    if (editId) {
+      // Edit existing
+      const co = this.S.companies.find(c => c.id === editId);
+      if (co) { co.name = name; co.color = color; }
+      Audit.log('COMPANY_UPDATED', `Updated company ${sanitize(name)}`, this.S.user?.id, 'low');
+      this.showToast(`${sanitize(name)} updated`);
+    } else {
+      // Create new
+      this.S.companies.push({ id:'co'+Date.now(), name, color });
+      Audit.log('COMPANY_CREATED', `Created company ${sanitize(name)}`, this.S.user?.id, 'medium');
+      this.showToast(`${sanitize(name)} created`);
+    }
+    this.S._editingCompanyId = null;
     this.persistData();
     this.closeModal('modal-company');
     document.getElementById('co-name').value = '';
-    this.showToast(`${sanitize(name)} created`);
+    // Reset modal title/button for next open
+    const title = document.querySelector('#modal-company .modal-title');
+    if (title) title.lastChild.textContent = 'Add Company';
+    const saveBtn = document.querySelector('#modal-company .btn-primary');
+    if (saveBtn) { saveBtn.textContent = 'Create Company'; saveBtn.onclick = () => App.saveCompany(); }
     this.renderSAMain();
   },
 
