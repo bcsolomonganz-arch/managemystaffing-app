@@ -1070,6 +1070,12 @@ try { localStorage.removeItem('mms_token'); sessionStorage.removeItem('mms_demo_
       init.credentials = init.credentials || 'include';
       const headers = new Headers(init.headers || {});
       if (!headers.has('X-Requested-With')) headers.set('X-Requested-With', 'XMLHttpRequest');
+      // If we're sending a body but Content-Type wasn't explicitly set, default
+      // to JSON. Without this, express.json() ignores the body and req.body is
+      // {}, which makes the server reject login with "email and password are required".
+      if (init.body && typeof init.body === 'string' && !headers.has('Content-Type')) {
+        headers.set('Content-Type', 'application/json');
+      }
       // Strip stale Authorization: Bearer null|undefined headers
       const authHdr = headers.get('Authorization');
       if (authHdr === 'Bearer null' || authHdr === 'Bearer undefined' || authHdr === 'Bearer ') {
