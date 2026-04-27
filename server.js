@@ -644,7 +644,13 @@ app.get('/health/ready', async (_req, res) => {
 });
 
 // ── SERVE HTML ────────────────────────────────────────────────────────────────
-app.get('/', (_req, res) => res.sendFile(HTML_FILE));
+// Force browsers to revalidate so users always get the latest UI after deploy.
+// `must-revalidate` + `no-cache` together tell the browser to send a conditional
+// GET on every load. App Service still serves it fast (single file).
+app.get('/', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+  res.sendFile(HTML_FILE);
+});
 
 // ── POST /api/auth/login ──────────────────────────────────────────────────────
 // Body: { email, password, totp?, totpSetupCode? }
