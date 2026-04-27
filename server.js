@@ -350,10 +350,48 @@ async function applyMigrations(data) {
   if (dirty) markDirty();
 }
 
-// ── AUDIT LOGGING (HIPAA §164.312(b)) ─────────────────────────────────────────
-// Tamper-evident: each entry hashes the previous entry's HMAC. Append-only file.
+// ── AUDIT LOGGING (HIPAA §164.312(b) + §164.530(j)) ──────────────────────────
+// Tamper-evident: each entry hashes the previous entry's HMAC.
+// Triple-write: local file (fast), AND Azure Storage append-blob in WORM
+// container with 6-year immutability policy.
 let _lastAuditHash = null;
 let _auditQueue = Promise.resolve();
+let _auditAppendClient = null;       // Azure Storage AppendBlobClient
+
+// Ship each entry to Azure Storage append-blob in the WORM-locked container.
+// Best-effort — local file is the primary record; cloud copy is for retention.
+async function _shipAuditEntryToCloud(entryJson) {
+  if (!_auditAppendClient) return;
+  try {
+    await _auditAppendClient.appendBlock(entryJson + '\n', Buffer.byteLength(entryJson + '\n'));
+  } catch (e) {
+    // Don't block local writes if cloud is unreachable; log and move on.
+    logger.warn('audit_cloud_ship_failed', { err: e.message });
+  }
+}
+
+async function _initAuditCloud() {
+  const connStr = process.env.AUDIT_STORAGE_CONNECTION_STRING;
+  if (!connStr) {
+    logger.info('audit_cloud_disabled', { reason: 'AUDIT_STORAGE_CONNECTION_STRING not set' });
+    return;
+  }
+  try {
+    const { BlobServiceClient } = require('@azure/storage-blob');
+    const svc = BlobServiceClient.fromConnectionString(connStr);
+    const container = svc.getContainerClient('mms-audit');
+    // One append-blob per UTC date — keeps blobs manageable + immutability policy applies
+    const dayKey = new Date().toISOString().slice(0, 10);
+    const blobName = `audit-${dayKey}.jsonl`;
+    _auditAppendClient = container.getAppendBlobClient(blobName);
+    // createIfNotExists is idempotent — safe across restarts
+    await _auditAppendClient.createIfNotExists();
+    logger.info('audit_cloud_initialized', { blob: blobName });
+  } catch (e) {
+    logger.error('audit_cloud_init_failed', { err: e.message });
+    _auditAppendClient = null;
+  }
+}
 
 function _initAuditChain() {
   try {
@@ -389,11 +427,14 @@ function auditLog(action, user, details = {}) {
     h.update(body);
     entry.hmac = h.digest('hex');
     _lastAuditHash = entry.hmac;
+    const entryJson = JSON.stringify(entry);
     try {
-      await fs.appendFile(AUDIT_LOG_FILE, JSON.stringify(entry) + '\n', { mode: 0o600 });
+      await fs.appendFile(AUDIT_LOG_FILE, entryJson + '\n', { mode: 0o600 });
     } catch (e) {
       logger.error('audit_write_failed', { err: e.message, action });
     }
+    // Ship to cloud WORM storage (best effort — file is primary)
+    await _shipAuditEntryToCloud(entryJson);
     logger.info('audit', { action, userId: entry.userId, role: entry.role });
   }).catch(e => logger.error('audit_queue_failure', { err: e.message }));
 }
@@ -1694,6 +1735,7 @@ let _server;
   try {
     initAppInsights();
     _initAuditChain();
+    await _initAuditCloud();           // best-effort — won't block startup
     await loadData();
   } catch (e) {
     logger.error('startup_failed', { err: e.message });
