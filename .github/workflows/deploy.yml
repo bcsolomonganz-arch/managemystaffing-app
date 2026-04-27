@@ -7,27 +7,22 @@ on:
 
 env:
   AZURE_WEBAPP_NAME: mms-app-248457
+  STAGING_HOST: mms-app-248457-staging.azurewebsites.net
+  PRODUCTION_HOST: www.managemystaffing.com
   NODE_VERSION: '20.x'
 
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
+      - run: npm ci
 
-      - name: Install dependencies (full, for tests)
-        run: npm ci
-
-      # ─── Tests must pass before deploy ────────────────────────────────
-      # Server is started locally so smoke tests run against a real instance.
+      # ─── Tests against an ephemeral local server ───────────────────
       - name: Generate ephemeral test secrets
         run: |
           mkdir -p /tmp/mms-secure
@@ -57,21 +52,62 @@ jobs:
         if: always()
         run: kill $(cat /tmp/server.pid) || true
 
-      # ─── Deploy ────────────────────────────────────────────────────
-      - name: Prune dev dependencies for deploy
-        run: npm prune --omit=dev
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+      - run: npm ci --omit=dev
 
-      - name: Deploy to Azure Web App
+      # ─── Step 1: Deploy to STAGING slot ────────────────────────────
+      - name: Deploy to staging slot
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          slot-name: staging
+          publish-profile: ${{ secrets.AZURE_WEBAPP_STAGING_PUBLISH_PROFILE }}
           package: .
 
-      - name: Smoke test deployed app
+      # ─── Step 2: Smoke-test STAGING before swapping ─────────────────
+      - name: Smoke-test staging
         run: |
-          for i in {1..30}; do
-            if curl -sf https://www.managemystaffing.com/health > /dev/null; then echo "Live!"; exit 0; fi
+          for i in {1..40}; do
+            if curl -sf https://${{ env.STAGING_HOST }}/health > /dev/null; then echo "staging /health OK"; break; fi
             sleep 5
           done
-          echo "Deploy did not become healthy"; exit 1
+          # Deep readiness probe — verifies audit chain + Key Vault refs + ACS
+          ready=$(curl -s https://${{ env.STAGING_HOST }}/health/ready)
+          echo "ready: $ready"
+          echo "$ready" | grep -q '"ok":true' || (echo "STAGING NOT READY"; exit 1)
+
+      # ─── Step 3: Azure CLI login (for the swap) ────────────────────
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # ─── Step 4: Swap staging ↔ production (atomic, zero-downtime) ─
+      - name: Swap staging into production
+        run: |
+          az webapp deployment slot swap \
+            --name ${{ env.AZURE_WEBAPP_NAME }} \
+            --resource-group managecensus-prod \
+            --slot staging \
+            --target-slot production
+
+      # ─── Step 5: Verify production is healthy after swap ───────────
+      - name: Verify production
+        run: |
+          for i in {1..30}; do
+            if curl -sf https://${{ env.PRODUCTION_HOST }}/health > /dev/null; then echo "Live!"; exit 0; fi
+            sleep 5
+          done
+          echo "Production did not become healthy after swap"; exit 1
+
+      - name: Azure logout
+        if: always()
+        run: az logout
