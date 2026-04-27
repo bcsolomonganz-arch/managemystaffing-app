@@ -15,6 +15,17 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+/* Password requirements live checklist */
+.pw-reqs{display:none;margin-top:10px;padding:10px 12px;background:var(--g50);border:1px solid var(--g200);border-radius:8px;font-size:12px}
+.pw-reqs-header{font-size:11px;font-weight:700;color:var(--g700);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px}
+.pw-req{display:flex;align-items:center;gap:8px;padding:3px 0;color:var(--g600);transition:color .15s}
+.pw-req .pw-req-icon{display:inline-flex;width:16px;height:16px;border-radius:50%;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;transition:all .15s;background:var(--g200);color:var(--g500)}
+.pw-req.met{color:var(--blue-d)}
+.pw-req.met .pw-req-icon{background:var(--blue-l);color:var(--blue-d)}
+.pw-req.unmet-flagged{color:#B91C1C}
+.pw-req.unmet-flagged .pw-req-icon{background:#FEE2E2;color:#B91C1C}
+@keyframes pwReqShake{0%,100%{transform:translateX(0)}25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
+.pw-reqs.shake{animation:pwReqShake .25s ease-in-out 2}
 /* WCAG 2.4.7 — visible focus indicator on all interactive elements */
 :focus-visible{outline:2px solid #537E61;outline-offset:2px;border-radius:3px}
 button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[role="button"]:focus-visible{outline:2px solid #537E61;outline-offset:2px}
@@ -6014,21 +6025,79 @@ const App = {
       <div class="form-group">
         <label for="reset-pass">New password</label>
         <input type="password" id="reset-pass" placeholder="••••••••••••" autocomplete="new-password" maxlength="128"
-          oninput="App._updateResetPwStrength()"
+          oninput="App._updateResetPwStrength(); App._updatePwReqs('reset-pass','reset-pw-reqs','reset-pass2','reset-pw-match')"
+          onfocus="document.getElementById('reset-pw-reqs').style.display='block'"
           onkeydown="if(event.key==='Enter')document.getElementById('reset-pass2').focus()">
         <div class="pw-strength-bar" id="reset-pw-bar"></div>
-        <p style="font-size:11px;color:var(--g600);margin-top:6px;line-height:1.5">Must include 12+ chars, uppercase, lowercase, number, and symbol.</p>
+        <div id="reset-pw-reqs" class="pw-reqs" aria-live="polite"></div>
       </div>
       <div class="form-group">
         <label for="reset-pass2">Confirm new password</label>
         <input type="password" id="reset-pass2" placeholder="••••••••••••" autocomplete="new-password" maxlength="128"
+          oninput="App._updatePwReqs('reset-pass','reset-pw-reqs','reset-pass2','reset-pw-match')"
           onkeydown="if(event.key==='Enter')App.completePasswordReset('${sanitize(token)}','${sanitize(uid)}','${sanitize(email)}')">
+        <div id="reset-pw-match" style="font-size:12px;margin-top:6px;display:none"></div>
       </div>
       <button class="btn btn-primary btn-full" onclick="App.completePasswordReset('${sanitize(token)}','${sanitize(uid)}','${sanitize(email)}')">Set New Password</button>
       <p style="font-size:11px;color:var(--g600);text-align:center;margin-top:12px">All sessions are monitored and audited per HIPAA 45 CFR §164.312.</p>`;
     const logoEl = document.getElementById('reset-logo');
     if (logoEl) logoEl.innerHTML = LOGO_SVG;
     setTimeout(() => document.getElementById('reset-pass')?.focus(), 100);
+  },
+
+  // Live-updating password requirements checklist.
+  // Renders 5 rules below the password input with ✓ when met, ✗ when not.
+  // When `flag` is true, unmet rules pulse red (called on submit failure).
+  _pwRules(pw) {
+    return [
+      { key: 'len', label: 'At least 12 characters',         met: pw.length >= 12 },
+      { key: 'up',  label: 'One uppercase letter (A-Z)',     met: /[A-Z]/.test(pw) },
+      { key: 'lo',  label: 'One lowercase letter (a-z)',     met: /[a-z]/.test(pw) },
+      { key: 'num', label: 'One number (0-9)',               met: /[0-9]/.test(pw) },
+      { key: 'sym', label: 'One symbol (!@#$%^&* etc.)',     met: /[^A-Za-z0-9]/.test(pw) },
+    ];
+  },
+
+  _updatePwReqs(passId, reqsId, pass2Id, matchId, flag = false) {
+    const passEl = document.getElementById(passId);
+    const reqsEl = document.getElementById(reqsId);
+    if (!passEl || !reqsEl) return;
+    const pw = passEl.value || '';
+    const rules = this._pwRules(pw);
+    const allMet = rules.every(r => r.met);
+    const checkSvg = '<svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,8 6,12 14,4"/></svg>';
+    const xSvg     = '<svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M3 3l10 10M13 3L3 13"/></svg>';
+    reqsEl.innerHTML = `
+      <div class="pw-reqs-header">${allMet ? 'All requirements met ✓' : 'Password requirements'}</div>
+      ${rules.map(r => `
+        <div class="pw-req ${r.met ? 'met' : (flag ? 'unmet-flagged' : '')}">
+          <span class="pw-req-icon" aria-hidden="true">${r.met ? checkSvg : (flag ? xSvg : '')}</span>
+          <span>${r.label}</span>
+        </div>
+      `).join('')}`;
+    reqsEl.style.display = 'block';
+    if (flag && !allMet) {
+      reqsEl.classList.remove('shake');
+      void reqsEl.offsetWidth;          // trigger reflow to restart animation
+      reqsEl.classList.add('shake');
+    }
+
+    // Confirm-password match indicator
+    if (pass2Id && matchId) {
+      const pass2El = document.getElementById(pass2Id);
+      const matchEl = document.getElementById(matchId);
+      if (pass2El && matchEl && pass2El.value) {
+        const matches = pw === pass2El.value;
+        matchEl.style.display = 'block';
+        matchEl.style.color = matches ? 'var(--blue-d)' : '#B91C1C';
+        matchEl.innerHTML = matches
+          ? '<span style="display:inline-flex;align-items:center;gap:6px">' + checkSvg + ' Passwords match</span>'
+          : '<span style="display:inline-flex;align-items:center;gap:6px">' + xSvg + ' Passwords do not match</span>';
+      } else if (matchEl) {
+        matchEl.style.display = 'none';
+      }
+    }
+    return allMet;
   },
 
   _updateResetPwStrength() {
@@ -6042,11 +6111,8 @@ const App = {
     const pass2 = document.getElementById('reset-pass2')?.value || '';
     const errEl = document.getElementById('reset-error');
     const showErr = m => { if (errEl) { errEl.textContent = m; errEl.style.display = 'block'; } };
-    if (pass.length < 12) { showErr('Password must be at least 12 characters.'); return; }
-    if (!/[A-Z]/.test(pass)) { showErr('Password must include an uppercase letter.'); return; }
-    if (!/[a-z]/.test(pass)) { showErr('Password must include a lowercase letter.'); return; }
-    if (!/[0-9]/.test(pass)) { showErr('Password must include a number.'); return; }
-    if (!/[^A-Za-z0-9]/.test(pass)) { showErr('Password must include a symbol.'); return; }
+    const allMet = this._updatePwReqs('reset-pass', 'reset-pw-reqs', 'reset-pass2', 'reset-pw-match', true);
+    if (!allMet) { showErr('Password does not meet the requirements highlighted below.'); return; }
     if (pass !== pass2) { showErr('Passwords do not match.'); return; }
 
     const btn = document.querySelector('.login-card .btn-primary');
@@ -6112,16 +6178,20 @@ const App = {
         <input type="email" value="${sanitize(email)}" readonly style="background:var(--g50);color:var(--g500);cursor:not-allowed">
       </div>
       <div class="form-group">
-        <label>Choose Password</label>
-        <input type="password" id="invite-pass" placeholder="At least 8 characters" maxlength="128"
-          oninput="const b=document.getElementById('invite-pw-bar');if(b)b.className='pw-strength-bar '+pwStrength(this.value)"
-          onkeydown="if(event.key==='Enter')App.acceptInvite('${token}','${sanitize(email)}')">
+        <label for="invite-pass">Choose Password</label>
+        <input type="password" id="invite-pass" placeholder="At least 12 characters" maxlength="128" autocomplete="new-password"
+          oninput="App._updatePwReqs('invite-pass','invite-pw-reqs','invite-pass2','invite-pw-match'); const b=document.getElementById('invite-pw-bar');if(b)b.className='pw-strength-bar '+pwStrength(this.value)"
+          onfocus="document.getElementById('invite-pw-reqs').style.display='block'"
+          onkeydown="if(event.key==='Enter')document.getElementById('invite-pass2').focus()">
         <div class="pw-strength-bar" id="invite-pw-bar"></div>
+        <div id="invite-pw-reqs" class="pw-reqs" aria-live="polite"></div>
       </div>
       <div class="form-group">
-        <label>Confirm Password</label>
-        <input type="password" id="invite-pass2" placeholder="Re-enter password" maxlength="128"
+        <label for="invite-pass2">Confirm Password</label>
+        <input type="password" id="invite-pass2" placeholder="Re-enter password" maxlength="128" autocomplete="new-password"
+          oninput="App._updatePwReqs('invite-pass','invite-pw-reqs','invite-pass2','invite-pw-match')"
           onkeydown="if(event.key==='Enter')App.acceptInvite('${token}','${sanitize(email)}')">
+        <div id="invite-pw-match" style="font-size:12px;margin-top:6px;display:none"></div>
       </div>
       <button class="btn btn-primary btn-full" onclick="App.acceptInvite('${token}','${sanitize(email)}')">Set Password &amp; Sign In</button>
       <p style="font-size:11px;color:var(--g600);text-align:center;margin-top:12px">All sessions are monitored and audited per HIPAA 45 CFR §164.312.</p>`;
@@ -6132,12 +6202,9 @@ const App = {
     const pass2 = document.getElementById('invite-pass2')?.value || '';
     const errEl = document.getElementById('invite-error');
     const showErr = msg => { if(errEl){errEl.textContent=msg;errEl.style.display='block';} };
-    // HIPAA-aligned password complexity (matches server-side validatePasswordComplexity)
-    if (pass.length < 12) { showErr('Password must be at least 12 characters.'); return; }
-    if (!/[A-Z]/.test(pass)) { showErr('Password must include an uppercase letter.'); return; }
-    if (!/[a-z]/.test(pass)) { showErr('Password must include a lowercase letter.'); return; }
-    if (!/[0-9]/.test(pass)) { showErr('Password must include a number.'); return; }
-    if (!/[^A-Za-z0-9]/.test(pass)) { showErr('Password must include a symbol.'); return; }
+    // Live requirements panel + flag unmet rules in red
+    const allMet = this._updatePwReqs('invite-pass', 'invite-pw-reqs', 'invite-pass2', 'invite-pw-match', true);
+    if (!allMet) { showErr('Password does not meet the requirements highlighted below.'); return; }
     if (pass !== pass2)  { showErr('Passwords do not match.'); return; }
     const btn = document.querySelector('.login-card .btn-primary');
     if (btn) { btn.disabled = true; btn.textContent = 'Activating…'; }
