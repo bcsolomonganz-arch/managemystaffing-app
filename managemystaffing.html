@@ -7614,9 +7614,13 @@ const App = {
     const inactiveRows = inactive.map(e => empRow(e, false)).join('');
 
     const arrow = c => sort.col === c ? (sort.dir === 'asc' ? ' ↑' : ' ↓') : '';
-    const sortableTh = (col, label) => `<th onclick="App.sortRoster('${col}')" style="cursor:pointer;user-select:none" title="Sort by ${label.toLowerCase()}">${label}<span style="color:var(--blue-d);font-weight:700">${arrow(col)}</span></th>`;
+    const sortableTh = (col, label) => {
+      const isActive = sort.col === col;
+      const ariaSort = isActive ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none';
+      return `<th scope="col" aria-sort="${ariaSort}"><button type="button" onclick="App.sortRoster('${col}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();App.sortRoster('${col}')}" style="background:transparent;border:none;padding:0;font:inherit;color:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:4px" aria-label="Sort by ${label.toLowerCase()}, currently ${ariaSort}">${label}<span aria-hidden="true" style="color:var(--blue-d);font-weight:700">${arrow(col)}</span></button></th>`;
+    };
     const tableHdr = `<tr>
-      ${sortableTh('name','Employee')}${sortableTh('group','Position')}<th>Phone</th><th>Status</th><th></th>
+      ${sortableTh('name','Employee')}${sortableTh('group','Position')}<th scope="col">Phone</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Actions</span></th>
     </tr>`;
 
     return `<div style="padding:20px;max-width:900px">
