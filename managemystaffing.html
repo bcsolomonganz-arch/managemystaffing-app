@@ -1615,7 +1615,11 @@ const App = {
       if (saved) {
         const parsed = deobf(saved);
         if (parsed && parsed.uid && parsed.role && parsed.ts) {
-          if (Date.now() - parsed.ts < 86400000) {
+          // Privileged roles: 24h marker (HIPAA-style — re-auth daily).
+          // Employees: 30d marker so they stay logged in on a personal device.
+          const isPrivileged = parsed.role === 'admin' || parsed.role === 'superadmin';
+          const markerTTL = isPrivileged ? 86400000 : 86400000 * 30;
+          if (Date.now() - parsed.ts < markerTTL) {
             const user = this.S.accounts.find(a => a.id === parsed.uid)
               || (() => { const e = this.S.employees.find(e => e.id === parsed.uid); return e ? {id:e.id,name:e.name,role:'employee',group:e.group,email:e.email,buildingId:e.buildingId} : null; })();
             if (user) { this.S.user = user; this.showApp(); return; }
@@ -5987,6 +5991,7 @@ const App = {
         return;
       }
       // Transform login card into set-password form
+      this._inviteRole = data.role || 'admin';
       this._showSetPasswordForm(token, data.email, data.name);
     } catch(e) {
       const errEl = document.getElementById('login-error');
@@ -6006,6 +6011,7 @@ const App = {
         if (errEl) { errEl.textContent = data.error || 'Invalid or expired reset link.'; errEl.style.display = 'block'; }
         return;
       }
+      this._resetRole = data.role || 'admin';
       this._showResetPasswordForm(token, uid, data.email, data.name);
     } catch (e) {
       const errEl = document.getElementById('login-error');
@@ -6052,9 +6058,15 @@ const App = {
   },
 
   // Live-updating password requirements checklist.
-  // Renders 5 rules below the password input with ✓ when met, ✗ when not.
+  // Privileged roles (admin/SA) get full HIPAA complexity; employees get
+  // length-only since they don't access PHI. The role is plumbed in by the
+  // caller (set when invite/reset-link is verified).
   // When `flag` is true, unmet rules pulse red (called on submit failure).
-  _pwRules(pw) {
+  _pwRules(pw, role) {
+    const isPrivileged = role === 'admin' || role === 'superadmin';
+    if (!isPrivileged) {
+      return [{ key: 'len', label: 'At least 8 characters', met: pw.length >= 8 }];
+    }
     return [
       { key: 'len', label: 'At least 12 characters',         met: pw.length >= 12 },
       { key: 'up',  label: 'One uppercase letter (A-Z)',     met: /[A-Z]/.test(pw) },
@@ -6069,7 +6081,8 @@ const App = {
     const reqsEl = document.getElementById(reqsId);
     if (!passEl || !reqsEl) return;
     const pw = passEl.value || '';
-    const rules = this._pwRules(pw);
+    const role = this._inviteRole || this._resetRole || 'admin';
+    const rules = this._pwRules(pw, role);
     const allMet = rules.every(r => r.met);
     const checkSvg = '<svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,8 6,12 14,4"/></svg>';
     const xSvg     = '<svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M3 3l10 10M13 3L3 13"/></svg>';
@@ -6185,7 +6198,7 @@ const App = {
       </div>
       <div class="form-group">
         <label for="invite-pass">Choose Password</label>
-        <input type="password" id="invite-pass" placeholder="At least 12 characters" maxlength="128" autocomplete="new-password"
+        <input type="password" id="invite-pass" placeholder="${(this._inviteRole==='admin'||this._inviteRole==='superadmin')?'At least 12 characters':'At least 8 characters'}" maxlength="128" autocomplete="new-password"
           oninput="App._updatePwReqs('invite-pass','invite-pw-reqs','invite-pass2','invite-pw-match'); const b=document.getElementById('invite-pw-bar');if(b)b.className='pw-strength-bar '+pwStrength(this.value)"
           onfocus="document.getElementById('invite-pw-reqs').style.display='block'"
           onkeydown="if(event.key==='Enter')document.getElementById('invite-pass2').focus()">
@@ -9599,7 +9612,7 @@ const App = {
   // Saves all user-created data to localStorage. Called after
   // every mutation. Code updates never touch localStorage, so
   // facility data (employees, buildings, shifts) is never lost.
-  persistData() {
+  persistData({ confirmWipe = false } = {}) {
     const payload = {
       v:1, savedAt:Date.now(),
       companies:this.S.companies,
@@ -9621,6 +9634,9 @@ const App = {
       // another admin has saved since our last fetch.
       const headers = { 'Content-Type': 'application/json' };
       if (this.S._dataVersion) headers['If-Match'] = '"' + this.S._dataVersion + '"';
+      // Server tripwire blocks any save that shrinks a collection by >50%.
+      // Legitimate bulk wipes (Reset to Demo) opt in explicitly.
+      if (confirmWipe) headers['X-Confirm-Wipe'] = 'yes';
       fetch('/api/data', { method: 'POST', headers, body: JSON.stringify(payload) })
         .then(async r => {
           if (r.status === 412) {
@@ -9628,6 +9644,16 @@ const App = {
             this.showToast('Another user updated this data. Reloading…', 'warn');
             const dResp = await fetch('/api/data');
             if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
+            return;
+          }
+          if (r.status === 409) {
+            // Tripwire blocked a suspicious shrink. Don't touch S — let the user
+            // retry with a fresh dataset rather than silently losing work.
+            const body = await r.json().catch(() => ({}));
+            this.showToast(
+              `Save blocked: ${body.error || 'data would have shrunk significantly'}. Reload to recover.`,
+              'warn'
+            );
             return;
           }
           if (!r.ok) {
@@ -9698,7 +9724,7 @@ const App = {
     this.S.employees        = [...SEED_EMPLOYEES];
     this.S.schedulePatterns = [];
     this.S.shifts           = generateShifts(this.S.employees);
-    this.persistData();
+    this.persistData({ confirmWipe: true });
     Audit.log('DATA_RESET', 'All facility data reset to seed by super admin', this.S.user?.id, 'high');
     this.showToast('Data reset to demo defaults');
     this.render();

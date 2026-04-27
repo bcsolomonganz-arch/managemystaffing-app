@@ -79,14 +79,27 @@ const HTML_FILE  = path.join(__dirname, 'managemystaffing.html');
 const APP_URL    = process.env.APP_URL || 'https://managemystaffing.com';
 
 // ── HIPAA SECURITY POLICY ─────────────────────────────────────────────────────
-const JWT_TTL_SECONDS      = 60 * 60;            // 1 hour absolute (HIPAA-compliant)
-const IDLE_TIMEOUT_SECONDS = 15 * 60;            // 15 min idle → server-enforced via lastActivity
+// Two security tiers:
+//   - Privileged (admin/superadmin): full HIPAA technical safeguards
+//     because they touch PHI through admin views, rosters, audit logs.
+//   - Employee (no PHI access): only see own schedule + claim shifts.
+//     §164.312 doesn't require TOTP / aggressive timeouts when the role
+//     can't access PHI, so we relax those for usability.
+const JWT_TTL_SECONDS              = 60 * 60;                  // 1h — admin/SA
+const IDLE_TIMEOUT_SECONDS         = 15 * 60;                  // 15 min idle — admin/SA
+const EMPLOYEE_JWT_TTL_SECONDS     = 60 * 60 * 24 * 30;        // 30d — employee
+const EMPLOYEE_IDLE_TIMEOUT_SECONDS = 60 * 60 * 24 * 30;       // effectively no idle — employee
 const MAX_FAILED_ATTEMPTS  = 5;
 const LOCKOUT_MS           = 30 * 60 * 1000;     // 30 min
-const PASSWORD_MIN_LENGTH  = 12;
+const PASSWORD_MIN_LENGTH          = 12;          // admin/SA
+const EMPLOYEE_PASSWORD_MIN_LENGTH = 8;           // employee — length only, no complexity rules
 const AUDIT_LOG_FILE       = process.env.AUDIT_LOG_FILE || path.join(path.dirname(DATA_FILE), 'mms-audit.log');
 const AUDIT_HMAC_KEY       = process.env.AUDIT_HMAC_KEY || (() => { throw new Error('AUDIT_HMAC_KEY required for tamper-evident audit log'); })();
 const TOTP_ISSUER          = 'ManageMyStaffing';
+
+function isPrivilegedRole(role) { return role === 'admin' || role === 'superadmin'; }
+function jwtTtlFor(role)        { return isPrivilegedRole(role) ? JWT_TTL_SECONDS : EMPLOYEE_JWT_TTL_SECONDS; }
+function idleTtlFor(role)       { return isPrivilegedRole(role) ? IDLE_TIMEOUT_SECONDS : EMPLOYEE_IDLE_TIMEOUT_SECONDS; }
 
 // ── STRUCTURED LOGGING ────────────────────────────────────────────────────────
 function log(level, msg, meta = {}) {
@@ -518,11 +531,16 @@ try {
 const _memRevokedTokens = new Set();
 const _memLastActivity = new Map();
 
+// Revoked-token / last-activity Redis entries must outlive the longest JWT,
+// otherwise a logged-out employee's 30-day cookie could be reused after the
+// 1h Redis entry expires. Use the employee TTL as the upper bound.
+const _MAX_TOKEN_TTL = Math.max(JWT_TTL_SECONDS, EMPLOYEE_JWT_TTL_SECONDS);
+
 const revokedTokens = {
   async add(token) {
     _memRevokedTokens.add(token);
     if (_redis) {
-      try { await _redis.set(`revoked:${token}`, '1', 'EX', JWT_TTL_SECONDS); } catch (e) {}
+      try { await _redis.set(`revoked:${token}`, '1', 'EX', _MAX_TOKEN_TTL); } catch (e) {}
     }
   },
   async has(token) {
@@ -538,7 +556,7 @@ const lastActivity = {
   async set(sid, ts) {
     _memLastActivity.set(sid, ts);
     if (_redis) {
-      try { await _redis.set(`act:${sid}`, String(ts), 'EX', JWT_TTL_SECONDS); } catch (e) {}
+      try { await _redis.set(`act:${sid}`, String(ts), 'EX', _MAX_TOKEN_TTL); } catch (e) {}
     }
   },
   async get(sid) {
@@ -565,10 +583,11 @@ async function requireAuth(req, res, next) {
   try {
     if (await revokedTokens.has(token)) return res.status(401).json({ error: 'Token revoked' });
     const decoded = jwt.verify(token, JWT_SECRET);
-    // Idle timeout: if last activity > 15 min ago, force logout
+    // Idle timeout: 15 min for admin/SA (HIPAA); effectively disabled for employees.
     const sid = decoded.sid;
     const last = await lastActivity.get(sid);
-    if (last && (Date.now() - last) > IDLE_TIMEOUT_SECONDS * 1000) {
+    const idleMs = idleTtlFor(decoded.role) * 1000;
+    if (last && (Date.now() - last) > idleMs) {
       await revokedTokens.add(token);
       await lastActivity.delete(sid);
       clearAuthCookie(res);
@@ -599,8 +618,17 @@ function requireSuperAdmin(req, res, next) {
 }
 
 // ── PASSWORD COMPLEXITY (HIPAA §164.308(a)(5)) ───────────────────────────────
-function validatePasswordComplexity(pw) {
+// Privileged roles (admin/superadmin) get the full HIPAA-grade rules.
+// Employee role (no PHI access) only needs length, since §164.308(a)(5)(ii)(D)
+// applies to ePHI-touching workforce.
+function validatePasswordComplexity(pw, role) {
   if (!pw || typeof pw !== 'string') return 'Password is required';
+  if (!isPrivilegedRole(role)) {
+    if (pw.length < EMPLOYEE_PASSWORD_MIN_LENGTH) {
+      return `Password must be at least ${EMPLOYEE_PASSWORD_MIN_LENGTH} characters`;
+    }
+    return null;
+  }
   if (pw.length < PASSWORD_MIN_LENGTH) return `Password must be at least ${PASSWORD_MIN_LENGTH} characters`;
   if (!/[A-Z]/.test(pw)) return 'Password must include an uppercase letter';
   if (!/[a-z]/.test(pw)) return 'Password must include a lowercase letter';
@@ -817,12 +845,12 @@ app.use('/api/', apiLimiter);
 // HIPAA §164.312(a)(2)(iv) — JWT must NOT be readable by JavaScript.
 // httpOnly + Secure + SameSite=Strict prevents XSS exfiltration and CSRF.
 const COOKIE_NAME = 'mms_session';
-function setAuthCookie(res, token) {
+function setAuthCookie(res, token, ttlSeconds) {
   res.cookie(COOKIE_NAME, token, {
     httpOnly: true,
     secure:   IS_PROD,                      // local dev allows http
     sameSite: 'strict',
-    maxAge:   JWT_TTL_SECONDS * 1000,
+    maxAge:   (ttlSeconds || JWT_TTL_SECONDS) * 1000,
     path:     '/',
     signed:   false,                        // signing the cookie isn't needed (JWT is self-signed)
   });
@@ -997,7 +1025,12 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
   clearFailedAttempts(acct);
 
-  // TOTP gating: all non-demo accounts require TOTP.
+  // TOTP gating: required for privileged roles (admin/SA) only.
+  // Employees don't access PHI, so HIPAA §164.312 doesn't require 2FA for them.
+  // Skip TOTP entirely → straight to token.
+  if (!isDemo && !isPrivilegedRole(acct.role)) {
+    return _issueToken(req, res, acct, data);
+  }
   if (!isDemo) {
     if (!acct.totpSecret) {
       // First-time TOTP enrollment
@@ -1119,9 +1152,10 @@ async function _issueToken(req, res, acct, data) {
     demo:       isDemo || undefined,
     sid,
   };
-  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_TTL_SECONDS });
+  const ttl = jwtTtlFor(acct.role);
+  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: ttl });
   await lastActivity.set(sid, Date.now());
-  setAuthCookie(res, token);                // ← XSS-safe httpOnly cookie
+  setAuthCookie(res, token, ttl);           // ← XSS-safe httpOnly cookie, role-aware TTL
   auditLog('LOGIN_SUCCESS', acct, { sid });
   return res.json({ user: payload, authVia: 'cookie' });
 }
@@ -1165,6 +1199,19 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   const payload = req.body;
   if (!payload || typeof payload !== 'object') return res.status(400).json({ error: 'Invalid payload' });
 
+  // ── Reject empty / garbage bodies ────────────────────────────────────────
+  // A POST that doesn't include ANY of the expected top-level collections is
+  // almost certainly a client bug (missing Content-Type header, etc.). We
+  // refuse to write rather than risk no-op or partial overwrite.
+  const KNOWN_KEYS = ['buildings','employees','shifts','schedulePatterns',
+                      'hrEmployees','hrTimeClock','accounts','companies',
+                      'jobPostings','hrAccounts'];
+  const present = KNOWN_KEYS.filter(k => k in payload);
+  if (present.length === 0) {
+    auditLog('DATA_UPDATE_REJECTED_EMPTY', req.user, { keys: Object.keys(payload) });
+    return res.status(400).json({ error: 'Payload contains no recognized data collections' });
+  }
+
   // Optimistic concurrency: if client sent If-Match, must match current version.
   // Without this, two concurrent edits silently overwrite each other.
   const ifMatch = (req.headers['if-match'] || '').replace(/"/g, '');
@@ -1178,6 +1225,45 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   }
 
   const data = await loadData();
+
+  // ── Tripwire: refuse writes that would drop existing collections ─────────
+  // If a client sends an array that is dramatically smaller than what we
+  // already have, treat it as suspicious and reject unless the caller has
+  // explicitly opted in via X-Confirm-Wipe: yes (used by SA "Reset to Demo").
+  // This is a belt-and-suspenders defense — even with mergeScoped's safeties,
+  // we never want to silently shrink data because of a client bug.
+  const confirmWipe = String(req.headers['x-confirm-wipe'] || '').toLowerCase() === 'yes';
+  if (!confirmWipe) {
+    const TRIPWIRE = [
+      ['shifts',           data.shifts,           payload.shifts],
+      ['employees',        data.employees,        payload.employees],
+      ['buildings',        data.buildings,        payload.buildings],
+      ['accounts',         data.accounts,         payload.accounts],
+      ['schedulePatterns', data.schedulePatterns, payload.schedulePatterns],
+    ];
+    for (const [name, existing, incoming] of TRIPWIRE) {
+      if (!Array.isArray(incoming)) continue;
+      const exLen = (existing || []).length;
+      const inLen = incoming.length;
+      // Reject if existing collection had ≥10 items and the incoming write
+      // would drop it by more than 50% (tunable). The threshold trades a tiny
+      // bit of legitimate-bulk-delete friction for absolute protection
+      // against silent wipes.
+      if (exLen >= 10 && inLen < Math.ceil(exLen * 0.5)) {
+        auditLog('DATA_UPDATE_REJECTED_SHRINK', req.user, {
+          collection: name, existingCount: exLen, incomingCount: inLen,
+        });
+        return res.status(409).json({
+          error: `Refusing to shrink ${name} from ${exLen} to ${inLen}. ` +
+                 'If this is intentional, retry with X-Confirm-Wipe: yes.',
+          collection: name,
+          existingCount: exLen,
+          incomingCount: inLen,
+        });
+      }
+    }
+  }
+
   const isSA = req.user.role === 'superadmin';
   const callerBId = req.user.buildingId;
   const callerBIds = new Set([callerBId, ...(req.user.buildingIds||[])].filter(Boolean));
@@ -1509,7 +1595,7 @@ app.get('/api/auth/password-reset/verify', inviteVerifyLimiter, async (req, res)
   }
   const ok = await bcrypt.compare(String(token), acct.passwordResetTokenHash);
   if (!ok) return res.status(404).json({ error: 'Invalid or expired reset link' });
-  res.json({ ok: true, email: acct.email, name: acct.name });
+  res.json({ ok: true, email: acct.email, name: acct.name, role: acct.role });
 });
 
 // ── POST /api/auth/password-reset/complete ────────────────────────────────────
@@ -1517,9 +1603,6 @@ app.get('/api/auth/password-reset/verify', inviteVerifyLimiter, async (req, res)
 app.post('/api/auth/password-reset/complete', authLimiter, async (req, res) => {
   const { token, u, password } = req.body || {};
   if (!token || !u || !password) return res.status(400).json({ error: 'token, u, and password are required' });
-
-  const complexityErr = validatePasswordComplexity(password);
-  if (complexityErr) return res.status(400).json({ error: complexityErr });
 
   const data = await loadData();
   const acct = (data.accounts || []).find(a => a.id === u);
@@ -1529,6 +1612,10 @@ app.post('/api/auth/password-reset/complete', authLimiter, async (req, res) => {
   }
   const ok = await bcrypt.compare(String(token), acct.passwordResetTokenHash);
   if (!ok) return res.status(404).json({ error: 'Invalid or expired reset link' });
+
+  // Validate with the account's role (employees get the relaxed rule).
+  const complexityErr = validatePasswordComplexity(password, acct.role);
+  if (complexityErr) return res.status(400).json({ error: complexityErr });
 
   // Set new password + invalidate the reset token + clear lockout
   acct.ph = await bcrypt.hash(password, 12);
@@ -1553,7 +1640,7 @@ app.get('/api/invite/verify', inviteVerifyLimiter, async (req, res) => {
   if (acct.inviteExpiry && Date.now() > acct.inviteExpiry) {
     return res.status(410).json({ error: 'This invitation has expired. Please request a new one.' });
   }
-  res.json({ ok: true, email: acct.email, name: acct.name, buildingId: acct.buildingId });
+  res.json({ ok: true, email: acct.email, name: acct.name, buildingId: acct.buildingId, role: acct.role });
 });
 
 // ── POST /api/invite/accept ───────────────────────────────────────────────────
@@ -1562,15 +1649,16 @@ app.post('/api/invite/accept', authLimiter, async (req, res) => {
   const { token, password } = req.body || {};
   if (!token || !password) return res.status(400).json({ error: 'token and password are required' });
 
-  const complexityErr = validatePasswordComplexity(password);
-  if (complexityErr) return res.status(400).json({ error: complexityErr });
-
   const data = await loadData();
   const acct = (data.accounts || []).find(a => a.inviteToken === token);
   if (!acct) return res.status(404).json({ error: 'Invalid or expired invitation' });
   if (acct.inviteExpiry && Date.now() > acct.inviteExpiry) {
     return res.status(410).json({ error: 'This invitation has expired.' });
   }
+
+  // Validate with the account's role (employees get the relaxed rule).
+  const complexityErr = validatePasswordComplexity(password, acct.role);
+  if (complexityErr) return res.status(400).json({ error: complexityErr });
 
   acct.ph             = await bcrypt.hash(password, 12);
   acct.inviteToken    = undefined;

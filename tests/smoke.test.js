@@ -184,3 +184,44 @@ test('Rate limit on /api/invite/verify (>20 in 60s → 429)', async () => {
   }
   assert.ok(blocked, 'rate limit on /api/invite/verify must trigger');
 });
+
+test('POST /api/data with empty body is rejected (no recognized collections)', async () => {
+  const login = await fetch(`${BASE}/api/auth/login`, {
+    method: 'POST', headers: CSRF,
+    body: JSON.stringify({ email: 'demo@demo.com', password: 'x' }),
+  });
+  const cookie = extractCookie(login);
+  const r = await fetch(`${BASE}/api/data`, {
+    method: 'POST', headers: { ...CSRF, 'Cookie': cookie },
+    body: JSON.stringify({}),
+  });
+  assert.equal(r.status, 400, 'empty payload must be rejected, not silently succeed');
+  const body = await r.json();
+  assert.match(body.error || '', /no recognized data collections/i);
+});
+
+test('POST /api/data tripwire: large shrink without X-Confirm-Wipe → 409', async () => {
+  const login = await fetch(`${BASE}/api/auth/login`, {
+    method: 'POST', headers: CSRF,
+    body: JSON.stringify({ email: 'demo@demo.com', password: 'x' }),
+  });
+  const cookie = extractCookie(login);
+
+  // Pull existing data
+  const get = await fetch(`${BASE}/api/data`, {
+    headers: { 'X-Requested-With': 'XMLHttpRequest', 'Cookie': cookie },
+  });
+  const data = await get.json();
+  if ((data.shifts || []).length < 10) {
+    // Demo seed has plenty of shifts; if not, skip — tripwire requires ≥10.
+    return;
+  }
+
+  const r = await fetch(`${BASE}/api/data`, {
+    method: 'POST', headers: { ...CSRF, 'Cookie': cookie },
+    body: JSON.stringify({ ...data, shifts: [] }),
+  });
+  assert.equal(r.status, 409, 'shrinking shifts to 0 must be blocked without X-Confirm-Wipe');
+  const body = await r.json();
+  assert.match(body.error || '', /Refusing to shrink/i);
+});
