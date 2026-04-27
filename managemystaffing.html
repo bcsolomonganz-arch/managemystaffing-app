@@ -15,6 +15,14 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+/* WCAG 2.4.7 — visible focus indicator on all interactive elements */
+:focus-visible{outline:2px solid #537E61;outline-offset:2px;border-radius:3px}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[role="button"]:focus-visible{outline:2px solid #537E61;outline-offset:2px}
+/* WCAG 2.4.1 — skip link, visible only on focus */
+.skip-link{position:absolute;top:-40px;left:8px;padding:8px 16px;background:#fff;color:#537E61;border:2px solid #537E61;border-radius:6px;font-weight:700;font-size:14px;z-index:99999;text-decoration:none}
+.skip-link:focus{top:8px}
+/* WCAG 1.4.11 — visually-hidden helper for screen-reader-only labels */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 :root{
   --blue:#6B9E7A;--blue-d:#537E61;--blue-l:#EEF6F1;--blue-m:#B2D9BC;
   --green:#059669;--green-l:#ECFDF5;--green-m:#6EE7B7;
@@ -39,15 +47,15 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .login-logo-text{font-size:20px;font-weight:700}
 .login-logo-sub{font-size:11px;color:var(--g500);display:block;margin-top:-2px}
 .demo-bar{background:var(--blue-l);border:1px solid var(--blue-m);border-radius:var(--radius);padding:14px;margin-bottom:20px}
-.demo-bar strong{color:var(--blue);display:block;margin-bottom:8px;font-size:13px}
+.demo-bar strong{color:var(--blue-d);display:block;margin-bottom:8px;font-size:13px}
 .demo-links{display:flex;flex-direction:column;gap:6px}
 .demo-link{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#fff;border:1.5px solid var(--blue-m);border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--g800);transition:all .15s}
-.demo-link:hover{background:var(--blue-l);border-color:var(--blue)}
+.demo-link:hover{background:var(--blue-l);border-color:var(--blue-d)}
 .demo-link-role{font-size:11px;color:var(--g500);margin-left:auto}
 .form-group{margin-bottom:16px}
 .form-group label{display:block;font-size:13px;font-weight:600;color:var(--g700);margin-bottom:6px}
 .form-group input,.form-group select,.form-group textarea{width:100%;padding:10px 12px;border:1.5px solid var(--g200);border-radius:var(--radius);font-family:inherit;font-size:14px;color:var(--g900);background:#fff;transition:border-color .15s}
-.form-group input:focus,.form-group select:focus,.form-group textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(107,158,122,.15)}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{outline:none;border-color:var(--blue-d);box-shadow:0 0 0 3px rgba(107,158,122,.15)}
 .btn{display:inline-flex;align-items:center;gap:6px;padding:10px 18px;border-radius:var(--radius);font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;border:none;transition:all .15s;white-space:nowrap}
 .btn-primary{background:var(--blue);color:#fff}.btn-primary:hover{background:var(--blue-d)}
 .btn-secondary{background:#fff;color:var(--g700);border:1.5px solid var(--g200)}.btn-secondary:hover{background:var(--g50);border-color:var(--g300)}
@@ -66,7 +74,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .header-nav{flex:1;display:flex;align-items:center;justify-content:center;gap:8px}
 .month-nav{display:flex;align-items:center;gap:12px}
 .month-nav button{width:32px;height:32px;border-radius:8px;border:1.5px solid var(--g200);background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--g600);transition:all .15s}
-.month-nav button:hover{border-color:var(--blue);color:var(--blue);background:var(--blue-l)}
+.month-nav button:hover{border-color:var(--blue-d);color:var(--blue-d);background:var(--blue-l)}
 .month-nav h2{font-size:17px;font-weight:700;min-width:160px;text-align:center}
 .header-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
 .role-badge{padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;letter-spacing:.02em}
@@ -89,10 +97,10 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 /* SIDEBAR */
 .sidebar{width:var(--sidebar);background:#fff;border-right:1px solid var(--g200);position:fixed;top:var(--header);bottom:0;left:0;overflow-y:auto;z-index:90}
 .sidebar::-webkit-scrollbar{width:4px}.sidebar::-webkit-scrollbar-thumb{background:var(--g200);border-radius:2px}
-.sidebar-section-title{font-size:11px;font-weight:700;color:var(--g400);letter-spacing:.08em;text-transform:uppercase;padding:16px 16px 8px}
+.sidebar-section-title{font-size:11px;font-weight:700;color:var(--g600);letter-spacing:.08em;text-transform:uppercase;padding:16px 16px 8px}
 .group-item{display:flex;align-items:center;gap:10px;padding:9px 16px;cursor:pointer;border-radius:8px;margin:1px 8px;transition:all .15s;font-size:14px;font-weight:500;color:var(--g700)}
 .group-item:hover{background:var(--g50);color:var(--g900)}
-.group-item.active{background:var(--blue-l);color:var(--blue);font-weight:600}
+.group-item.active{background:var(--blue-l);color:var(--blue-d);font-weight:600}
 .group-icon{width:28px;height:28px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
 .group-badge{margin-left:auto;background:var(--g100);color:var(--g500);font-size:11px;font-weight:600;padding:2px 7px;border-radius:20px}
 .group-item.active .group-badge{background:var(--blue-m);color:var(--blue-d)}
@@ -112,7 +120,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .hr-stat-lbl{font-size:11px;font-weight:600;color:var(--g500)}
 .hr-section{background:#fff;border:1px solid var(--g200);border-radius:12px;overflow:hidden;box-shadow:var(--shadow)}
 .hr-section-hdr{padding:14px 18px;border-bottom:1px solid var(--g100);display:flex;align-items:center;justify-content:space-between}
-.hr-section-title{font-size:11px;font-weight:700;color:var(--g400);letter-spacing:.08em;text-transform:uppercase}
+.hr-section-title{font-size:11px;font-weight:700;color:var(--g600);letter-spacing:.08em;text-transform:uppercase}
 .hr-row{display:flex;align-items:center;gap:12px;padding:13px 18px;border-bottom:1px solid var(--g100);transition:background .12s;cursor:pointer}
 .hr-row:hover{background:var(--g50)}
 .hr-row:last-child{border-bottom:none}
@@ -126,10 +134,10 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .hr-qa-item{display:flex;align-items:center;gap:14px;padding:14px 18px;border-bottom:1px solid var(--g100);cursor:pointer;transition:background .12s}
 .hr-qa-item:hover{background:var(--g50)}
 .hr-qa-item:last-child{border-bottom:none}
-.hr-qa-icon{width:34px;height:34px;border-radius:9px;background:var(--blue-l);display:flex;align-items:center;justify-content:center;color:var(--blue);flex-shrink:0}
+.hr-qa-icon{width:34px;height:34px;border-radius:9px;background:var(--blue-l);display:flex;align-items:center;justify-content:center;color:var(--blue-d);flex-shrink:0}
 .hr-nav-item{display:flex;align-items:center;gap:10px;padding:9px 16px;cursor:pointer;border-radius:8px;margin:1px 8px;transition:all .15s;font-size:14px;font-weight:500;color:var(--g700)}
 .hr-nav-item:hover{background:var(--g50);color:var(--g900)}
-.hr-nav-item.active{background:var(--blue-l);color:var(--blue);font-weight:600}
+.hr-nav-item.active{background:var(--blue-l);color:var(--blue-d);font-weight:600}
 .hr-page-title{font-size:22px;font-weight:800;color:var(--g900);margin-bottom:2px}
 .hr-page-sub{font-size:13px;color:var(--g500);margin-bottom:20px}
 .hr-doc-row{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--g100)}
@@ -141,7 +149,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 /* ── SHARED FORM HELPERS (used in job modal) ───── */
 .form-lbl{display:block;font-size:12px;font-weight:700;color:var(--g700);margin-bottom:5px;letter-spacing:.01em}
 .form-inp{width:100%;padding:9px 12px;border:1.5px solid var(--g200);border-radius:8px;font-family:inherit;font-size:13px;color:var(--g900);background:#fff;transition:border-color .15s;resize:vertical}
-.form-inp:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(107,158,122,.15)}
+.form-inp:focus{outline:none;border-color:var(--blue-d);box-shadow:0 0 0 3px rgba(107,158,122,.15)}
 /* ── RECRUITING MODULE ─────────────────────────── */
 .job-card{background:#fff;border:1.5px solid var(--g200);border-radius:12px;padding:18px 20px;margin-bottom:12px;cursor:default;transition:border-color .15s,box-shadow .15s}
 .job-card:hover{border-color:var(--blue-m);box-shadow:var(--shadow-md)}
@@ -150,7 +158,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .job-status-paused{background:#FFF7ED;color:#C2410C;border:1px solid #FED7AA;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700}
 .job-status-closed{background:var(--red-l);color:var(--red);border:1px solid #FECACA;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700}
 .platform-btn{display:flex;align-items:center;gap:10px;padding:12px 16px;border:1.5px solid var(--g200);border-radius:10px;background:#fff;cursor:pointer;transition:all .15s;text-align:left;width:100%}
-.platform-btn:hover{border-color:var(--blue);background:var(--blue-l)}
+.platform-btn:hover{border-color:var(--blue-d);background:var(--blue-l)}
 .platform-btn.posted{border-color:#6EE7B7;background:#ECFDF5}
 .pcc-status-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700}
 .pcc-connected{background:#ECFDF5;color:#065F46}
@@ -186,7 +194,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 /* CALENDAR */
 .cal-grid{background:#fff;border-radius:var(--radius-lg);border:1px solid var(--g200);overflow:hidden;box-shadow:var(--shadow)}
 .cal-header-row{display:grid;grid-template-columns:repeat(7,1fr);border-bottom:1px solid var(--g200)}
-.cal-dow{padding:10px 0;text-align:center;font-size:12px;font-weight:700;color:var(--g400);letter-spacing:.05em;text-transform:uppercase}
+.cal-dow{padding:10px 0;text-align:center;font-size:12px;font-weight:700;color:var(--g600);letter-spacing:.05em;text-transform:uppercase}
 .cal-days{display:grid;grid-template-columns:repeat(7,1fr)}
 .cal-cell{min-height:100px;border-right:1px solid var(--g100);border-bottom:1px solid var(--g100);padding:8px;cursor:pointer;transition:background .15s;position:relative}
 .cal-cell:nth-child(7n){border-right:none}
@@ -223,7 +231,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .cal-chip.sched{background:var(--blue-l);color:var(--blue-d)}
 .cal-chip.open{background:var(--blue-l);color:var(--blue-d);border:1px solid var(--blue-m)}
 .shift-row{display:flex;align-items:center;gap:4px;margin-bottom:2px}
-.shift-label{font-size:10px;font-weight:700;color:var(--g400);width:22px;flex-shrink:0}
+.shift-label{font-size:10px;font-weight:700;color:var(--g600);width:22px;flex-shrink:0}
 .shift-emp{background:var(--blue-l);color:var(--blue-d);padding:1px 5px;border-radius:3px;font-size:10px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:66px}
 .shift-open-tag{background:#fff;color:var(--blue-d);padding:1px 5px;border-radius:3px;font-size:10px;font-weight:600;border:1.5px dashed var(--blue-m)}
 .pattern-dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:2px}
@@ -275,14 +283,14 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .checkbox-group{display:flex;flex-direction:column;gap:8px}
 .checkbox-item{display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px 12px;border-radius:8px;border:1.5px solid var(--g200);transition:all .15s}
 .checkbox-item:hover{border-color:var(--blue-m);background:var(--blue-l)}
-.checkbox-item input{width:16px;height:16px;margin-top:1px;cursor:pointer;accent-color:var(--blue);flex-shrink:0}
+.checkbox-item input{width:16px;height:16px;margin-top:1px;cursor:pointer;accent-color:var(--blue-d);flex-shrink:0}
 .checkbox-label{font-size:13px;font-weight:500;color:var(--g800);flex:1}
 .checkbox-desc{font-size:12px;color:var(--g500);font-weight:400;margin-top:2px}
 .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 
 /* Roster */
 .roster-table{width:100%;border-collapse:collapse}
-.roster-table th{padding:9px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;border-bottom:1.5px solid var(--g200);background:var(--g50)}
+.roster-table th{padding:9px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em;border-bottom:1.5px solid var(--g200);background:var(--g50)}
 .roster-table td{padding:11px 14px;border-bottom:1px solid var(--g100);font-size:13px;vertical-align:middle}
 .roster-table tr:last-child td{border-bottom:none}
 .roster-table tr.inactive-row td{opacity:.55}
@@ -300,14 +308,14 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .notif-timing-row:has(input.notif-main:checked){border-color:var(--blue-m)}
 .notif-row-main{display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;background:#fff;transition:background .15s}
 .notif-row-main:hover{background:var(--blue-l)}
-.notif-row-main input{width:15px;height:15px;cursor:pointer;accent-color:var(--blue);flex-shrink:0;margin-top:0}
+.notif-row-main input{width:15px;height:15px;cursor:pointer;accent-color:var(--blue-d);flex-shrink:0;margin-top:0}
 .notif-row-icon{width:26px;height:26px;border-radius:6px;background:var(--blue-l);color:var(--blue-d);display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .notif-row-label{font-size:13px;font-weight:500;color:var(--g800);flex:1}
 .notif-channels{display:flex;gap:6px;padding:8px 12px 10px 47px;background:var(--g50);border-top:1px solid var(--g100)}
 .notif-channel{display:flex;align-items:center;gap:5px;padding:4px 10px;border:1.5px solid var(--g200);border-radius:20px;cursor:pointer;font-size:12px;font-weight:500;color:var(--g600);background:#fff;transition:all .15s;user-select:none}
 .notif-channel:hover{border-color:var(--blue-m);background:var(--blue-l);color:var(--blue-d)}
-.notif-channel input{accent-color:var(--blue);cursor:pointer;width:12px;height:12px;flex-shrink:0}
-.notif-channel:has(input:checked){border-color:var(--blue);background:var(--blue-l);color:var(--blue-d)}
+.notif-channel input{accent-color:var(--blue-d);cursor:pointer;width:12px;height:12px;flex-shrink:0}
+.notif-channel:has(input:checked){border-color:var(--blue-d);background:var(--blue-l);color:var(--blue-d)}
 
 /* SUPER ADMIN */
 .sa-page{padding:32px}
@@ -315,7 +323,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .sa-hero h1{font-size:28px;font-weight:700;color:var(--g900);margin-bottom:4px}
 .sa-hero p{font-size:15px;color:var(--g500)}
 /* SA SIDEBAR */
-.sa-nav-section{font-size:11px;font-weight:700;color:var(--g400);letter-spacing:.08em;text-transform:uppercase;padding:16px 16px 8px}
+.sa-nav-section{font-size:11px;font-weight:700;color:var(--g600);letter-spacing:.08em;text-transform:uppercase;padding:16px 16px 8px}
 .sa-nav-item{display:flex;align-items:center;gap:10px;padding:9px 16px;cursor:pointer;border-radius:8px;margin:1px 8px;transition:all .15s;font-size:13px;font-weight:500;color:var(--g700)}
 .sa-nav-item:hover{background:var(--g50);color:var(--g900)}
 .sa-nav-item.active{background:var(--blue-l);color:var(--blue-d);font-weight:700}
@@ -328,10 +336,10 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .demo-status-completed{background:var(--g100);color:var(--g600);padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700}
 .demo-status-converted{background:#FDF4FF;color:#7E22CE;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700}
 .demo-status-noshow{background:var(--red-l);color:var(--red);padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700}
-.demo-status-declined{background:var(--g100);color:var(--g400);padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700}
+.demo-status-declined{background:var(--g100);color:var(--g600);padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700}
 .demo-cal-cell{background:#fff;border:1px solid var(--g200);border-radius:8px;padding:6px 8px;min-height:64px;cursor:pointer;transition:background .12s;position:relative}
 .demo-cal-cell:hover{background:var(--g50)}
-.demo-cal-cell.today{border-color:var(--blue);background:var(--blue-l)}
+.demo-cal-cell.today{border-color:var(--blue-d);background:var(--blue-l)}
 .demo-cal-cell.has-demo::after{content:'';position:absolute;bottom:5px;left:50%;transform:translateX(-50%);width:6px;height:6px;border-radius:50%;background:var(--blue)}
 /* BILLING */
 .billing-stat-card{background:#fff;border:1px solid var(--g200);border-radius:12px;padding:18px 20px;box-shadow:var(--shadow)}
@@ -344,7 +352,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .billing-status-trial{background:#FFFBEB;color:#92400E;padding:3px 8px;border-radius:12px;font-size:11px;font-weight:700}
 /* PAYMENT FORM */
 .payment-method-tab{flex:1;padding:10px;border:1.5px solid var(--g200);border-radius:8px;background:#fff;cursor:pointer;text-align:center;font-size:13px;font-weight:600;color:var(--g600);transition:all .15s}
-.payment-method-tab.active{border-color:var(--blue);background:var(--blue-l);color:var(--blue-d)}
+.payment-method-tab.active{border-color:var(--blue-d);background:var(--blue-l);color:var(--blue-d)}
 .buildings-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px}
 .building-card{background:#fff;border:1px solid var(--g200);border-radius:var(--radius-lg);padding:24px;box-shadow:var(--shadow);transition:all .2s;position:relative;overflow:hidden}
 .building-card::before{content:'';position:absolute;top:0;left:0;right:0;height:4px;background:var(--blue)}
@@ -370,7 +378,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .pattern-tiles{display:flex;flex-wrap:wrap;gap:8px;padding:16px;background:var(--g50);border-radius:var(--radius);margin-bottom:12px;min-height:72px;align-items:center}
 .pattern-tile{width:48px;height:56px;border-radius:8px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:11px;font-weight:700;transition:all .15s;border:2px solid transparent;user-select:none;gap:4px;position:relative}
 .pattern-tile.on{background:var(--blue);color:#fff;border-color:var(--blue-d)}
-.pattern-tile.off{background:#fff;color:var(--g400);border-color:var(--g200)}
+.pattern-tile.off{background:#fff;color:var(--g600);border-color:var(--g200)}
 .pattern-tile:hover.on{background:var(--blue-d)}
 .pattern-tile:hover.off{background:var(--g100);border-color:var(--g300)}
 .pattern-tile-label{font-size:9px;font-weight:600;text-transform:uppercase;opacity:.7}
@@ -378,16 +386,16 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .pattern-tile:hover .pattern-tile-del{opacity:1}
 .preset-btns{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
 .preset-btn{padding:6px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;border:1.5px solid var(--g200);background:#fff;color:var(--g700);transition:all .15s}
-.preset-btn:hover{border-color:var(--blue);color:var(--blue);background:var(--blue-l)}
-.preset-btn.active{border-color:var(--blue);color:var(--blue-d);background:var(--blue-l)}
+.preset-btn:hover{border-color:var(--blue-d);color:var(--blue-d);background:var(--blue-l)}
+.preset-btn.active{border-color:var(--blue-d);color:var(--blue-d);background:var(--blue-l)}
 .pattern-preview{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:8px}
 .preview-day{padding:6px 4px;border-radius:6px;text-align:center;font-size:11px;font-weight:600;border:1.5px solid transparent}
-.preview-day.on{background:var(--blue-l);color:var(--blue);border-color:var(--blue-m)}
-.preview-day.off{background:var(--g100);color:var(--g400);border-color:var(--g200)}
+.preview-day.on{background:var(--blue-l);color:var(--blue-d);border-color:var(--blue-m)}
+.preview-day.off{background:var(--g100);color:var(--g600);border-color:var(--g200)}
 .preview-day.today-marker{outline:2px solid var(--blue);outline-offset:1px}
 .duration-tabs{display:flex;gap:6px;flex-wrap:wrap}
 .duration-tab{padding:7px 14px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;border:1.5px solid var(--g200);background:#fff;color:var(--g700);transition:all .15s}
-.duration-tab.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+.duration-tab.active{background:var(--blue);color:#fff;border-color:var(--blue-d)}
 
 /* ADMIN TABLE */
 .admin-table{width:100%;border-collapse:collapse}
@@ -406,7 +414,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 /* MISC */
 .tag{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600}
 .tag-blue{background:var(--blue-l);color:var(--blue-d)}.tag-green{background:var(--blue-l);color:var(--blue-d)}.tag-amber{background:var(--g100);color:var(--g700);border:1px solid var(--g300)}.tag-red{background:var(--red-l);color:var(--red)}.tag-purple{background:var(--blue-l);color:var(--blue-d)}
-.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;color:var(--g400);gap:12px;text-align:center}
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;color:var(--g600);gap:12px;text-align:center}
 .empty-icon{font-size:48px;opacity:.4}
 .empty-text{font-size:15px;font-weight:600;color:var(--g500)}
 .toast{position:fixed;bottom:24px;right:24px;background:var(--g900);color:#fff;padding:12px 20px;border-radius:var(--radius);font-size:14px;font-weight:500;z-index:999;display:none;align-items:center;gap:8px;box-shadow:var(--shadow-lg);animation:slideUp .2s ease}
@@ -426,7 +434,7 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
 .lock-card h2{color:#F9FAFB;font-size:18px;margin:0}
 .lock-card p{color:#9CA3AF;font-size:13px;text-align:center;margin:0;line-height:1.6}
 .lock-input{width:100%;padding:12px 14px;border:2px solid #374151;background:#111827;color:#F9FAFB;border-radius:8px;font-size:15px;font-family:inherit;outline:none;transition:border-color .15s}
-.lock-input:focus{border-color:var(--blue)}
+.lock-input:focus{border-color:var(--blue-d)}
 /* HIPAA privacy notice */
 .hipaa-banner{display:flex;align-items:center;gap:8px;background:#ECFDF5;border:1px solid #6EE7B7;border-radius:6px;padding:8px 12px;margin-bottom:16px;font-size:12px;color:#065F46;font-weight:500}
 .hipaa-badge-sm{display:inline-flex;align-items:center;gap:4px;background:#ECFDF5;border:1px solid #6EE7B7;color:#065F46;font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px;letter-spacing:.3px}
@@ -461,7 +469,7 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
 /* Audit log */
 .audit-row{display:flex;gap:10px;align-items:flex-start;padding:9px 16px;border-bottom:1px solid var(--g100);font-size:12px}
 .audit-row:hover{background:var(--g50)}
-.audit-ts{color:var(--g400);font-family:'JetBrains Mono',monospace;font-size:10px;white-space:nowrap;padding-top:1px;min-width:130px}
+.audit-ts{color:var(--g600);font-family:'JetBrains Mono',monospace;font-size:10px;white-space:nowrap;padding-top:1px;min-width:130px}
 .audit-action{flex:1;color:var(--g700)}
 .audit-user{color:var(--blue-d);font-weight:600}
 .audit-risk{font-size:10px;font-weight:700;padding:2px 6px;border-radius:10px;white-space:nowrap}
@@ -482,6 +490,8 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
 </style>
 </head>
 <body>
+<!-- WCAG 2.4.1 — skip link, first focusable element on every page -->
+<a href="#main" class="skip-link">Skip to main content</a>
 
 <!-- LOGIN -->
 <div id="login-page">
@@ -513,25 +523,25 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
     <div class="demo-bar">
       <strong>Quick Demo Access</strong>
       <div class="demo-links">
-        <div class="demo-link" onclick="App.quickLogin('solomong@managemystaffing.com','demo')">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        <button type="button" class="demo-link" onclick="App.quickLogin('solomong@managemystaffing.com','demo')">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           Super Admin
           <span class="demo-link-role">Platform View</span>
-        </div>
-        <div class="demo-link" onclick="App.quickLogin('demo@demo.com','demo')">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M3 21h18M3 7l9-4 9 4M5 21V7M19 21V7"/><path d="M9 21v-4h6v4"/></svg>
+        </button>
+        <button type="button" class="demo-link" onclick="App.quickLogin('demo@demo.com','demo')">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0" aria-hidden="true"><path d="M3 21h18M3 7l9-4 9 4M5 21V7M19 21V7"/><path d="M9 21v-4h6v4"/></svg>
           Admin
           <span class="demo-link-role">Facility View</span>
-        </div>
-        <div class="demo-link" onclick="App.quickLogin('nurse@demo.com','demo')">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="8" r="4"/><path d="M6 20v-2a6 6 0 0 1 12 0v2"/><path d="M12 12v3M9.5 15.5l2.5 2.5 2.5-2.5"/></svg>
+        </button>
+        <button type="button" class="demo-link" onclick="App.quickLogin('nurse@demo.com','demo')">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M6 20v-2a6 6 0 0 1 12 0v2"/><path d="M12 12v3M9.5 15.5l2.5 2.5 2.5-2.5"/></svg>
           Nurse
           <span class="demo-link-role">Employee View</span>
-        </div>
+        </button>
       </div>
     </div>
     <div class="hipaa-banner"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> HIPAA Compliant — All access is logged and monitored</div>
-    <div id="login-error" class="login-error-msg"></div>
+    <div id="login-error" class="login-error-msg" role="alert" aria-live="assertive"></div>
     <div id="saved-accounts-bar" style="display:none;margin-bottom:14px"></div>
     <div class="form-group"><label>Email</label><input type="email" id="login-email" placeholder="you@example.com" autocomplete="username" maxlength="254"></div>
     <div class="form-group">
@@ -541,12 +551,12 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;color:var(--g600)">
-        <input type="checkbox" id="remember-me" style="accent-color:var(--blue);width:15px;height:15px">
+        <input type="checkbox" id="remember-me" style="accent-color:var(--blue-d);width:15px;height:15px">
         Remember me
       </label>
     </div>
     <button class="btn btn-primary btn-full" onclick="App.loginForm()">Sign In</button>
-    <p style="font-size:11px;color:var(--g400);text-align:center;margin-top:12px">Unauthorized access is prohibited. All sessions are monitored and audited per HIPAA 45 CFR §164.312.</p>
+    <p style="font-size:11px;color:var(--g600);text-align:center;margin-top:12px">Unauthorized access is prohibited. All sessions are monitored and audited per HIPAA 45 CFR §164.312.</p>
   </div>
 </div>
 
@@ -577,7 +587,7 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
 <!-- MODAL: Add Company -->
 <div class="modal-overlay" id="modal-company">
   <div class="modal" style="max-width:420px">
-    <div class="modal-header"><span class="modal-title"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;color:var(--blue)"><rect x="2" y="7" width="16" height="12" rx="1.5"/><path d="M6 7V5a6 6 0 0 1 8 0v2"/></svg>Add Company</span><button class="modal-close" onclick="App.closeModal('modal-company')">✕</button></div>
+    <div class="modal-header"><span class="modal-title"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;color:var(--blue-d)"><rect x="2" y="7" width="16" height="12" rx="1.5"/><path d="M6 7V5a6 6 0 0 1 8 0v2"/></svg>Add Company</span><button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-company')">✕</button></div>
     <div class="modal-body">
       <div class="form-group"><label>Company Name</label><input type="text" id="co-name" placeholder="Sunrise Health Group"></div>
       <div class="form-group"><label>Color</label>
@@ -604,16 +614,16 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
 <!-- MODAL: Add Building -->
 <div class="modal-overlay" id="modal-building">
   <div class="modal">
-    <div class="modal-header"><span class="modal-title"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px;color:var(--blue)"><rect x="2" y="7" width="16" height="12" rx="1.5"/><path d="M6 7V5a4 4 0 0 1 8 0v2"/><rect x="8" y="11" width="4" height="4" rx="0.5"/></svg>Add New Facility</span><button class="modal-close" onclick="App.closeModal('modal-building')">✕</button></div>
+    <div class="modal-header"><span class="modal-title"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px;color:var(--blue-d)"><rect x="2" y="7" width="16" height="12" rx="1.5"/><path d="M6 7V5a4 4 0 0 1 8 0v2"/><rect x="8" y="11" width="4" height="4" rx="0.5"/></svg>Add New Facility</span><button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-building')">✕</button></div>
     <div class="modal-body">
-      <div class="form-group"><label>Company <span style="color:var(--g400);font-weight:400">(optional)</span></label><select id="b-company"><option value="">— Independent / No Company —</option></select></div>
+      <div class="form-group"><label>Company <span style="color:var(--g600);font-weight:400">(optional)</span></label><select id="b-company"><option value="">— Independent / No Company —</option></select></div>
       <div class="form-group"><label>Facility Name</label><input type="text" id="b-name" placeholder="Sunrise Skilled Care"></div>
       <div class="form-group"><label>Address</label><input type="text" id="b-addr" placeholder="123 Main St, Springfield, IL"></div>
       <div class="grid-2">
         <div class="form-group"><label>Phone</label><input type="tel" id="b-phone" placeholder="555-0100"></div>
         <div class="form-group"><label>Bed Count</label><input type="number" id="b-beds" placeholder="120" min="1"></div>
       </div>
-      <div class="form-group"><label>State <span style="font-size:11px;color:var(--g400);font-weight:400">(used to auto-assign onboarding package)</span></label>
+      <div class="form-group"><label>State <span style="font-size:11px;color:var(--g600);font-weight:400">(used to auto-assign onboarding package)</span></label>
         <select id="b-state" style="width:100%;padding:8px 10px;border:1.5px solid var(--g200);border-radius:8px;font-size:13px;font-family:inherit">
           <option value="">— Select state —</option>
           <option value="TX">Texas (TX)</option>
@@ -639,7 +649,7 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
 <!-- MODAL: Add Employee -->
 <div class="modal-overlay" id="modal-add-emp">
   <div class="modal">
-    <div class="modal-header"><span class="modal-title">Add Employee</span><button class="modal-close" onclick="App.closeModal('modal-add-emp')">✕</button></div>
+    <div class="modal-header"><span class="modal-title">Add Employee</span><button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-add-emp')">✕</button></div>
     <div class="modal-body">
       <div class="form-group"><label>Full Name</label><input type="text" id="emp-name" placeholder="Jane Smith"></div>
       <div class="form-group"><label>Position</label>
@@ -730,7 +740,7 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
 <!-- MODAL: Send Alert -->
 <div class="modal-overlay" id="modal-alert">
   <div class="modal modal-lg">
-    <div class="modal-header"><span class="modal-title"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px;color:var(--blue)"><path d="M3 7.5C3 6.7 3.7 6 4.5 6H6l5-3v14l-5-3H4.5A1.5 1.5 0 0 1 3 12.5v-5z"/><path d="M14 8a3 3 0 0 1 0 4"/></svg>Send Group Alert</span><button class="modal-close" onclick="App.closeModal('modal-alert')">✕</button></div>
+    <div class="modal-header"><span class="modal-title"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px;color:var(--blue-d)"><path d="M3 7.5C3 6.7 3.7 6 4.5 6H6l5-3v14l-5-3H4.5A1.5 1.5 0 0 1 3 12.5v-5z"/><path d="M14 8a3 3 0 0 1 0 4"/></svg>Send Group Alert</span><button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-alert')">✕</button></div>
     <div class="modal-body">
       <div class="section-label">Notify These Groups</div>
       <div class="checkbox-group" id="alert-group-list"></div>
@@ -761,7 +771,7 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
 <!-- MODAL: Claim Shift -->
 <div class="modal-overlay" id="modal-claim">
   <div class="modal" style="max-width:400px">
-    <div class="modal-header"><span class="modal-title">Claim This Shift?</span><button class="modal-close" onclick="App.closeModal('modal-claim')">✕</button></div>
+    <div class="modal-header"><span class="modal-title">Claim This Shift?</span><button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-claim')">✕</button></div>
     <div class="modal-body" id="claim-body"></div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="App.closeModal('modal-claim')">Cancel</button>
@@ -773,7 +783,7 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
 <!-- MODAL: Schedule Pattern -->
 <div class="modal-overlay" id="modal-pattern">
   <div class="modal modal-xl">
-    <div class="modal-header"><span class="modal-title"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px;color:var(--blue)"><rect x="2" y="4" width="16" height="14" rx="1.5"/><path d="M6 2v4M14 2v4M2 9h16"/><circle cx="10" cy="13.5" r="1.2" fill="currentColor" stroke="none"/></svg>Set Schedule Rotation</span><button class="modal-close" onclick="App.closeModal('modal-pattern')">✕</button></div>
+    <div class="modal-header"><span class="modal-title"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px;color:var(--blue-d)"><rect x="2" y="4" width="16" height="14" rx="1.5"/><path d="M6 2v4M14 2v4M2 9h16"/><circle cx="10" cy="13.5" r="1.2" fill="currentColor" stroke="none"/></svg>Set Schedule Rotation</span><button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-pattern')">✕</button></div>
     <div class="modal-body">
       <div class="grid-2">
         <div class="form-group"><label>Employee</label><select id="pat-emp"></select></div>
@@ -789,7 +799,7 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
         <button class="preset-btn" onclick="App.applyPreset('4on3off')">4 On / 3 Off</button>
         <button class="preset-btn" onclick="App.applyPreset('alternating')">Every Other Day</button>
       </div>
-      <div class="section-label">Pattern Sequence <span style="font-weight:400;color:var(--g400);font-size:11px;text-transform:none;letter-spacing:0">(click to toggle on/off · drag to reorder)</span></div>
+      <div class="section-label">Pattern Sequence <span style="font-weight:400;color:var(--g600);font-size:11px;text-transform:none;letter-spacing:0">(click to toggle on/off · drag to reorder)</span></div>
       <div class="pattern-tiles" id="pattern-tiles"></div>
       <div style="display:flex;gap:8px;margin-bottom:16px">
         <button class="btn btn-secondary btn-sm" onclick="App.addPatternDay(1)">+ Add On Day</button>
@@ -819,10 +829,10 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
   <div class="modal" style="max-width:480px">
     <div class="modal-header">
       <span class="modal-title">
-        <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px;color:var(--blue)"><rect x="2" y="4" width="16" height="12" rx="1.5"/><path d="M2 7l8 5 8-5"/></svg>
+        <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px;color:var(--blue-d)"><rect x="2" y="4" width="16" height="12" rx="1.5"/><path d="M2 7l8 5 8-5"/></svg>
         Send Onboarding Invite
       </span>
-      <button class="modal-close" onclick="App.closeModal('modal-hr-invite')">✕</button>
+      <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-hr-invite')">✕</button>
     </div>
     <div class="modal-body">
       <p style="font-size:13px;color:var(--g500);margin-bottom:16px">New hire receives the full package — application + all paperwork. They can save &amp; resume across sessions.</p>
@@ -891,10 +901,10 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
   <div class="modal" style="max-width:780px;width:96%;max-height:90vh;display:flex;flex-direction:column">
     <div class="modal-header" style="flex-shrink:0">
       <span class="modal-title">
-        <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;color:var(--blue)"><rect x="2" y="3" width="16" height="14" rx="1.5"/><path d="M2 7h16M6 3v4M14 3v4"/></svg>
+        <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;color:var(--blue-d)"><rect x="2" y="3" width="16" height="14" rx="1.5"/><path d="M2 7h16M6 3v4M14 3v4"/></svg>
         Manage Shifts
       </span>
-      <button class="modal-close" onclick="App.closeModal('modal-shift-manager')">✕</button>
+      <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-shift-manager')">✕</button>
     </div>
     <div style="padding:6px 20px 2px;background:var(--blue-l);border-bottom:1px solid var(--blue-m);flex-shrink:0">
       <p style="font-size:12px;color:var(--blue-d);margin:8px 0">Set required headcount per shift, assign employees, and configure rotations. Changes apply to all future periods until updated.</p>
@@ -912,7 +922,7 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
   <div class="modal" style="max-width:520px;width:96%">
     <div class="modal-header">
       <span class="modal-title">Shift Options</span>
-      <button class="modal-close" onclick="App.closeModal('modal-remove-shift')">✕</button>
+      <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-remove-shift')">✕</button>
     </div>
     <div id="modal-remove-shift-body" style="padding:0 20px 20px"></div>
   </div>
@@ -923,10 +933,10 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
   <div class="modal" style="max-width:600px;width:96%;max-height:90vh;display:flex;flex-direction:column">
     <div class="modal-header" style="flex-shrink:0">
       <span class="modal-title">
-        <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px;color:var(--blue)"><rect x="2" y="3" width="16" height="14" rx="1.5"/><path d="M2 7h16M6 3v4M14 3v4M10 10v5M7.5 12.5h5"/></svg>
+        <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px;color:var(--blue-d)"><rect x="2" y="3" width="16" height="14" rx="1.5"/><path d="M2 7h16M6 3v4M14 3v4M10 10v5M7.5 12.5h5"/></svg>
         Add Shifts
       </span>
-      <button class="modal-close" onclick="App.closeModal('modal-add-shifts')">✕</button>
+      <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-add-shifts')">✕</button>
     </div>
     <div style="padding:6px 20px 2px;background:var(--blue-l);border-bottom:1px solid var(--blue-m);flex-shrink:0">
       <p style="font-size:12px;color:var(--blue-d);margin:8px 0">Choose a shift type, how many slots are needed each day, then select which days repeat every two weeks.</p>
@@ -944,10 +954,10 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
   <div class="modal" style="max-width:600px;width:96%;max-height:90vh;display:flex;flex-direction:column">
     <div class="modal-header" style="flex-shrink:0">
       <span class="modal-title">
-        <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px;color:var(--blue)"><circle cx="8" cy="6" r="3"/><path d="M2 18v-2a5 5 0 0 1 8.2-3.8M15 12v6M12 15h6"/></svg>
+        <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px;color:var(--blue-d)"><circle cx="8" cy="6" r="3"/><path d="M2 18v-2a5 5 0 0 1 8.2-3.8M15 12v6M12 15h6"/></svg>
         Assign Employee
       </span>
-      <button class="modal-close" onclick="App.closeModal('modal-assign-shift')">✕</button>
+      <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-assign-shift')">✕</button>
     </div>
     <div id="modal-assign-shift-body" style="overflow-y:auto;flex:1;padding:20px"></div>
     <div id="modal-assign-shift-footer" class="modal-footer" style="flex-shrink:0">
@@ -963,7 +973,7 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
   <div class="modal" style="max-width:680px;width:96%">
     <div class="modal-header">
       <span class="modal-title">Staffing Requirements</span>
-      <button class="modal-close" onclick="App.closeModal('modal-slots')">✕</button>
+      <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-slots')">✕</button>
     </div>
     <div style="padding:6px 20px 2px;background:var(--blue-l);border-bottom:1px solid var(--blue-m)">
       <p style="font-size:12px;color:var(--blue-d);margin:8px 0">Set how many staff are required per shift type for each department. The calendar will show filled slots (names) and empty slots that still need coverage.</p>
@@ -981,14 +991,14 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
   <div class="modal" style="max-width:680px;width:96%;max-height:90vh;display:flex;flex-direction:column">
     <div class="modal-header" style="flex-shrink:0">
       <span class="modal-title">Onboarding Documents</span>
-      <button class="modal-close" onclick="App.closeModal('modal-hr-emp-detail')">✕</button>
+      <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-hr-emp-detail')">✕</button>
     </div>
     <div id="modal-hr-emp-detail-body" style="overflow-y:auto;flex:1"></div>
   </div>
 </div>
 
 <!-- Toast -->
-<div class="toast" id="toast"><span id="toast-icon"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,8 6,12 14,4"/></svg></span><span id="toast-msg"></span></div>
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"><span id="toast-icon" aria-hidden="true"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,8 6,12 14,4"/></svg></span><span id="toast-msg"></span></div>
 
 <script>
 // ════════════════════════════════════════════════════════════
@@ -1503,6 +1513,8 @@ const App = {
   async init() {
     const logoEl = document.getElementById('header-logo-svg');
     if (logoEl) logoEl.innerHTML = LOGO_SVG;
+    // WCAG: Escape key closes the topmost open modal
+    this._installEscapeHandler();
 
     if (IS_SERVER_MODE) {
       // ── PRODUCTION / SERVER MODE ──────────────────────────────────
@@ -2157,13 +2169,13 @@ const App = {
     if (!['admin','superadmin'].includes(this.S.user?.role)) return;
     const entries = Audit.all();
     const rows = entries.length === 0
-      ? '<div style="padding:32px;text-align:center;color:var(--g400)">No audit entries yet.</div>'
+      ? '<div style="padding:32px;text-align:center;color:var(--g600)">No audit entries yet.</div>'
       : entries.map(e => `<div class="audit-row">
           <div class="audit-ts">${sanitize(e.ts.replace('T',' ').slice(0,19))}</div>
           <div class="audit-action" style="flex:1">
             <span class="audit-user">${sanitize(e.userId||'system')}</span>
             <span> · ${sanitize(e.action)}</span>
-            ${e.detail ? `<div style="color:var(--g400);font-size:11px;margin-top:1px">${sanitize(e.detail)}</div>` : ''}
+            ${e.detail ? `<div style="color:var(--g600);font-size:11px;margin-top:1px">${sanitize(e.detail)}</div>` : ''}
           </div>
           <span class="audit-risk risk-${sanitize(e.risk||'low')}">${sanitize((e.risk||'low').toUpperCase())}</span>
         </div>`).join('');
@@ -2247,9 +2259,9 @@ const App = {
           </div>`;
       }
       nav = `${switcher}<div class="month-nav">
-        <button onclick="App.navMonth(-1)">&#8249;</button>
+        <button onclick="App.navMonth(-1)" aria-label="Previous month">&#8249;</button>
         <h2 id="month-label"></h2>
-        <button onclick="App.navMonth(1)">&#8250;</button>
+        <button onclick="App.navMonth(1)" aria-label="Next month">&#8250;</button>
       </div>`;
     }
     document.getElementById('header-nav').innerHTML = nav;
@@ -2368,7 +2380,7 @@ const App = {
     // List view
     const statusPill = s => `<span class="demo-status-${s==='no-show'?'noshow':s}">${s.replace('-',' ').replace(/\b\w/g,c=>c.toUpperCase())}</span>`;
     const cards = demos.length === 0
-      ? `<div style="text-align:center;padding:60px;color:var(--g400)">
+      ? `<div style="text-align:center;padding:60px;color:var(--g600)">
           <svg viewBox="0 0 48 48" width="48" height="48" fill="none" stroke="var(--g300)" stroke-width="1.5" stroke-linecap="round" style="margin:0 auto 16px;display:block"><rect x="4" y="8" width="40" height="32" rx="3"/><path d="M16 2v10M32 2v10M4 18h40"/></svg>
           <div style="font-weight:700;font-size:16px;color:var(--g600);margin-bottom:8px">No demos scheduled</div>
           <button class="btn btn-primary" onclick="App.openDemoModal()">Schedule Your First Demo</button>
@@ -2385,7 +2397,7 @@ const App = {
                 </div>
                 <div style="font-size:12px;color:var(--g500);margin-bottom:4px">${sanitize(d.facilityName||'')}${d.facilityName&&d.email?' · ':''} ${sanitize(d.email||'')}</div>
                 <div style="font-size:12px;color:var(--g700);font-weight:600">${dt}${tm ? ' at ' + tm : ''} · ${sanitize(d.duration||'1 hour')}</div>
-                ${d.notes ? `<div style="font-size:12px;color:var(--g400);margin-top:4px;font-style:italic">${sanitize(d.notes)}</div>` : ''}
+                ${d.notes ? `<div style="font-size:12px;color:var(--g600);margin-top:4px;font-style:italic">${sanitize(d.notes)}</div>` : ''}
               </div>
               <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
                 <button class="btn btn-secondary btn-sm" onclick="App.sendDemoInvite('${d.id}')">
@@ -2415,7 +2427,7 @@ const App = {
 
     let cells = '';
     for (let i=firstDay-1; i>=0; i--) {
-      cells += `<div class="demo-cal-cell" style="background:var(--g50);opacity:.4"><div style="font-size:12px;color:var(--g400)">${prevDays-i}</div></div>`;
+      cells += `<div class="demo-cal-cell" style="background:var(--g50);opacity:.4"><div style="font-size:12px;color:var(--g600)">${prevDays-i}</div></div>`;
     }
     for (let d=1; d<=daysInMonth; d++) {
       const ds = `${yr}-${String(mo+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
@@ -2429,7 +2441,7 @@ const App = {
     }
     const total = Math.ceil((firstDay+daysInMonth)/7)*7;
     for (let i=1; i<=total-(firstDay+daysInMonth); i++) {
-      cells += `<div class="demo-cal-cell" style="background:var(--g50);opacity:.4"><div style="font-size:12px;color:var(--g400)">${i}</div></div>`;
+      cells += `<div class="demo-cal-cell" style="background:var(--g50);opacity:.4"><div style="font-size:12px;color:var(--g600)">${i}</div></div>`;
     }
     return `<div style="background:#fff;border:1.5px solid var(--g200);border-radius:12px;overflow:hidden">
       <div style="padding:14px 18px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--g100)">
@@ -2438,7 +2450,7 @@ const App = {
         <button class="btn btn-ghost btn-sm" onclick="App.S.demoViewMonth++;if(App.S.demoViewMonth>11){App.S.demoViewMonth=0;App.S.demoViewYear++;}App.renderSADemos()">›</button>
       </div>
       <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:0">
-        ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div style="padding:8px;text-align:center;font-size:11px;font-weight:700;color:var(--g400);border-bottom:1px solid var(--g100)">${d}</div>`).join('')}
+        ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div style="padding:8px;text-align:center;font-size:11px;font-weight:700;color:var(--g600);border-bottom:1px solid var(--g100)">${d}</div>`).join('')}
         ${cells}
       </div>
     </div>`;
@@ -2610,7 +2622,7 @@ const App = {
               <input type="number" min="0" step="1" value="${fee||''}" placeholder="0"
                 style="width:90px;padding:5px 8px;border:1.5px solid var(--g200);border-radius:7px;font-size:13px;font-weight:600"
                 onchange="App.setBuildingMonthlyFee('${b.id}', this.value)">
-              <span style="font-size:12px;color:var(--g400)">/mo</span>
+              <span style="font-size:12px;color:var(--g600)">/mo</span>
             </div>
           </td>
           <td style="padding:12px 16px"><span class="billing-plan-badge billing-plan-${(cfg.plan||'trial').toLowerCase()}">${sanitize(cfg.plan||'Trial')}</span></td>
@@ -2640,9 +2652,9 @@ const App = {
           </div>
           <table style="width:100%;border-collapse:collapse">
             <thead><tr style="border-bottom:1px solid var(--g100)">
-              ${['Building','Monthly Fee','Plan','Contract Start','Contract End','Remaining','Status',''].map(h=>`<th style="padding:9px 16px;text-align:left;font-size:10px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">${h}</th>`).join('')}
+              ${['Building','Monthly Fee','Plan','Contract Start','Contract End','Remaining','Status',''].map(h=>`<th style="padding:9px 16px;text-align:left;font-size:10px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">${h}</th>`).join('')}
             </tr></thead>
-            <tbody>${rows || '<tr><td colspan="8" style="padding:20px 28px;color:var(--g400);font-size:13px">No buildings</td></tr>'}</tbody>
+            <tbody>${rows || '<tr><td colspan="8" style="padding:20px 28px;color:var(--g600);font-size:13px">No buildings</td></tr>'}</tbody>
           </table>
         </div>`;
     };
@@ -2745,7 +2757,7 @@ const App = {
           </div>
           ${pending ? `<span class="tag" style="font-size:10px;background:#FEF3C7;color:#92400E;border:1px solid #FDE68A">Pending</span>` : `<span class="tag tag-blue" style="font-size:10px">Admin</span>`}
         </div>`;
-    }).join('') : '<div style="font-size:13px;color:var(--g400);padding:8px 0;margin-bottom:8px">No admin assigned</div>';
+    }).join('') : '<div style="font-size:13px;color:var(--g600);padding:8px 0;margin-bottom:8px">No admin assigned</div>';
 
     const safeColor = sanitizeColor(b.color);
     return `
@@ -2784,7 +2796,7 @@ const App = {
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
           <div style="width:10px;height:10px;border-radius:50%;background:var(--g300)"></div>
           <span style="font-size:15px;font-weight:700;color:var(--g700)">Ungrouped Facilities</span>
-          <span style="font-size:12px;color:var(--g400)">${ungrouped.length} facilit${ungrouped.length===1?'y':'ies'}</span>
+          <span style="font-size:12px;color:var(--g600)">${ungrouped.length} facilit${ungrouped.length===1?'y':'ies'}</span>
         </div>
         <div class="buildings-grid">${ungrouped.map(b => this._buildFacilityCard(b)).join('')}</div>
       </div>` : '';
@@ -2793,7 +2805,7 @@ const App = {
       <div style="text-align:center;padding:64px 32px;background:#fff;border:1.5px dashed var(--g200);border-radius:14px">
         <svg viewBox="0 0 48 48" width="48" height="48" fill="none" stroke="var(--g300)" stroke-width="1.5" stroke-linecap="round" style="margin:0 auto 16px;display:block"><rect x="4" y="16" width="40" height="28" rx="3"/><path d="M16 16V10a8 8 0 0 1 16 0v6"/></svg>
         <div style="font-size:17px;font-weight:700;color:var(--g600);margin-bottom:8px">No companies yet</div>
-        <div style="font-size:13px;color:var(--g400);margin-bottom:20px">Create your first company to start grouping facilities.</div>
+        <div style="font-size:13px;color:var(--g600);margin-bottom:20px">Create your first company to start grouping facilities.</div>
         <button class="btn btn-primary" onclick="App.openAddCompanyModal()">+ Add Company</button>
       </div>` : '';
 
@@ -2825,7 +2837,7 @@ const App = {
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--g400)" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>
             <div>
               <div style="font-size:13px;font-weight:600;color:var(--g700)">Demo Mode — Seed Data</div>
-              <div style="font-size:12px;color:var(--g400);margin-top:1px">You are viewing demo data. Nothing you change here is saved permanently.</div>
+              <div style="font-size:12px;color:var(--g600);margin-top:1px">You are viewing demo data. Nothing you change here is saved permanently.</div>
             </div>
           </div>
           <button class="btn btn-ghost btn-sm" style="color:var(--red);border:1.5px solid var(--g200)" onclick="App.resetAllData()">
@@ -2885,7 +2897,7 @@ const App = {
       : `<div style="text-align:center;padding:56px 32px;background:#fff;border:1.5px dashed var(--g200);border-radius:14px">
            <svg viewBox="0 0 48 48" width="44" height="44" fill="none" stroke="var(--g300)" stroke-width="1.5" stroke-linecap="round" style="margin:0 auto 14px;display:block"><rect x="6" y="14" width="36" height="28" rx="2"/><path d="M16 14V9a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v5"/><line x1="24" y1="22" x2="24" y2="34"/><line x1="18" y1="28" x2="30" y2="28"/></svg>
            <div style="font-size:16px;font-weight:700;color:var(--g600);margin-bottom:8px">No facilities yet</div>
-           <div style="font-size:13px;color:var(--g400);margin-bottom:20px">Add the first facility to ${sanitize(co.name)}.</div>
+           <div style="font-size:13px;color:var(--g600);margin-bottom:20px">Add the first facility to ${sanitize(co.name)}.</div>
            <button class="btn btn-primary" onclick="App.openAddBuildingToCompany('${co.id}')">+ Add Facility</button>
          </div>`;
 
@@ -3026,7 +3038,7 @@ const App = {
       const myShifts = this.S.shifts.filter(s => s.employeeId === u.id && s.date.startsWith(`${this.S.viewYear}-${String(this.S.viewMonth+1).padStart(2,'0')}`));
       // Open shifts available to claim
       const openCount = this.S.shifts.filter(s => s.status==='open' && s.group===u.group && s.buildingId===(u.buildingId||'b1')).length;
-      const bname = building ? `<div style="padding:12px 16px 4px;font-size:12px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;display:flex;align-items:center;gap:5px"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="14" height="11" rx="1"/><path d="M5 15V9h6v6"/><path d="M1 8l7-6 7 6"/></svg>${sanitize(building.name)}</div>` : '';
+      const bname = building ? `<div style="padding:12px 16px 4px;font-size:12px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em;display:flex;align-items:center;gap:5px"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="14" height="11" rx="1"/><path d="M5 15V9h6v6"/><path d="M1 8l7-6 7 6"/></svg>${sanitize(building.name)}</div>` : '';
       const empModeToggle = this._canAccessHR() ? `<div class="mode-toggle">
         <button class="mode-toggle-btn active" onclick="App.switchMode('schedule')">
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 6h14"/><path d="M5 2v4"/><path d="M11 2v4"/></svg>
@@ -3049,7 +3061,7 @@ const App = {
             </div>
           </div>
           <div style="background:${todayShift?'var(--blue-l)':'var(--g50)'};border:1.5px solid ${todayShift?'var(--blue-m)':'var(--g200)'};border-radius:10px;padding:12px;margin-bottom:12px">
-            <div style="font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Today</div>
+            <div style="font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Today</div>
             ${todayShift
               ? `<div style="font-weight:700;color:var(--blue-d);font-size:13px;display:flex;align-items:center;gap:6px"><svg viewBox="0 0 8 8" width="8" height="8"><circle cx="4" cy="4" r="4" fill="var(--blue)"/></svg> Working</div><div style="font-size:12px;color:var(--g600);margin-top:2px">${todayShift.type} · ${todayLabel}</div>`
               : `<div style="font-weight:600;color:var(--g500);font-size:13px;display:flex;align-items:center;gap:6px"><svg viewBox="0 0 8 8" width="8" height="8"><circle cx="4" cy="4" r="4" fill="none" stroke="var(--g400)" stroke-width="1.5"/></svg> Day Off</div>`}
@@ -3102,7 +3114,7 @@ const App = {
         </div>`).join('');
       document.getElementById('sidebar').innerHTML = `${modeToggle}
         <div class="sidebar-section-title">My Portfolio</div>
-        ${bItems || '<div style="padding:12px 16px;font-size:12px;color:var(--g400)">No buildings assigned</div>'}`;
+        ${bItems || '<div style="padding:12px 16px;font-size:12px;color:var(--g600)">No buildings assigned</div>'}`;
       return;
     }
 
@@ -3134,7 +3146,7 @@ const App = {
       });
     }
 
-    const bname = building ? `<div style="padding:12px 16px 4px;font-size:12px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;display:flex;align-items:center;gap:5px"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="14" height="11" rx="1"/><path d="M5 15V9h6v6"/><path d="M1 8l7-6 7 6"/></svg>${sanitize(building.name)}</div>` : '';
+    const bname = building ? `<div style="padding:12px 16px 4px;font-size:12px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em;display:flex;align-items:center;gap:5px"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="14" height="11" rx="1"/><path d="M5 15V9h6v6"/><path d="M1 8l7-6 7 6"/></svg>${sanitize(building.name)}</div>` : '';
     const modeToggle = this._canAccessHR() ? `<div class="mode-toggle">
       <button class="mode-toggle-btn active" onclick="App.switchMode('schedule')">
         <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 6h14"/><path d="M5 2v4"/><path d="M11 2v4"/></svg>
@@ -3331,7 +3343,7 @@ const App = {
       <div style="display:grid;grid-template-columns:1fr 280px;gap:20px">
         <div class="hr-section">
           <div class="hr-section-hdr"><span class="hr-section-title">Pipeline</span></div>
-          ${pipeline.length ? pipelineRows : '<div style="padding:24px;text-align:center;color:var(--g400);font-size:13px">No active pipeline</div>'}
+          ${pipeline.length ? pipelineRows : '<div style="padding:24px;text-align:center;color:var(--g600);font-size:13px">No active pipeline</div>'}
         </div>
         <div class="hr-section">
           <div class="hr-section-hdr"><span class="hr-section-title">Quick Actions</span></div>
@@ -3386,15 +3398,15 @@ const App = {
         <table style="width:100%;border-collapse:collapse">
           <thead>
             <tr style="border-bottom:2px solid var(--g100)">
-              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">Employee</th>
-              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">Role</th>
-              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">Facility</th>
-              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">Status</th>
-              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">Progress</th>
-              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">SmartLinx</th>
+              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">Employee</th>
+              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">Role</th>
+              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">Facility</th>
+              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">Status</th>
+              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">Progress</th>
+              <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">SmartLinx</th>
             </tr>
           </thead>
-          <tbody>${rows || '<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--g400);font-size:13px">No employees in this filter</td></tr>'}</tbody>
+          <tbody>${rows || '<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--g600);font-size:13px">No employees in this filter</td></tr>'}</tbody>
         </table>
       </div>`;
   },
@@ -3423,8 +3435,8 @@ const App = {
             </div>
           </div>
         </div>
-        <div style="margin-top:10px;font-size:11px;color:var(--g400);background:var(--blue-l);padding:6px 10px;border-radius:6px">Downloads CSV for SmartLinx import · Enter hourly rate before exporting to SmartLinx</div>
-      </div>`).join('') : '<div style="padding:40px;text-align:center;color:var(--g400);font-size:13px">No documents pending review</div>';
+        <div style="margin-top:10px;font-size:11px;color:var(--g600);background:var(--blue-l);padding:6px 10px;border-radius:6px">Downloads CSV for SmartLinx import · Enter hourly rate before exporting to SmartLinx</div>
+      </div>`).join('') : '<div style="padding:40px;text-align:center;color:var(--g600);font-size:13px">No documents pending review</div>';
     return `
       ${this.hrHipaaBar()}
       <div style="margin-bottom:20px"><div class="hr-page-title">Document Review</div><div class="hr-page-sub">Review submitted docs → export to SmartLinx</div></div>
@@ -3507,12 +3519,12 @@ const App = {
             <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 12L6 8l4-4"/></svg> Prev
           </button>
           <div style="font-size:12px;font-weight:700;color:var(--g700);padding:4px 12px;background:var(--g50);border-radius:8px;white-space:nowrap">
-            ${periodLabel}<span style="font-weight:400;color:var(--g400)">${periodNote}</span>
+            ${periodLabel}<span style="font-weight:400;color:var(--g600)">${periodNote}</span>
           </div>
           <button class="btn btn-secondary btn-sm" onclick="App.S.hrScheduleOffset=(App.S.hrScheduleOffset||0)+1;App.renderHRMain()" style="gap:4px">
             Next <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 4l4 4-4 4"/></svg>
           </button>
-          ${offset!==0?`<button class="btn btn-ghost btn-sm" onclick="App.S.hrScheduleOffset=0;App.renderHRMain()" style="color:var(--blue)">Today</button>`:''}
+          ${offset!==0?`<button class="btn btn-ghost btn-sm" onclick="App.S.hrScheduleOffset=0;App.renderHRMain()" style="color:var(--blue-d)">Today</button>`:''}
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;flex-wrap:wrap">
@@ -3525,11 +3537,11 @@ const App = {
         <table style="width:100%;border-collapse:collapse;min-width:760px">
           <thead>
             <tr style="border-bottom:2px solid var(--g100)">
-              <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;position:sticky;left:0;background:#fff;z-index:1;border-right:1px solid var(--g100);white-space:nowrap">Employee</th>
+              <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em;position:sticky;left:0;background:#fff;z-index:1;border-right:1px solid var(--g100);white-space:nowrap">Employee</th>
               ${days.map(w=>`<th style="padding:6px 3px;font-size:10px;font-weight:700;color:${w.isToday?'var(--blue)':'var(--g400)'};text-align:center;white-space:nowrap;min-width:44px">${w.dow}<br><span style="font-weight:400;font-size:9px">${w.dom}</span></th>`).join('')}
             </tr>
           </thead>
-          <tbody>${rows||`<tr><td colspan="15" style="padding:32px;text-align:center;color:var(--g400);font-size:13px">No active employees${selDepts.length?` in selected department${selDepts.length>1?'s':''}`:''}</td></tr>`}</tbody>
+          <tbody>${rows||`<tr><td colspan="15" style="padding:32px;text-align:center;color:var(--g600);font-size:13px">No active employees${selDepts.length?` in selected department${selDepts.length>1?'s':''}`:''}</td></tr>`}</tbody>
         </table>
       </div>`;
   },
@@ -3553,7 +3565,7 @@ const App = {
       return `
         <div style="display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--g100)">
           <div style="text-align:center;min-width:40px;flex-shrink:0">
-            <div style="font-size:10px;font-weight:700;color:var(--g400);text-transform:uppercase">${dayLabel}</div>
+            <div style="font-size:10px;font-weight:700;color:var(--g600);text-transform:uppercase">${dayLabel}</div>
             <div style="font-size:16px;font-weight:800;color:var(--g900)">${dateLabel.split(' ')[1]||dateLabel}</div>
             <div style="font-size:10px;color:var(--g500)">${dateLabel.split(' ')[0]||''}</div>
           </div>
@@ -3563,7 +3575,7 @@ const App = {
           <div style="flex:1;min-width:0">
             <div style="font-weight:600;font-size:13px;color:var(--g900)">${sanitize(s.role)} · ${s.needs||1} needed</div>
             <div style="font-size:11px;color:var(--g500);margin-top:2px">${sanitize(s.time||'')}${s.unit?' · '+sanitize(s.unit):''}</div>
-            ${s.notes?`<div style="font-size:11px;color:var(--g400);margin-top:2px">${sanitize(s.notes)}</div>`:''}
+            ${s.notes?`<div style="font-size:11px;color:var(--g600);margin-top:2px">${sanitize(s.notes)}</div>`:''}
           </div>
           <div style="display:flex;gap:6px;flex-shrink:0">
             <button class="btn btn-secondary btn-sm" onclick="App.notifyHRShift(${i})">Notify Staff</button>
@@ -3571,7 +3583,7 @@ const App = {
           </div>
         </div>`;
     }).join('') : `
-      <div style="padding:60px 20px;text-align:center;color:var(--g400)">
+      <div style="padding:60px 20px;text-align:center;color:var(--g600)">
         <svg viewBox="0 0 48 48" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="margin:0 auto 16px;display:block;opacity:.4"><circle cx="24" cy="24" r="20"/><path d="M24 14v10l6 6"/></svg>
         <div style="font-weight:600;font-size:14px;color:var(--g600);margin-bottom:6px">No open shifts</div>
         <div style="font-size:12px">Create an open shift to notify eligible staff</div>
@@ -3713,13 +3725,13 @@ const App = {
               <span style="font-size:13px;font-weight:800;color:var(--red)">${empArr.length} employee${empArr.length!==1?'s':''} with punch issues</span>
               <div style="display:flex;background:rgba(239,68,68,.1);border-radius:8px;padding:2px;gap:1px">${pTabs}</div>
             </div>
-            <button onclick="App.tcHideMissed()" style="background:none;border:none;cursor:pointer;color:var(--g400);font-size:18px;line-height:1;padding:4px 6px" title="Close">×</button>
+            <button onclick="App.tcHideMissed()" style="background:none;border:none;cursor:pointer;color:var(--g600);font-size:18px;line-height:1;padding:4px 6px" title="Close">×</button>
           </div>
           ${empArr.length ? `
             <table style="width:100%;border-collapse:collapse">
               <thead><tr style="border-bottom:1px solid var(--g100)">
-                <th style="padding:8px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase">Employee</th>
-                <th style="padding:8px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase">Role</th>
+                <th style="padding:8px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Employee</th>
+                <th style="padding:8px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Role</th>
                 <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase">Missed In</th>
                 <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:#7C3AED;text-transform:uppercase">No Clock-Out</th>
                 <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--amber);text-transform:uppercase">Late</th>
@@ -3727,7 +3739,7 @@ const App = {
               </tr></thead>
               <tbody>${empRows}</tbody>
             </table>` : `
-            <div style="padding:20px;text-align:center;font-size:13px;color:var(--g400)">No punch issues for this period</div>`}
+            <div style="padding:20px;text-align:center;font-size:13px;color:var(--g600)">No punch issues for this period</div>`}
         </div>`;
     }
 
@@ -3753,22 +3765,22 @@ const App = {
               ${SH('name','Employee')}
               ${SH('role','Role')}
               ${SH('date','Date')}
-              <th style="padding:9px 14px;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">Clock In</th>
-              <th style="padding:9px 14px;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">Clock Out</th>
+              <th style="padding:9px 14px;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">Clock In</th>
+              <th style="padding:9px 14px;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">Clock Out</th>
               ${SH('hours','Hours')}
               ${SH('status','Status')}
-              <th style="padding:9px 14px;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap" title="Punch reliability score (0–100, last 30 days). Normal=full points, Late=70%, Missed/No-Out=0%">Score ⓘ</th>
+              <th style="padding:9px 14px;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap" title="Punch reliability score (0–100, last 30 days). Normal=full points, Late=70%, Missed/No-Out=0%">Score ⓘ</th>
               <th></th>
             </tr>
           </thead>
-          <tbody>${rows || `<tr><td colspan="9" style="padding:60px;text-align:center;color:var(--g400)">
+          <tbody>${rows || `<tr><td colspan="9" style="padding:60px;text-align:center;color:var(--g600)">
             <svg viewBox="0 0 48 48" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" style="margin:0 auto 14px;display:block;opacity:.3"><circle cx="24" cy="24" r="20"/><path d="M24 14v10l6 6"/></svg>
             <div style="font-weight:700;font-size:14px;color:var(--g600);margin-bottom:6px">No punch records yet</div>
             <div style="font-size:12px;max-width:280px;margin:0 auto">Import a CSV file or punch records will appear here as employees clock in and out.</div>
             <button class="btn btn-primary btn-sm" style="margin-top:16px" onclick="App.showToast('CSV import — coming soon','warn')">Import CSV</button>
           </td></tr>`}</tbody>
         </table>
-        ${recs.length > 0 ? `<div style="padding:10px 16px;font-size:11px;color:var(--g400);text-align:center;border-top:1px solid var(--g100)">
+        ${recs.length > 0 ? `<div style="padding:10px 16px;font-size:11px;color:var(--g600);text-align:center;border-top:1px solid var(--g100)">
           Showing ${Math.min(50,recs.length)} of ${recs.length} records · <strong>Score:</strong> 90–100 <span style="color:var(--green)">●</span> Good · 70–89 <span style="color:var(--amber)">●</span> Fair · &lt;70 <span style="color:var(--red)">●</span> Needs attention
         </div>` : ''}
       </div>`;
@@ -3900,7 +3912,7 @@ const App = {
         <div style="flex:1;display:flex;align-items:flex-end;width:100%">
           <div style="width:100%;height:${barH}px;background:${isOver?'#FCA5A5':'#6B9E7A'};${isLast?'background:#2563EB;':''}border-radius:4px 4px 0 0;transition:height .3s;min-height:${t.ppd>0?2:0}px"></div>
         </div>
-        <div style="font-size:9px;color:var(--g400);white-space:nowrap">${t.label}</div>
+        <div style="font-size:9px;color:var(--g600);white-space:nowrap">${t.label}</div>
       </div>`;
     }).join('');
     const budgetLineTop = chartH - Math.round((ppdBudget/trendMax)*chartH);
@@ -3949,7 +3961,7 @@ const App = {
         <div class="hr-section" style="padding:60px;text-align:center">
           <svg viewBox="0 0 64 64" width="64" height="64" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="margin:0 auto 20px;display:block;opacity:.3"><rect x="4" y="32" width="12" height="28"/><rect x="26" y="18" width="12" height="42"/><rect x="48" y="8" width="12" height="52"/></svg>
           <div style="font-weight:700;font-size:16px;color:var(--g700);margin-bottom:8px">No data yet</div>
-          <div style="font-size:13px;color:var(--g400);max-width:320px;margin:0 auto">Add active employees and set your budget targets to see labor analytics, PPD trends, and cost comparisons.</div>
+          <div style="font-size:13px;color:var(--g600);max-width:320px;margin:0 auto">Add active employees and set your budget targets to see labor analytics, PPD trends, and cost comparisons.</div>
           <div style="display:flex;gap:8px;justify-content:center;margin-top:20px">
             <button class="btn btn-primary btn-sm" onclick="App.navigateHR('employees')">Add Employees</button>
             <button class="btn btn-secondary btn-sm" onclick="App.S.hrBudgetEditing=true;App.renderHRMain()">Set Budget Targets</button>
@@ -3996,7 +4008,7 @@ const App = {
             <div style="flex:1;min-width:0">
               <div style="font-size:22px;font-weight:800;color:${c.color};line-height:1.1">${c.val}</div>
               <div style="font-size:11px;font-weight:700;color:var(--g700);margin-top:2px">${c.label}</div>
-              <div style="font-size:10px;color:var(--g400);margin-top:1px">${c.sub}</div>
+              <div style="font-size:10px;color:var(--g600);margin-top:1px">${c.sub}</div>
             </div>
           </div>`).join('')}
       </div>
@@ -4007,7 +4019,7 @@ const App = {
         <div class="hr-section">
           <div class="hr-section-hdr">
             <span class="hr-section-title">PPD Trend vs Budget</span>
-            <span style="font-size:11px;color:var(--g400)">Budget = ${ppdBudget.toFixed(1)} hrs</span>
+            <span style="font-size:11px;color:var(--g600)">Budget = ${ppdBudget.toFixed(1)} hrs</span>
           </div>
           <div style="padding:16px 20px 4px;position:relative">
             <!-- Budget line label -->
@@ -4018,7 +4030,7 @@ const App = {
                 ${trendBars}
               </div>
             </div>
-            <div style="display:flex;justify-content:space-between;padding:6px 0 4px;font-size:9px;color:var(--g400)">
+            <div style="display:flex;justify-content:space-between;padding:6px 0 4px;font-size:9px;color:var(--g600)">
               <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:#6B9E7A;display:inline-block"></span>Under budget</span>
               <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:#FCA5A5;display:inline-block"></span>Over budget</span>
               <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:#2563EB;display:inline-block"></span>Current</span>
@@ -4041,9 +4053,9 @@ const App = {
                 <div style="background:var(--g100);border-radius:4px;height:8px;overflow:hidden">
                   <div style="width:${pct}%;height:100%;background:#6B9E7A;border-radius:4px"></div>
                 </div>
-                <div style="font-size:10px;color:var(--g400);margin-top:2px">${d.count} employee${d.count!==1?'s':''} · avg $${avgRate>0?(d.cost/d.count/hoursPerEmpPerPeriod).toFixed(2):'—'}/hr</div>
+                <div style="font-size:10px;color:var(--g600);margin-top:2px">${d.count} employee${d.count!==1?'s':''} · avg $${avgRate>0?(d.cost/d.count/hoursPerEmpPerPeriod).toFixed(2):'—'}/hr</div>
               </div>`;
-            }).join('') : '<div style="color:var(--g400);font-size:12px;padding:8px 0">No role data</div>'}
+            }).join('') : '<div style="color:var(--g600);font-size:12px;padding:8px 0">No role data</div>'}
           </div>
         </div>
       </div>
@@ -4068,9 +4080,9 @@ const App = {
                 </div>
               </div>`).join('')}
             <div style="display:grid;grid-template-columns:1.6fr 1fr 1fr;padding:8px 20px">
-              <div style="font-size:10px;font-weight:700;color:var(--g400);text-transform:uppercase">Metric</div>
-              <div style="font-size:10px;font-weight:700;color:var(--g400);text-transform:uppercase;text-align:center">Budget</div>
-              <div style="font-size:10px;font-weight:700;color:var(--g400);text-transform:uppercase;text-align:center">Actual</div>
+              <div style="font-size:10px;font-weight:700;color:var(--g600);text-transform:uppercase">Metric</div>
+              <div style="font-size:10px;font-weight:700;color:var(--g600);text-transform:uppercase;text-align:center">Budget</div>
+              <div style="font-size:10px;font-weight:700;color:var(--g600);text-transform:uppercase;text-align:center">Actual</div>
             </div>
           </div>
         </div>
@@ -4089,7 +4101,7 @@ const App = {
                 <div style="background:var(--g50);border-radius:10px;padding:12px">
                   <div style="font-size:20px;font-weight:800;color:${s.color}">${s.val}</div>
                   <div style="font-size:11px;font-weight:700;color:var(--g700);margin-top:2px">${s.label}</div>
-                  <div style="font-size:10px;color:var(--g400);margin-top:1px">${s.sub}</div>
+                  <div style="font-size:10px;color:var(--g600);margin-top:1px">${s.sub}</div>
                 </div>`).join('')}
             </div>
             ${tenures.length ? `
@@ -4106,7 +4118,7 @@ const App = {
                     <div style="font-size:11px;color:var(--g500);width:28px;text-align:right">${cnt}</div>
                   </div>`;
                 }).join('')}
-              </div>` : `<div style="font-size:11px;color:var(--g400);text-align:center;padding:12px 0">Add hire dates to employees to enable tenure tracking</div>`}
+              </div>` : `<div style="font-size:11px;color:var(--g600);text-align:center;padding:12px 0">Add hire dates to employees to enable tenure tracking</div>`}
           </div>
         </div>
       </div>`;
@@ -4143,7 +4155,7 @@ const App = {
 
         html += `<div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--g100)">
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
-            <span style="font-size:12px;font-weight:700;color:var(--g700);min-width:60px">${sh.type} <span style="font-size:10px;color:var(--g400);font-weight:400">${sh.start}–${sh.end}</span></span>
+            <span style="font-size:12px;font-weight:700;color:var(--g700);min-width:60px">${sh.type} <span style="font-size:10px;color:var(--g600);font-weight:400">${sh.start}–${sh.end}</span></span>
             <div style="display:flex;align-items:center;gap:6px">
               <label style="font-size:11px;color:var(--g500)">Slots needed:</label>
               <input type="number" id="sm-${key}-${sh.type}-req" value="${req}" min="0" max="30"
@@ -4157,7 +4169,7 @@ const App = {
         for (let i = 0; i < Math.max(req, assignments.length); i++) {
           const a = assignments[i] || {empId: '', rotation: 'Every Day'};
           html += `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--g50);border-radius:7px;border:1px solid var(--g100)">
-            <span style="font-size:11px;font-weight:600;color:var(--g400);min-width:20px">${i+1}</span>
+            <span style="font-size:11px;font-weight:600;color:var(--g600);min-width:20px">${i+1}</span>
             <select id="sm-${key}-${sh.type}-emp-${i}" style="flex:1;padding:5px 8px;border:1.5px solid var(--g200);border-radius:6px;font-size:12px;font-family:inherit">
               <option value="">— Assign Employee —</option>
               ${grpEmps.map(e=>`<option value="${e.id}"${a.empId===e.id?' selected':''}>${sanitize(e.name)}</option>`).join('')}
@@ -4168,14 +4180,14 @@ const App = {
           </div>`;
         }
         if (req === 0 && assignments.length === 0) {
-          html += `<div style="font-size:11px;color:var(--g400);padding:4px 0">Set slots needed above to assign employees.</div>`;
+          html += `<div style="font-size:11px;color:var(--g600);padding:4px 0">Set slots needed above to assign employees.</div>`;
         }
         html += `</div></div>`;
       });
       html += `</div></div>`;
     });
 
-    document.getElementById('modal-shift-manager-body').innerHTML = html || '<div style="padding:20px;text-align:center;color:var(--g400)">Select a group from the sidebar to manage shifts.</div>';
+    document.getElementById('modal-shift-manager-body').innerHTML = html || '<div style="padding:20px;text-align:center;color:var(--g600)">Select a group from the sidebar to manage shifts.</div>';
     this.openModal('modal-shift-manager');
   },
 
@@ -4453,7 +4465,7 @@ const App = {
       <div style="margin-bottom:16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
           <div class="form-lbl" style="margin:0">Shift Type</div>
-          ${customs.length ? `<span style="font-size:11px;color:var(--g400)">${g} templates saved</span>` : ''}
+          ${customs.length ? `<span style="font-size:11px;color:var(--g600)">${g} templates saved</span>` : ''}
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">${builtinTabs}${customTabs}${customBtn}</div>
         ${builtinEditPanel}${customFields}
@@ -4481,11 +4493,11 @@ const App = {
             <button class="btn btn-ghost btn-sm" onclick="App.S._addShiftState.selectedDays=[];App._renderAddShiftsBody()">Clear</button>
           </div>
         </div>
-        <div style="font-size:11px;font-weight:600;color:var(--g400);margin-bottom:6px">Week 1</div>
+        <div style="font-size:11px;font-weight:600;color:var(--g600);margin-bottom:6px">Week 1</div>
         ${week1}
-        <div style="font-size:11px;font-weight:600;color:var(--g400);margin:10px 0 6px">Week 2</div>
+        <div style="font-size:11px;font-weight:600;color:var(--g600);margin:10px 0 6px">Week 2</div>
         ${week2}
-        <div style="font-size:11px;color:var(--g400);margin-top:12px">
+        <div style="font-size:11px;color:var(--g600);margin-top:12px">
           Selected days repeat every 2 weeks for the next 90 days.
         </div>
       </div>`;
@@ -4758,7 +4770,7 @@ const App = {
             <div style="font-size:11px;color:${hasPhone?'var(--g400)':'var(--red)'}">${hasPhone?e.phone:'No phone number'}</div>
           </div>
         </label>`;
-      }).join('') : `<div style="font-size:13px;color:var(--g400);padding:12px 0">No ${sanitize(g)} employees found at this facility.</div>`;
+      }).join('') : `<div style="font-size:13px;color:var(--g600);padding:12px 0">No ${sanitize(g)} employees found at this facility.</div>`;
 
       const withPhone = emps.filter(e => e.phone);
       document.getElementById('modal-assign-shift-body').innerHTML = `
@@ -4779,7 +4791,7 @@ const App = {
             style="width:100%;padding:10px;border:1.5px solid var(--g200);border-radius:8px;font-size:13px;font-family:inherit;resize:vertical;box-sizing:border-box"
             oninput="App.S._assignShiftState.msgText=this.value">${sanitize(st.msgText||'')}</textarea>
         </div>
-        <div style="font-size:11px;color:var(--g400)">${recipients.filter(id=>emps.find(e=>e.id===id&&e.phone)).length} recipient${recipients.length===1?'':'s'} selected</div>`;
+        <div style="font-size:11px;color:var(--g600)">${recipients.filter(id=>emps.find(e=>e.id===id&&e.phone)).length} recipient${recipients.length===1?'':'s'} selected</div>`;
 
       // Swap footer button
       document.getElementById('modal-assign-shift-footer').innerHTML = `
@@ -4827,11 +4839,11 @@ const App = {
             <button class="btn btn-ghost btn-sm" onclick="App.S._assignShiftState.selectedDays=[];App._renderAssignShiftBody()">Clear</button>
           </div>
         </div>
-        <div style="font-size:11px;font-weight:600;color:var(--g400);margin-bottom:6px">Week 1</div>
+        <div style="font-size:11px;font-weight:600;color:var(--g600);margin-bottom:6px">Week 1</div>
         <div style="display:flex;gap:5px">${[0,1,2,3,4,5,6].map(makeDay).join('')}</div>
-        <div style="font-size:11px;font-weight:600;color:var(--g400);margin:10px 0 6px">Week 2</div>
+        <div style="font-size:11px;font-weight:600;color:var(--g600);margin:10px 0 6px">Week 2</div>
         <div style="display:flex;gap:5px">${[7,8,9,10,11,12,13].map(makeDay).join('')}</div>
-        <div style="font-size:11px;color:var(--g400);margin-top:12px">
+        <div style="font-size:11px;color:var(--g600);margin-top:12px">
           This rotation repeats every 2 weeks for the next 90 days. Fills existing open slots first.
         </div>
       </div>`;
@@ -4851,7 +4863,7 @@ const App = {
     if (checked && !st.msgRecipients.includes(empId)) st.msgRecipients.push(empId);
     else if (!checked) st.msgRecipients = st.msgRecipients.filter(id => id !== empId);
     // Update recipient count label
-    const countEl = document.querySelector('#modal-assign-shift-body div[style*="11px;color:var(--g400)"]');
+    const countEl = document.querySelector('#modal-assign-shift-body div[style*="11px;color:var(--g600)"]');
     if (countEl) {
       const selected = st.msgRecipients.filter(id => emps.find(e => e.id === id && e.phone)).length;
       countEl.textContent = `${selected} recipient${selected === 1 ? '' : 's'} selected`;
@@ -5030,7 +5042,7 @@ const App = {
                     Text
                   </button>` : ''}
                 </div>`).join('')}
-            </div>` : `<div style="font-size:12px;color:var(--g400);padding:8px 0">No available staff found for this shift.</div>`}
+            </div>` : `<div style="font-size:12px;color:var(--g600);padding:8px 0">No available staff found for this shift.</div>`}
 
           <div id="cover-msg-section" style="background:var(--g50);border:1.5px solid var(--g200);border-radius:8px;padding:12px">
             <label style="font-size:11px;font-weight:700;color:var(--g600);display:block;margin-bottom:6px">MESSAGE TO STAFF</label>
@@ -5162,7 +5174,7 @@ const App = {
           const initials = sanitize(e.name.split(' ').map(w=>w[0]).join('').slice(0,2));
           return `
             <label style="display:flex;align-items:center;gap:10px;padding:9px 11px;border-bottom:1px solid var(--g100);cursor:pointer">
-              <input type="checkbox" class="cover-staff-cb" data-eid="${e.id}" data-phone="${sanitize(e.phone||'')}" data-name="${sanitize(e.name)}" checked style="width:16px;height:16px;cursor:pointer;accent-color:var(--blue)">
+              <input type="checkbox" class="cover-staff-cb" data-eid="${e.id}" data-phone="${sanitize(e.phone||'')}" data-name="${sanitize(e.name)}" checked style="width:16px;height:16px;cursor:pointer;accent-color:var(--blue-d)">
               <div style="width:28px;height:28px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${initials}</div>
               <div style="flex:1;min-width:0">
                 <div style="font-size:12px;font-weight:600;color:var(--g900)">${sanitize(e.name)}</div>
@@ -5438,7 +5450,7 @@ const App = {
     }).join('') : '';
 
     const pkg = coTemplates[st] || null;
-    if (!pkg) return `${this.hrHipaaBar()}<div style="padding:40px;text-align:center;color:var(--g400)">No onboarding package found for ${stateLabel(st)}. Contact your regional admin.</div>`;
+    if (!pkg) return `${this.hrHipaaBar()}<div style="padding:40px;text-align:center;color:var(--g600)">No onboarding package found for ${stateLabel(st)}. Contact your regional admin.</div>`;
 
     const steps = pkg.steps.map((s, i) => {
       const isExp = exp && exp.state === st && exp.idx === i;
@@ -5486,7 +5498,7 @@ const App = {
               onclick="document.getElementById('ob-file-input-${i}').click()">
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--g400)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
               <div style="font-size:12px;font-weight:600;color:var(--g600)">Drop PDF or Word doc here</div>
-              <div style="font-size:11px;color:var(--g400);margin-top:2px">or click to browse · .pdf, .docx supported</div>
+              <div style="font-size:11px;color:var(--g600);margin-top:2px">or click to browse · .pdf, .docx supported</div>
               <input type="file" id="ob-file-input-${i}" accept=".pdf,.docx,.doc" multiple style="display:none"
                 onchange="App.hrDropFiles('${st}',${i},this.files)">
             </div>
@@ -5497,7 +5509,7 @@ const App = {
                 </div>
                 <div style="flex:1;min-width:0">
                   <div style="font-size:12px;font-weight:600;color:var(--g700);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${sanitize(f.name)}</div>
-                  <div style="font-size:11px;color:var(--g400)">${f.size ? Math.round(f.size/1024)+'KB' : ''}</div>
+                  <div style="font-size:11px;color:var(--g600)">${f.size ? Math.round(f.size/1024)+'KB' : ''}</div>
                 </div>
                 ${f.dataUrl && (f.name?.endsWith('.pdf') || f.type==='application/pdf') ? `<button class="btn btn-ghost btn-sm" style="font-size:11px;padding:3px 8px;color:var(--blue-d)" onclick="App.previewStepFile('${st}',${i},${fi})">View</button>` : ''}
                 <button class="btn btn-ghost btn-sm" style="color:var(--red);padding:3px 8px;font-size:11px" onclick="App.removeHRStepFile('${st}',${i},${fi})">✕</button>
@@ -5505,8 +5517,8 @@ const App = {
           </div>
           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
             <div style="display:flex;gap:6px">
-              <button class="btn btn-ghost btn-sm" style="padding:3px 8px;color:var(--g400);font-size:11px" onclick="App.moveHRStep('${st}',${i},-1)" ${i===0?'disabled':''}>↑ Move Up</button>
-              <button class="btn btn-ghost btn-sm" style="padding:3px 8px;color:var(--g400);font-size:11px" onclick="App.moveHRStep('${st}',${i},1)" ${i===pkg.steps.length-1?'disabled':''}>↓ Move Down</button>
+              <button class="btn btn-ghost btn-sm" style="padding:3px 8px;color:var(--g600);font-size:11px" onclick="App.moveHRStep('${st}',${i},-1)" ${i===0?'disabled':''}>↑ Move Up</button>
+              <button class="btn btn-ghost btn-sm" style="padding:3px 8px;color:var(--g600);font-size:11px" onclick="App.moveHRStep('${st}',${i},1)" ${i===pkg.steps.length-1?'disabled':''}>↓ Move Down</button>
               <button class="btn btn-ghost btn-sm" style="padding:3px 8px;color:var(--red);font-size:11px" onclick="App.removeHRStep('${st}',${i})">Delete Step</button>
             </div>
             <div style="display:flex;gap:6px">
@@ -5525,12 +5537,12 @@ const App = {
             <div style="flex:1;min-width:0">
               <div style="font-weight:600;font-size:13px;color:var(--g900)">${sanitize(s.title)}</div>
               <div style="font-size:11px;color:var(--g500);margin-top:2px">${sanitize(s.desc)}</div>
-              ${s.url ? `<div style="font-size:11px;color:var(--blue);margin-top:3px;display:flex;align-items:center;gap:4px"><svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M5 2H2a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V8"/><path d="M8 1h3v3M11 1L6 6"/></svg>${sanitize(s.url.length>50?s.url.slice(0,50)+'…':s.url)}</div>` : ''}
+              ${s.url ? `<div style="font-size:11px;color:var(--blue-d);margin-top:3px;display:flex;align-items:center;gap:4px"><svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M5 2H2a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V8"/><path d="M8 1h3v3M11 1L6 6"/></svg>${sanitize(s.url.length>50?s.url.slice(0,50)+'…':s.url)}</div>` : ''}
             </div>
             <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
               <span style="font-size:10px;font-weight:700;background:${typeColor};color:#fff;padding:2px 8px;border-radius:6px">${s.type||'form'}</span>
               ${s.files?.length ? `<span style="font-size:10px;color:var(--g500)">${s.files.length} file${s.files.length>1?'s':''}</span>` : ''}
-              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color:var(--g400);transform:rotate(${isExp?180:0}deg);transition:transform .2s"><path d="M4 6l4 4 4-4"/></svg>
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color:var(--g600);transform:rotate(${isExp?180:0}deg);transition:transform .2s"><path d="M4 6l4 4 4-4"/></svg>
             </div>
           </div>
           ${expandedPanel}
@@ -5553,7 +5565,7 @@ const App = {
       <div class="hr-section">
         <div style="padding:14px 18px;border-bottom:1px solid var(--g100);background:var(--g50)">
           <div style="font-size:12px;font-weight:700;color:var(--g600)">${sanitize(pkg.name)}</div>
-          <div style="font-size:11px;color:var(--g400);margin-top:2px">Click any step to open and edit its details, attachments, or content</div>
+          <div style="font-size:11px;color:var(--g600);margin-top:2px">Click any step to open and edit its details, attachments, or content</div>
         </div>
         ${steps}
       </div>`;
@@ -5582,7 +5594,7 @@ const App = {
     const empBld = (this.S.buildings || []).find(b => b.id === (this.S.user?.buildingId || this.S.activeBuildingId));
     const empCoId = empBld?.companyId || Object.keys(this.S.hrOnboarding || {})[0] || 'co_skyblue';
     const pkg = ((this.S.hrOnboarding || {})[empCoId] || {})[state] || null;
-    if (!pkg) { document.getElementById('main').innerHTML = '<div style="padding:40px;text-align:center;color:var(--g400)">Onboarding package not configured.</div>'; return; }
+    if (!pkg) { document.getElementById('main').innerHTML = '<div style="padding:40px;text-align:center;color:var(--g600)">Onboarding package not configured.</div>'; return; }
 
     const steps = pkg.steps;
     const docs = emp.docs || {};
@@ -5680,7 +5692,7 @@ const App = {
                 <label style="font-size:11px;font-weight:700;color:var(--g500);display:block;margin-bottom:6px">SIGNATURE</label>
                 <div style="border:1.5px solid var(--g200);border-radius:8px;overflow:hidden;background:#FAFAFA;position:relative">
                   <canvas id="sig-canvas" width="700" height="140" style="display:block;width:100%;cursor:crosshair;touch-action:none"></canvas>
-                  <button onclick="App.clearSignature()" style="position:absolute;top:6px;right:8px;font-size:11px;color:var(--g400);background:transparent;border:1px solid var(--g300);border-radius:5px;padding:2px 8px;cursor:pointer">Clear</button>
+                  <button onclick="App.clearSignature()" style="position:absolute;top:6px;right:8px;font-size:11px;color:var(--g600);background:transparent;border:1px solid var(--g300);border-radius:5px;padding:2px 8px;cursor:pointer">Clear</button>
                 </div>
                 ${existing.signature ? `<div style="margin-top:4px;font-size:11px;color:var(--green);display:flex;align-items:center;gap:4px"><svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="2,6 5,9 10,3"/></svg>Signature saved</div>` : ''}
               </div>
@@ -5934,7 +5946,7 @@ const App = {
           onkeydown="if(event.key==='Enter')App.acceptInvite('${token}','${sanitize(email)}')">
       </div>
       <button class="btn btn-primary btn-full" onclick="App.acceptInvite('${token}','${sanitize(email)}')">Set Password &amp; Sign In</button>
-      <p style="font-size:11px;color:var(--g400);text-align:center;margin-top:12px">All sessions are monitored and audited per HIPAA 45 CFR §164.312.</p>`;
+      <p style="font-size:11px;color:var(--g600);text-align:center;margin-top:12px">All sessions are monitored and audited per HIPAA 45 CFR §164.312.</p>`;
   },
 
   async acceptInvite(token, email) {
@@ -5999,7 +6011,7 @@ const App = {
           <span style="flex:1;font-size:13px;color:var(--g800)">${sanitize(b.name)}</span>
           ${isPrimary?'<span style="font-size:10px;color:var(--g500);font-weight:600;background:var(--g100);padding:2px 7px;border-radius:10px">PRIMARY</span>':''}
         </label>`;
-    }).join('') || '<div style="font-size:12px;color:var(--g400);padding:8px 0">No buildings yet.</div>';
+    }).join('') || '<div style="font-size:12px;color:var(--g600);padding:8px 0">No buildings yet.</div>';
 
     document.getElementById('modal-manage-admin-body').innerHTML = `
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;padding:14px;background:var(--g50);border-radius:10px;border:1px solid var(--g100)">
@@ -6162,10 +6174,10 @@ const App = {
     listEl.innerHTML = buildings.map(b => `
       <label style="display:flex;align-items:center;gap:8px;padding:6px 4px;cursor:pointer;border-radius:6px;user-select:none"
         onmouseover="this.style.background='var(--g50)'" onmouseout="this.style.background=''">
-        <input type="checkbox" name="ra-bld" value="${b.id}" style="width:15px;height:15px;accent-color:var(--blue)">
+        <input type="checkbox" name="ra-bld" value="${b.id}" style="width:15px;height:15px;accent-color:var(--blue-d)">
         <span style="font-size:13px;font-weight:500;color:var(--g800)">${sanitize(b.name)}</span>
-        <span style="font-size:11px;color:var(--g400);margin-left:auto">${b.state||''}</span>
-      </label>`).join('') || '<div style="padding:8px;font-size:12px;color:var(--g400)">No buildings available</div>';
+        <span style="font-size:11px;color:var(--g600);margin-left:auto">${b.state||''}</span>
+      </label>`).join('') || '<div style="padding:8px;font-size:12px;color:var(--g600)">No buildings available</div>';
     this.openModal('modal-regional-admin');
   },
 
@@ -6243,7 +6255,7 @@ const App = {
       if (el) { el.value = census; this.recalcPPD(); }
       // Update sync info label
       const info = document.getElementById('pcc-sync-info');
-      if (info) info.innerHTML = `<span style="color:var(--green)">✓ Synced ${census} residents · ${new Date().toLocaleTimeString()}</span>${data.details?.medicareCount != null ? ` <span style="color:var(--g400);margin-left:8px">Medicare ${data.details.medicareCount} · Medicaid ${data.details.medicaidCount}</span>` : ''}`;
+      if (info) info.innerHTML = `<span style="color:var(--green)">✓ Synced ${census} residents · ${new Date().toLocaleTimeString()}</span>${data.details?.medicareCount != null ? ` <span style="color:var(--g600);margin-left:8px">Medicare ${data.details.medicareCount} · Medicaid ${data.details.medicaidCount}</span>` : ''}`;
       this.showToast(`Census updated: ${census} residents from PCC`);
     } catch(e) {
       this.showToast('PCC connection error: ' + e.message, 'warn');
@@ -6496,7 +6508,7 @@ const App = {
           Copy XML Feed URL
         </button>
       </div>
-      <div style="font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Post to Platforms</div>
+      <div style="font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Post to Platforms</div>
       <div style="font-size:12px;color:var(--g500);margin-bottom:12px">
         Clicking "Post Now" copies the job text to clipboard and opens the platform's job creation page. Paste your job description there, then mark it posted below.
       </div>
@@ -6558,7 +6570,7 @@ const App = {
     const statusPill = s => `<span class="job-status-${s}">${s.charAt(0).toUpperCase()+s.slice(1)}</span>`;
 
     const cards = jobs.length === 0
-      ? `<div style="text-align:center;padding:60px 20px;color:var(--g400)">
+      ? `<div style="text-align:center;padding:60px 20px;color:var(--g600)">
           <svg viewBox="0 0 48 48" width="48" height="48" fill="none" stroke="var(--g300)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin:0 auto 16px;display:block"><circle cx="24" cy="16" r="10"/><path d="M4 44c0-11 9-20 20-20s20 9 20 20"/><path d="M32 32l8 8M36 32l4 8"/></svg>
           <div style="font-weight:700;font-size:16px;color:var(--g600);margin-bottom:8px">No job postings yet</div>
           <div style="font-size:13px;margin-bottom:20px">Create your first posting and distribute it to Indeed, LinkedIn, ZipRecruiter, and more.</div>
@@ -6578,7 +6590,7 @@ const App = {
                 <div style="font-size:12px;color:var(--g500);margin-bottom:8px">
                   ${sanitize(j.department)} · ${sanitize(j.jobType)}${loc ? ' · ' + sanitize(loc) : ''}${j.salary ? ' · ' + sanitize(j.salary) : ''}
                 </div>
-                <div style="font-size:11px;color:var(--g400)">
+                <div style="font-size:11px;color:var(--g600)">
                   Posted ${d} · <span style="color:${posted>0?'var(--green)':'var(--g400)'}">✓ ${posted} platform${posted!==1?'s':''}</span>
                 </div>
               </div>
@@ -6730,7 +6742,7 @@ const App = {
         <td style="padding:12px 16px;font-size:12px;color:var(--g600);font-weight:500">${sanitize(a.role)}</td>
         <td style="padding:12px 16px"><span style="font-size:11px;font-weight:700;color:var(--green);background:var(--green-l);padding:2px 8px;border-radius:6px">${sanitize(a.status)}</span></td>
         <td style="padding:12px 16px">
-          ${a.role==='Owner'?'<span style="font-size:12px;font-weight:600;color:var(--g400)">Owner</span>':`<button class="btn btn-secondary btn-sm" onclick="App.showToast('Account suspended','warn')">Suspend</button>`}
+          ${a.role==='Owner'?'<span style="font-size:12px;font-weight:600;color:var(--g600)">Owner</span>':`<button class="btn btn-secondary btn-sm" onclick="App.showToast('Account suspended','warn')">Suspend</button>`}
         </td>
       </tr>`).join('');
     return `
@@ -6743,7 +6755,7 @@ const App = {
         <table style="width:100%;border-collapse:collapse">
           <thead>
             <tr style="border-bottom:2px solid var(--g100)">
-              ${['Account','Status','Actions'].map((h,i)=>`<th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em${i===0?';width:50%':''}">${h}</th>`).join('')}
+              ${['Account','Status','Actions'].map((h,i)=>`<th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em${i===0?';width:50%':''}">${h}</th>`).join('')}
               <th></th>
             </tr>
           </thead>
@@ -6769,7 +6781,7 @@ const App = {
         <td style="padding:9px 14px;font-size:12px;color:var(--g600)">${sanitize(e.detail)}</td>
       </tr>`).join('') : '';
     const emptyState = !log.length ? `
-      <tr><td colspan="4" style="padding:60px;text-align:center;color:var(--g400)">
+      <tr><td colspan="4" style="padding:60px;text-align:center;color:var(--g600)">
         <svg viewBox="0 0 48 48" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="margin:0 auto 12px;display:block;opacity:.35"><rect x="6" y="4" width="36" height="40" rx="3"/><path d="M16 14h16M16 22h16M16 30h10"/><circle cx="36" cy="36" r="9" fill="white"/><path d="M33 36h6M36 33v6"/></svg>
         <div style="font-size:13px;font-weight:600;color:var(--g500)">No audit entries yet</div>
         <div style="font-size:11px;margin-top:4px">All HR actions will be logged here automatically</div>
@@ -6784,7 +6796,7 @@ const App = {
         <table style="width:100%;border-collapse:collapse">
           <thead style="position:sticky;top:0;background:#fff;z-index:1">
             <tr style="border-bottom:2px solid var(--g100)">
-              ${['Timestamp','User','Action','Details'].map(h=>`<th style="padding:9px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em">${h}</th>`).join('')}
+              ${['Timestamp','User','Action','Details'].map(h=>`<th style="padding:9px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">${h}</th>`).join('')}
             </tr>
           </thead>
           <tbody>${rows}${emptyState}</tbody>
@@ -6846,7 +6858,7 @@ const App = {
               <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:var(--blue);color:#fff">${planNames[plan]||'Professional'}</span>
               <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:${statusBg};color:${statusColor}">${status.replace(/\b\w/g,c=>c.toUpperCase())}</span>
             </div>
-            <div style="font-size:30px;font-weight:800;color:var(--blue);line-height:1">${planPrices[plan]||'$299'}<span style="font-size:14px;font-weight:500;color:var(--g500)">/month</span></div>
+            <div style="font-size:30px;font-weight:800;color:var(--blue-d);line-height:1">${planPrices[plan]||'$299'}<span style="font-size:14px;font-weight:500;color:var(--g500)">/month</span></div>
             ${contractEnd ? `<div style="font-size:13px;color:var(--g500);margin-top:6px">Contract ends ${new Date(contractEnd+'T12:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}${daysLeft!==null?` · <strong style="color:${daysLeft<30?'var(--red)':daysLeft<90?'var(--amber)':'var(--g700)'}">${daysLeft} days remaining</strong>`:''}` : `<div style="font-size:13px;color:var(--g500);margin-top:6px">Month-to-month`}</div>
           </div>
           <div style="display:flex;flex-direction:column;gap:7px">
@@ -6902,7 +6914,7 @@ const App = {
               </div>
             </div>
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-              <input type="checkbox" id="pm-autopay-cb" checked style="width:16px;height:16px;accent-color:var(--blue)">
+              <input type="checkbox" id="pm-autopay-cb" checked style="width:16px;height:16px;accent-color:var(--blue-d)">
               <label for="pm-autopay-cb" style="font-size:13px;cursor:pointer">Enable autopay — charge this card on each billing date</label>
             </div>
             <div style="font-size:11px;color:var(--g500);margin-bottom:14px;display:flex;gap:6px;align-items:center">
@@ -6931,7 +6943,7 @@ const App = {
           ` : `
             <div style="padding:16px;background:var(--g50);border:1px dashed var(--g300);border-radius:var(--radius);margin-bottom:14px;text-align:center">
               <div style="font-size:13px;color:var(--g600)">No billing contact set</div>
-              <div style="font-size:11px;color:var(--g400);margin-top:4px">Invoices will be sent here</div>
+              <div style="font-size:11px;color:var(--g600);margin-top:4px">Invoices will be sent here</div>
             </div>
             <button class="btn btn-secondary btn-sm" onclick="App.openBillingContactForm()">Add Billing Contact</button>
           `}
@@ -7140,16 +7152,16 @@ const App = {
             <div style="font-size:11px;color:var(--g500);margin-top:3px">${sanitize(s.desc)}</div>
             ${subDate ? `<div style="font-size:11px;color:#15803D;margin-top:5px;display:flex;align-items:center;gap:4px">
               <svg viewBox="0 0 14 14" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="7" cy="7" r="6"/><path d="M4.5 7l2 2L9.5 5"/></svg>
-              Submitted ${subDate}</div>` : `<div style="font-size:11px;color:var(--g400);margin-top:5px;font-style:italic">Not yet submitted</div>`}
+              Submitted ${subDate}</div>` : `<div style="font-size:11px;color:var(--g600);margin-top:5px;font-style:italic">Not yet submitted</div>`}
           </div>
           <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
             ${status === 'complete'
               ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="App.viewHRDoc('${empId}','${s.id}')">View</button>
-                 <button class="btn btn-ghost btn-sm" style="font-size:11px;color:var(--g400)" onclick="App.requestResubmit('${empId}','${s.id}')">Request Resubmit</button>`
-              : `<span style="font-size:11px;color:var(--g400);background:var(--g100);padding:3px 8px;border-radius:6px">Pending</span>`}
+                 <button class="btn btn-ghost btn-sm" style="font-size:11px;color:var(--g600)" onclick="App.requestResubmit('${empId}','${s.id}')">Request Resubmit</button>`
+              : `<span style="font-size:11px;color:var(--g600);background:var(--g100);padding:3px 8px;border-radius:6px">Pending</span>`}
           </div>
         </div>`;
-    }).join('') : '<div style="padding:24px;color:var(--g400);text-align:center">No onboarding package found for this facility</div>';
+    }).join('') : '<div style="padding:24px;color:var(--g600);text-align:center">No onboarding package found for this facility</div>';
 
     const completedCount = pkg ? pkg.steps.filter((s,i) => (docs[s.id]?.status || inferStatus(i, pkg.steps.length)) === 'complete').length : 0;
     const totalCount     = pkg ? pkg.steps.length : 0;
@@ -7167,7 +7179,7 @@ const App = {
         </div>
         <div style="text-align:right;flex-shrink:0">
           ${this.hrBadge(emp.status)}
-          <div style="font-size:11px;color:var(--g400);margin-top:4px">${sanitize(emp.progress)}</div>
+          <div style="font-size:11px;color:var(--g600);margin-top:4px">${sanitize(emp.progress)}</div>
           ${emp.slxId ? `<div style="font-size:11px;font-weight:700;color:var(--purple);margin-top:2px">${sanitize(emp.slxId)}</div>` : ''}
         </div>
       </div>
@@ -7387,9 +7399,9 @@ const App = {
           <div style="font-size:11px;font-weight:700;color:var(--g500);margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em">Termination History</div>
           ${termLog.map(t=>`<div class="roster-term-entry">
             <span style="font-weight:600;color:var(--g700)">${sanitize(t.date)}</span>
-            <span style="color:var(--g400);margin:0 6px">·</span>
+            <span style="color:var(--g600);margin:0 6px">·</span>
             <span style="color:var(--g600)">${sanitize(t.reason||'No reason provided')}</span>
-            ${t.by?`<span style="color:var(--g400);margin-left:6px;font-size:11px">by ${sanitize(t.by)}</span>`:''}
+            ${t.by?`<span style="color:var(--g600);margin-left:6px;font-size:11px">by ${sanitize(t.by)}</span>`:''}
           </div>`).join('')}
         </div>` : '';
 
@@ -7407,7 +7419,7 @@ const App = {
             <div class="roster-row-avatar" style="background:${isActive?col:'var(--g300)'}">${sanitize(emp.initials)}</div>
             <div>
               <div style="font-weight:600;color:${isActive?'var(--g900)':'var(--g500)'}">${sanitize(emp.name)}</div>
-              <div style="font-size:11px;color:var(--g400);margin-top:1px">${sanitize(emp.email||'')}</div>
+              <div style="font-size:11px;color:var(--g600);margin-top:1px">${sanitize(emp.email||'')}</div>
               ${termHtml}
               <div id="inactivate-form-${emp.id}" style="display:none"></div>
             </div>
@@ -7449,7 +7461,7 @@ const App = {
         </div>
         <table class="roster-table">
           <thead>${tableHdr}</thead>
-          <tbody>${activeRows || '<tr><td colspan="5" style="text-align:center;color:var(--g400);padding:20px">No active employees</td></tr>'}</tbody>
+          <tbody>${activeRows || '<tr><td colspan="5" style="text-align:center;color:var(--g600);padding:20px">No active employees</td></tr>'}</tbody>
         </table>
       </div>
 
@@ -7710,7 +7722,7 @@ const App = {
           <span class="cms-star-badge ${cls}">${overallStars} out of 5 Stars</span>
         </div>
         <div style="font-size:13px;font-weight:600;color:var(--g600)">${label}</div>
-        <div style="font-size:11px;color:var(--g400);margin-top:4px">Overall = lowest of component scores</div>
+        <div style="font-size:11px;color:var(--g600);margin-top:4px">Overall = lowest of component scores</div>
       </div>
       <div style="border:1.5px solid var(--g200);border-radius:8px;overflow:hidden;padding:0 14px">
         ${componentRows}
@@ -7752,7 +7764,7 @@ const App = {
     const daysInPeriod = 30;
     const res = document.getElementById('cms-monthly-result');
     if (!res) return;
-    if (!census || census <= 0) { res.innerHTML = '<div style="color:var(--g400);font-size:13px;padding:12px">Enter average daily census to calculate</div>'; return; }
+    if (!census || census <= 0) { res.innerHTML = '<div style="color:var(--g600);font-size:13px;padding:12px">Enter average daily census to calculate</div>'; return; }
     const rnPPD      = rnHrs      / census;
     const nursingPPD = nursingHrs / census;
     const rn24Stars  = !isNaN(rn24Days) && rn24Days >= 0 ? this._cmsRN24Stars(rn24Days, daysInPeriod) : null;
@@ -7793,7 +7805,7 @@ const App = {
     const buildingIds = u.buildingIds || [];
     const myBuildings = (this.S.buildings || []).filter(b => buildingIds.includes(b.id));
     if (myBuildings.length === 0) {
-      return `<div style="padding:60px;text-align:center;color:var(--g400)">
+      return `<div style="padding:60px;text-align:center;color:var(--g600)">
         <svg viewBox="0 0 48 48" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="margin:0 auto 12px;display:block;opacity:.35"><rect x="4" y="8" width="40" height="32" rx="3"/><path d="M16 40V24h16v16"/><path d="M4 20l20-12 20 12"/></svg>
         <div style="font-size:14px;font-weight:600;color:var(--g500);margin-bottom:6px">No buildings in your portfolio</div>
         <div style="font-size:12px">Contact your super admin to assign buildings to your account.</div>
@@ -7822,7 +7834,7 @@ const App = {
             <div style="font-size:10px;color:var(--g500);font-weight:600;margin-top:2px">Staff</div>
           </div>
           <div style="text-align:center;padding:10px;background:var(--g50);border-radius:8px">
-            <div style="font-size:20px;font-weight:800;color:var(--blue)">${todayCount}</div>
+            <div style="font-size:20px;font-weight:800;color:var(--blue-d)">${todayCount}</div>
             <div style="font-size:10px;color:var(--g500);font-weight:600;margin-top:2px">Today</div>
           </div>
           <div style="text-align:center;padding:10px;background:var(--g50);border-radius:8px">
@@ -7903,9 +7915,9 @@ const App = {
     const sched = ms.filter(s=>s.status==='scheduled').length;
     const pct = sched+open > 0 ? Math.round(sched/(sched+open)*100) : 0;
     const stats = `<div class="stat-row">
-      <div class="stat-card"><div class="stat-value">${sched}</div><div class="stat-label">Scheduled Shifts</div><div class="stat-change" style="color:var(--blue)">↑ ${pct}% coverage</div></div>
+      <div class="stat-card"><div class="stat-value">${sched}</div><div class="stat-label">Scheduled Shifts</div><div class="stat-change" style="color:var(--blue-d)">↑ ${pct}% coverage</div></div>
       <div class="stat-card"><div class="stat-value" style="color:var(--g600)">${open}</div><div class="stat-label">Open Shifts</div><div class="stat-change" style="color:var(--g500)">Need coverage</div></div>
-      <div class="stat-card"><div class="stat-value">${this.S.employees.filter(e=>e.buildingId===bId&&!e.inactive).length}</div><div class="stat-label">Total Staff</div><div class="stat-change" style="color:var(--g400)">${DISPLAY_GROUPS.length} departments</div></div>
+      <div class="stat-card"><div class="stat-value">${this.S.employees.filter(e=>e.buildingId===bId&&!e.inactive).length}</div><div class="stat-label">Total Staff</div><div class="stat-change" style="color:var(--g600)">${DISPLAY_GROUPS.length} departments</div></div>
     </div>`;
 
     let calHtml = '';
@@ -7935,14 +7947,14 @@ const App = {
 
     const row = (id, label, hrs, benchmark, note='') => `
       <tr>
-        <td style="padding:11px 14px;font-size:13px;font-weight:600;color:var(--g800)">${label}${note?`<div style="font-size:10px;font-weight:400;color:var(--g400);margin-top:1px">${note}</div>`:''}</td>
+        <td style="padding:11px 14px;font-size:13px;font-weight:600;color:var(--g800)">${label}${note?`<div style="font-size:10px;font-weight:400;color:var(--g600);margin-top:1px">${note}</div>`:''}</td>
         <td style="padding:11px 14px;text-align:center">
           <input id="ppd-${id}-hrs" type="number" min="0" step="0.5" value="${hrs}"
             oninput="App.recalcPPD()"
             style="width:70px;padding:5px 8px;border:1.5px solid var(--g200);border-radius:6px;font-size:13px;font-weight:600;text-align:center;color:var(--g800)">
         </td>
         <td style="padding:11px 14px;text-align:center;font-size:15px;font-weight:700;color:var(--g600)" id="ppd-${id}-result">—</td>
-        ${benchmark!==undefined ? `<td style="padding:11px 14px;text-align:center;font-size:11px;color:var(--g400)">≥ ${benchmark}</td>` : '<td></td>'}
+        ${benchmark!==undefined ? `<td style="padding:11px 14px;text-align:center;font-size:11px;color:var(--g600)">≥ ${benchmark}</td>` : '<td></td>'}
       </tr>`;
 
     return `<div style="padding:20px;max-width:760px">
@@ -7973,28 +7985,28 @@ const App = {
           <button id="pcc-staffing-btn" class="pcc-sync-btn" onclick="App.syncPCCStaffing()" ${!IS_SERVER_MODE ? 'disabled title="PCC sync requires server mode"' : ''}>
             ${SYNC_ICON} Sync PCC Staffing
           </button>
-          <div id="pcc-sync-info" style="font-size:11px;color:var(--g400)">
+          <div id="pcc-sync-info" style="font-size:11px;color:var(--g600)">
             ${this.S.pccLastSync ? '<span style="color:var(--green)">✓ Census synced ' + new Date(this.S.pccLastSync).toLocaleTimeString() + '</span>' : IS_SERVER_MODE ? 'Pull live census from PointClickCare' : 'Requires server connection'}
           </div>
-          <div id="pcc-staffing-info" style="font-size:11px;color:var(--g400)">
+          <div id="pcc-staffing-info" style="font-size:11px;color:var(--g600)">
             ${IS_SERVER_MODE ? 'Pull RN/LPN/CNA/CMA/NM hours from PCC' : ''}
           </div>
         </div>
-        <div style="font-size:12px;color:var(--g400);padding-bottom:10px;margin-left:auto">Hours auto-filled from<br>scheduled shifts · editable</div>
+        <div style="font-size:12px;color:var(--g600);padding-bottom:10px;margin-left:auto">Hours auto-filled from<br>scheduled shifts · editable</div>
       </div>
 
       <!-- NURSING -->
       <div style="background:#fff;border:1.5px solid var(--g200);border-radius:12px;overflow:hidden;margin-bottom:16px">
         <div style="padding:12px 16px;background:var(--g50);border-bottom:1px solid var(--g200);display:flex;align-items:center;justify-content:space-between">
           <div style="font-size:13px;font-weight:800;color:var(--g900);text-transform:uppercase;letter-spacing:.06em">Nursing Department</div>
-          <div style="font-size:11px;color:var(--g400)">CMS minimum benchmarks shown</div>
+          <div style="font-size:11px;color:var(--g600)">CMS minimum benchmarks shown</div>
         </div>
         <table style="width:100%;border-collapse:collapse">
           <thead><tr style="border-bottom:1px solid var(--g100)">
-            <th style="padding:8px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase">Position</th>
-            <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase">Hours / Day</th>
-            <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase">PPD</th>
-            <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase">Min.</th>
+            <th style="padding:8px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Position</th>
+            <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Hours / Day</th>
+            <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">PPD</th>
+            <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Min.</th>
           </tr></thead>
           <tbody style="divide-y:var(--g100)">
             ${row('nm',  'Nurse Management', nmHrs, undefined, 'From scheduled Nurse Management shifts')}
@@ -8021,9 +8033,9 @@ const App = {
         </div>
         <table style="width:100%;border-collapse:collapse">
           <thead><tr style="border-bottom:1px solid var(--g100)">
-            <th style="padding:8px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase">Department</th>
-            <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase">Hours / Day</th>
-            <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase">PPD</th>
+            <th style="padding:8px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Department</th>
+            <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Hours / Day</th>
+            <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">PPD</th>
             <th></th>
           </tr></thead>
           <tbody>
@@ -8075,14 +8087,14 @@ const App = {
                 <button id="pcc-monthly-btn" class="pcc-sync-btn" onclick="App.syncPCCMonthly()" ${!IS_SERVER_MODE ? 'disabled title="PCC sync requires server mode"' : ''}>
                   ${SYNC_ICON} Pull PCC Monthly Data
                 </button>
-                <div id="pcc-monthly-info" style="font-size:11px;color:var(--g400);text-align:right">${IS_SERVER_MODE ? 'Auto-fill from PCC: RN avg, total nursing avg, RN 24h days' : ''}</div>
+                <div id="pcc-monthly-info" style="font-size:11px;color:var(--g600);text-align:right">${IS_SERVER_MODE ? 'Auto-fill from PCC: RN avg, total nursing avg, RN 24h days' : ''}</div>
               </div>
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px">
               <div>
                 <label style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Avg Daily RN Hours</label>
                 <input id="cms-mo-rn" class="cms-monthly-input" type="number" min="0" step="0.1" placeholder="e.g. 48" oninput="App.recalcCMSMonthly()" style="width:100%">
-                <div style="font-size:11px;color:var(--g400);margin-top:4px">Total RN hours per day averaged over month</div>
+                <div style="font-size:11px;color:var(--g600);margin-top:4px">Total RN hours per day averaged over month</div>
               </div>
               <div>
                 <label style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Avg Daily Census</label>
@@ -8091,20 +8103,20 @@ const App = {
               <div>
                 <label style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Avg Daily Total Nursing Hours</label>
                 <input id="cms-mo-nursing" class="cms-monthly-input" type="number" min="0" step="0.1" placeholder="e.g. 320" oninput="App.recalcCMSMonthly()" style="width:100%">
-                <div style="font-size:11px;color:var(--g400);margin-top:4px">RN + LPN + CNA + CMA + NM</div>
+                <div style="font-size:11px;color:var(--g600);margin-top:4px">RN + LPN + CNA + CMA + NM</div>
               </div>
               <div>
                 <label style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Days RN on Duty 24hrs</label>
                 <input id="cms-mo-rn24" class="cms-monthly-input" type="number" min="0" max="31" placeholder="e.g. 28" oninput="App.recalcCMSMonthly()" style="width:100%">
-                <div style="font-size:11px;color:var(--g400);margin-top:4px">Days in month RN present full 24 hours</div>
+                <div style="font-size:11px;color:var(--g600);margin-top:4px">Days in month RN present full 24 hours</div>
               </div>
             </div>
             <div id="cms-monthly-result"></div>
           </div>
 
-          <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--g100);font-size:11px;color:var(--g400)">
+          <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--g100);font-size:11px;color:var(--g600)">
             Thresholds based on CMS Five-Star Staffing methodology (2024). Actual rating uses PBJ data submitted to CMS and is case-mix adjusted.
-            <a href="https://www.cms.gov/medicare/provider-enrollment-and-certification/certificationandcomplianc/downloads/usersguide.pdf" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none;margin-left:4px">CMS methodology ↗</a>
+            <a href="https://www.cms.gov/medicare/provider-enrollment-and-certification/certificationandcomplianc/downloads/usersguide.pdf" target="_blank" rel="noopener" style="color:var(--blue-d);text-decoration:none;margin-left:4px">CMS methodology ↗</a>
           </div>
         </div>
       </div>
@@ -8130,7 +8142,7 @@ const App = {
 
       let rows = '';
       if (!openShifts.length) {
-        rows = `<div class="empty-state"><div class="empty-icon"><svg viewBox="0 0 32 32" width="36" height="36" fill="none" stroke="var(--blue)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="16" cy="16" r="13"/><polyline points="10,16 14,20 22,12"/></svg></div><div style="font-weight:700;color:var(--g700)">No Open Shifts</div><div style="font-size:13px;color:var(--g400)">All shifts are covered right now.</div></div>`;
+        rows = `<div class="empty-state"><div class="empty-icon"><svg viewBox="0 0 32 32" width="36" height="36" fill="none" stroke="var(--blue)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="16" cy="16" r="13"/><polyline points="10,16 14,20 22,12"/></svg></div><div style="font-weight:700;color:var(--g700)">No Open Shifts</div><div style="font-size:13px;color:var(--g600)">All shifts are covered right now.</div></div>`;
       } else {
         openShifts.forEach(slot => {
           const d = new Date(slot.date+'T12:00:00');
@@ -8141,18 +8153,18 @@ const App = {
           const otherPending = slot.claimRequest && slot.claimRequest.empId !== u.id;
           let actionHtml;
           if (isPast) {
-            actionHtml = '<span style="font-size:12px;color:var(--g400)">Expired</span>';
+            actionHtml = '<span style="font-size:12px;color:var(--g600)">Expired</span>';
           } else if (myPending) {
             actionHtml = `<span style="font-size:12px;font-weight:700;color:#92400E;background:#FEF3C7;border-radius:6px;padding:4px 10px">Pending Approval</span>`;
           } else if (otherPending) {
-            actionHtml = `<span style="font-size:12px;color:var(--g400)">Claim pending</span>`;
+            actionHtml = `<span style="font-size:12px;color:var(--g600)">Claim pending</span>`;
           } else {
             actionHtml = `<button class="btn btn-primary btn-sm" onclick="App.confirmClaim('${slot.id}')">Claim Shift</button>`;
           }
           rows += `<div style="display:flex;align-items:center;gap:14px;padding:14px 16px;border-bottom:1px solid var(--g100)${isPast?';opacity:.45':''}">
             <div style="min-width:90px">
               <div style="font-weight:700;font-size:13px;color:var(--g900)">${dl}</div>
-              <div style="font-size:11px;color:var(--g400)">${slot.date < TODAY ? 'Past' : slot.date === TODAY ? 'Today' : ''}</div>
+              <div style="font-size:11px;color:var(--g600)">${slot.date < TODAY ? 'Past' : slot.date === TODAY ? 'Today' : ''}</div>
             </div>
             <div style="flex:1">
               <div style="font-weight:600;font-size:13px;color:var(--g800)">${slot.type} Shift</div>
@@ -8211,7 +8223,7 @@ const App = {
         <div class="cal-date">${d}</div>
         ${shift ? `<div style="margin-top:4px"><div style="font-size:10px;font-weight:700;color:${col};background:${col}18;border-radius:4px;padding:2px 5px;display:inline-block">${shift.type}</div>${sh?`<div style="font-size:10px;color:var(--g500);margin-top:2px">${sh.start}</div>`:''}</div>` : ''}
         ${myPending.length ? `<div style="font-size:9px;font-weight:700;color:#92400E;background:#FEF3C7;border-radius:3px;padding:1px 4px;margin-top:2px">Pending</div>` : ''}
-        ${unclaimed.length ? `<div onclick="event.stopPropagation();App.confirmClaim('${unclaimed[0].id}')" style="font-size:9px;font-weight:700;color:var(--blue);background:var(--blue-l,#EFF6FF);border-radius:3px;padding:1px 4px;margin-top:2px;cursor:pointer">${unclaimed.length > 1 ? unclaimed.length+' Open' : 'Open'} +</div>` : ''}
+        ${unclaimed.length ? `<div onclick="event.stopPropagation();App.confirmClaim('${unclaimed[0].id}')" style="font-size:9px;font-weight:700;color:var(--blue-d);background:var(--blue-l,#EFF6FF);border-radius:3px;padding:1px 4px;margin-top:2px;cursor:pointer">${unclaimed.length > 1 ? unclaimed.length+' Open' : 'Open'} +</div>` : ''}
       </div>`;
     }
     const total = Math.ceil((firstDay+daysInMonth)/7)*7;
@@ -8230,11 +8242,11 @@ const App = {
       return `<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--g100)">
         <div style="width:8px;height:8px;border-radius:50%;background:${isToday?'var(--blue)':'var(--g300)'};flex-shrink:0"></div>
         <div style="flex:1">
-          <div style="font-weight:700;font-size:13px;color:var(--g900)">${dl}${isToday?' <span style="font-size:11px;color:var(--blue);font-weight:600">· Today</span>':''}</div>
+          <div style="font-weight:700;font-size:13px;color:var(--g900)">${dl}${isToday?' <span style="font-size:11px;color:var(--blue-d);font-weight:600">· Today</span>':''}</div>
           <div style="font-size:12px;color:var(--g500)">${s.type}${sh?' · '+sh.start+'–'+sh.end:''}</div>
         </div>
       </div>`;
-    }).join('') : `<div style="font-size:13px;color:var(--g400);padding:12px 0">No upcoming shifts scheduled.</div>`;
+    }).join('') : `<div style="font-size:13px;color:var(--g600);padding:12px 0">No upcoming shifts scheduled.</div>`;
 
     return `<div style="padding:0 0 16px">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 16px 12px">
@@ -8285,7 +8297,7 @@ const App = {
           </div>
           <div class="emp-slot">
             <div class="emp-slot-avatar" style="background:${col}">${sanitize(u.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase())}</div>
-            <div style="flex:1"><div class="emp-slot-name">${sanitize(u.name)}</div><div style="font-size:11px;color:var(--g400)">${sanitize(u.group)}</div></div>
+            <div style="flex:1"><div class="emp-slot-name">${sanitize(u.name)}</div><div style="font-size:11px;color:var(--g600)">${sanitize(u.group)}</div></div>
           </div>
         </div>
       </div>`;
@@ -8409,13 +8421,13 @@ const App = {
 
     const colStyle = `grid-template-columns:110px repeat(${grps.length},1fr)`;
 
-    let hdr = `<div style="padding:12px 16px;background:var(--g50);font-size:11px;font-weight:700;color:var(--g400);text-transform:uppercase">Shift</div>`;
+    let hdr = `<div style="padding:12px 16px;background:var(--g50);font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Shift</div>`;
     grps.forEach(g => {
       const slotReqsG = this.getSlotReqs(bId, g);
       const hasReqsG  = Object.values(slotReqsG).some(v=>v>0);
       hdr += `<div style="padding:10px 14px;border-left:3px solid ${G_COLORS[g]};background:${G_COLORS[g]}09">
         <div style="font-weight:700;font-size:13px;color:${G_COLORS[g]}">${G_ICONS[g]} ${g}</div>
-        ${hasReqsG?`<div style="font-size:10px;color:var(--g400);margin-top:2px">${Object.entries(slotReqsG).map(([t,n])=>`${n} ${t}`).join(' · ')}</div>`:''}
+        ${hasReqsG?`<div style="font-size:10px;color:var(--g600);margin-top:2px">${Object.entries(slotReqsG).map(([t,n])=>`${n} ${t}`).join(' · ')}</div>`:''}
       </div>`;
     });
 
@@ -8423,7 +8435,7 @@ const App = {
     CLINICAL_SHIFTS.forEach(sh => {
       let row = `<div style="padding:12px 16px;background:var(--g50)">
         <div style="font-size:12px;font-weight:700;color:var(--g700)">${sh.type}</div>
-        <div style="font-size:11px;color:var(--g400)">${sh.start}–${sh.end}</div>
+        <div style="font-size:11px;color:var(--g600)">${sh.start}–${sh.end}</div>
       </div>`;
 
       grps.forEach(g => {
@@ -8559,7 +8571,7 @@ const App = {
           : '';
 
         content += `<div style="margin-bottom:5px">
-          <div style="font-size:9px;font-weight:700;color:var(--g400);text-transform:uppercase;margin-bottom:2px;display:flex;justify-content:space-between">
+          <div style="font-size:9px;font-weight:700;color:var(--g600);text-transform:uppercase;margin-bottom:2px;display:flex;justify-content:space-between">
             <span style="background:${allFull?'#DCFCE7':'#FEF2F2'};color:${allFull?'#166534':'#991B1B'};padding:1px 5px;border-radius:4px">${sh.type.slice(0,3)}</span>${badge}
           </div>
           ${pills}
@@ -8591,7 +8603,7 @@ const App = {
         <button class="cal-month-btn" onclick="App.navWeek14(-1)" style="width:28px">&#8249;</button>
         <div style="display:flex;align-items:center;gap:10px">
           <span style="font-size:13px;font-weight:700;color:var(--g700)">14-Day Rotation View</span>
-          <span style="font-size:12px;color:var(--g400)">${weekLabel(dates[0],dates[13])}</span>
+          <span style="font-size:12px;color:var(--g600)">${weekLabel(dates[0],dates[13])}</span>
           ${openTotal>0?`<span style="background:var(--blue-l);color:var(--blue-d);border:1px solid var(--blue-m);border-radius:10px;font-size:11px;font-weight:600;padding:1px 8px">${openTotal} open</span>`:''}
         </div>
         <button class="cal-month-btn" onclick="App.navWeek14(1)" style="width:28px">&#8250;</button>
@@ -8657,7 +8669,7 @@ const App = {
             const emp = this.S.employees.find(e=>e.id===slot.employeeId);
             if (emp) slotsHtml += `<div class="emp-slot">
               <div class="emp-slot-avatar" style="background:${G_COLORS[grp]}">${sanitize(emp.initials)}</div>
-              <div style="flex:1"><div class="emp-slot-name">${sanitize(emp.name)}</div><div style="font-size:11px;color:var(--g400)">${sanitize(grp)}</div></div>
+              <div style="flex:1"><div class="emp-slot-name">${sanitize(emp.name)}</div><div style="font-size:11px;color:var(--g600)">${sanitize(grp)}</div></div>
               ${u.role==='admin'?`<button class="btn btn-ghost btn-sm" onclick="App.removeEmpFromShift('${slot.id}')" style="color:var(--red);padding:4px 6px">✕</button>`:''}
             </div>`;
           }
@@ -8774,7 +8786,7 @@ const App = {
         ${v?'<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,8 6,12 14,4"/></svg>':'<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="8" x2="12" y2="8"/></svg>'}
         <span class="pattern-tile-label">Day ${i+1}</span>
       </div>`).join('');
-    if (!pat.length) container.innerHTML = '<div style="color:var(--g400);font-size:13px;font-style:italic">No days in pattern. Add days or choose a preset above.</div>';
+    if (!pat.length) container.innerHTML = '<div style="color:var(--g600);font-size:13px;font-style:italic">No days in pattern. Add days or choose a preset above.</div>';
 
     const onDays = pat.filter(v=>v===1).length;
     const offDays = pat.filter(v=>v===0).length;
@@ -8786,7 +8798,7 @@ const App = {
     const container = document.getElementById('pattern-preview');
     if (!container) return;
     const pat = this.S.patPattern;
-    if (!pat.length) { container.innerHTML = '<div style="color:var(--g400);font-size:13px;font-style:italic;grid-column:span 7">Set a pattern to see preview</div>'; return; }
+    if (!pat.length) { container.innerHTML = '<div style="color:var(--g600);font-size:13px;font-style:italic;grid-column:span 7">Set a pattern to see preview</div>'; return; }
 
     const startInput = document.getElementById('pat-start');
     const startDate = startInput ? new Date(startInput.value+'T12:00:00') : new Date(TODAY+'T12:00:00');
@@ -8892,7 +8904,7 @@ const App = {
     div.className = 'modal-overlay open';
     div.id = 'modal-manage-admins';
     div.innerHTML = `<div class="modal modal-lg">
-      <div class="modal-header"><span class="modal-title"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px;color:var(--blue)"><circle cx="7" cy="7" r="3"/><path d="M2 17c0-3 2.24-5 5-5"/><circle cx="14" cy="9" r="2.5"/><path d="M11 17c0-2.2 1.35-4 3-4s3 1.8 3 4"/></svg>Manage Admins — ${sanitize(building?.name||'')}</span><button class="modal-close" onclick="document.getElementById('modal-manage-admins').remove()">✕</button></div>
+      <div class="modal-header"><span class="modal-title"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px;color:var(--blue-d)"><circle cx="7" cy="7" r="3"/><path d="M2 17c0-3 2.24-5 5-5"/><circle cx="14" cy="9" r="2.5"/><path d="M11 17c0-2.2 1.35-4 3-4s3 1.8 3 4"/></svg>Manage Admins — ${sanitize(building?.name||'')}</span><button class="modal-close" aria-label="Close" onclick="document.getElementById('modal-manage-admins').remove()">✕</button></div>
       <div class="modal-body">
         <div class="info-box">Admins can add/remove employees, assign shifts, and send alerts for this building.</div>
         <table class="admin-table"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead><tbody>${rows}</tbody></table>
@@ -9048,7 +9060,7 @@ const App = {
     const shiftTypes = (g) => SHIFT_TYPES(g);
     let rows = '';
     if (!claims.length) {
-      rows = `<div style="padding:24px;text-align:center;color:var(--g400);font-size:13px">No pending shift claims.</div>`;
+      rows = `<div style="padding:24px;text-align:center;color:var(--g600);font-size:13px">No pending shift claims.</div>`;
     } else {
       claims.forEach(shift => {
         const { empId, empName, requestedAt } = shift.claimRequest;
@@ -9061,7 +9073,7 @@ const App = {
           <div style="flex:1;min-width:0">
             <div style="font-weight:700;font-size:13px;color:var(--g900)">${sanitize(empName)}</div>
             <div style="font-size:12px;color:var(--g600)">${shift.type} ${shift.group} · ${dl}${st ? ' · ' + st.start + '–' + st.end : ''}</div>
-            <div style="font-size:11px;color:var(--g400);margin-top:2px">Requested ${reqAt}</div>
+            <div style="font-size:11px;color:var(--g600);margin-top:2px">Requested ${reqAt}</div>
           </div>
           <div style="display:flex;gap:6px;flex-shrink:0">
             <button class="btn btn-secondary btn-sm" onclick="App.rejectShiftClaim('${shift.id}')">Reject</button>
@@ -9419,15 +9431,48 @@ const App = {
     this.render();
   },
 
+  // WCAG 2.1.2 / 2.4.3 — modal focus management
+  _modalStack: [],   // stack of {id, returnTo}
   openModal(id) {
-    document.getElementById(id)?.classList.add('open');
+    const el = document.getElementById(id);
+    if (!el) return;
+    // Save the element that opened this modal so we can return focus on close
+    this._modalStack.push({ id, returnTo: document.activeElement });
+    el.classList.add('open');
+    // Move focus to the first focusable element inside the modal
+    setTimeout(() => {
+      const focusable = el.querySelector('button:not([disabled]), [href], input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])');
+      if (focusable) focusable.focus();
+    }, 50);
     if (id === 'modal-building') {
       const passEl = document.getElementById('b-admin-pass');
       if (passEl && !passEl.value) passEl.value = genTempPw();
       this._populateBuildingModalCompanies(this.S._pendingCompanyId || '');
     }
   },
-  closeModal(id) { document.getElementById(id)?.classList.remove('open'); },
+  closeModal(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.remove('open');
+    // Restore focus to the element that originally opened the modal
+    const idx = this._modalStack.findIndex(m => m.id === id);
+    if (idx >= 0) {
+      const entry = this._modalStack.splice(idx, 1)[0];
+      if (entry?.returnTo && typeof entry.returnTo.focus === 'function') {
+        try { entry.returnTo.focus(); } catch(e) {}
+      }
+    }
+  },
+  // Escape key closes the topmost open modal (WCAG best practice)
+  _installEscapeHandler() {
+    if (this._escapeInstalled) return;
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      const top = this._modalStack[this._modalStack.length - 1];
+      if (top) { e.preventDefault(); this.closeModal(top.id); }
+    });
+    this._escapeInstalled = true;
+  },
 
   showToast(msg, type) {
     document.getElementById('toast-msg').textContent=msg;
@@ -9517,7 +9562,7 @@ App.init().catch(e => {
         <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5"/><path d="M12 9v5M9.5 11.5h5"/></svg>
         Send Invitation
       </span>
-      <button class="modal-close" onclick="App.closeModal('modal-invite')">✕</button>
+      <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-invite')">✕</button>
     </div>
     <div class="modal-body">
       <div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:13px;color:var(--g700)">
@@ -9560,7 +9605,7 @@ App.init().catch(e => {
         <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>
         Manage Admin
       </span>
-      <button class="modal-close" onclick="App.closeModal('modal-manage-admin')">✕</button>
+      <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-manage-admin')">✕</button>
     </div>
     <div id="modal-manage-admin-body" class="modal-body">
       <!-- filled by openManageAdmin() -->
@@ -9580,7 +9625,7 @@ App.init().catch(e => {
         <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5"/><path d="M11 7h4M13 9V5M13 7h.01"/></svg>
         Invite Regional Admin
       </span>
-      <button class="modal-close" onclick="App.closeModal('modal-regional-admin')">✕</button>
+      <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-regional-admin')">✕</button>
     </div>
     <div class="modal-body">
       <div id="ra-error-msg" class="login-error-msg"></div>
@@ -9589,7 +9634,7 @@ App.init().catch(e => {
       <div class="form-group">
         <label>Buildings in Portfolio *</label>
         <div id="ra-buildings-list" style="border:1.5px solid var(--g200);border-radius:8px;padding:8px;max-height:200px;overflow-y:auto;background:#fff"></div>
-        <p style="font-size:11px;color:var(--g400);margin-top:4px">Select all buildings this admin will manage.</p>
+        <p style="font-size:11px;color:var(--g600);margin-top:4px">Select all buildings this admin will manage.</p>
       </div>
       <p style="font-size:12px;color:var(--g500);margin-top:4px">Regional admins can manage schedules and HR for all assigned buildings and see multi-building analytics.</p>
     </div>
@@ -9605,7 +9650,7 @@ App.init().catch(e => {
   <div class="modal" style="max-width:680px;width:95vw">
     <div class="modal-header">
       <span class="modal-title" id="modal-job-title">Post New Job</span>
-      <button class="modal-close" onclick="App.closeModal('modal-job')">✕</button>
+      <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-job')">✕</button>
     </div>
     <div id="modal-job-body" style="padding:20px;max-height:70vh;overflow-y:auto">
       <!-- filled by _renderJobModalContent() -->
@@ -9622,7 +9667,7 @@ App.init().catch(e => {
   <div class="modal" style="max-width:540px;width:95vw">
     <div class="modal-header">
       <span class="modal-title">Distribute Job Posting</span>
-      <button class="modal-close" onclick="App.closeModal('modal-dist')">✕</button>
+      <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-dist')">✕</button>
     </div>
     <div id="dist-modal-body" style="padding:20px;max-height:75vh;overflow-y:auto">
       <!-- filled by openDistributeModal() -->
@@ -9638,7 +9683,7 @@ App.init().catch(e => {
   <div class="modal" style="max-width:560px;width:95vw">
     <div class="modal-header">
       <span class="modal-title" id="demo-modal-title">Schedule Demo</span>
-      <button class="modal-close" onclick="App.closeModal('modal-demo')" aria-label="Close">✕</button>
+      <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-demo')" aria-label="Close">✕</button>
     </div>
     <div id="demo-modal-body" style="padding:20px;max-height:75vh;overflow-y:auto">
       <!-- filled by openDemoModal() -->
@@ -9655,7 +9700,7 @@ App.init().catch(e => {
   <div class="modal" style="max-width:480px;width:95vw">
     <div class="modal-header">
       <span class="modal-title" id="day-demos-title">Demos</span>
-      <button class="modal-close" onclick="App.closeModal('modal-day-demos')" aria-label="Close">✕</button>
+      <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-day-demos')" aria-label="Close">✕</button>
     </div>
     <div id="day-demo-body" style="padding:20px;max-height:65vh;overflow-y:auto">
       <!-- filled by _showDayDemos() -->
@@ -9671,7 +9716,7 @@ App.init().catch(e => {
   <div class="modal" style="max-width:500px;width:95vw">
     <div class="modal-header">
       <span class="modal-title">Message Prospect</span>
-      <button class="modal-close" onclick="App.closeModal('modal-demo-msg')" aria-label="Close">✕</button>
+      <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-demo-msg')" aria-label="Close">✕</button>
     </div>
     <div style="padding:20px">
       <div style="font-size:12px;color:var(--g500);margin-bottom:14px">To: <strong id="msg-demo-to"></strong></div>
@@ -9697,7 +9742,7 @@ App.init().catch(e => {
   <div class="modal" style="max-width:440px;width:95vw">
     <div class="modal-header">
       <span class="modal-title">Billing Config — <span id="bcfg-building-name"></span></span>
-      <button class="modal-close" onclick="App.closeModal('modal-billing-config')" aria-label="Close">✕</button>
+      <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-billing-config')" aria-label="Close">✕</button>
     </div>
     <div style="padding:20px;display:grid;gap:14px">
       <input type="hidden" id="bcfg-building-id">
@@ -9748,7 +9793,7 @@ App.init().catch(e => {
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
         HIPAA Audit Log
       </span>
-      <button class="modal-close" onclick="App.closeModal('modal-audit')">✕</button>
+      <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-audit')">✕</button>
     </div>
     <div style="padding:10px 16px;background:var(--g50);border-bottom:1px solid var(--g200);font-size:12px;color:var(--g500);display:flex;justify-content:space-between;align-items:center">
       <span>All access to PHI is logged per HIPAA 45 CFR §164.312(b). Retention: 6 years minimum.</span>
