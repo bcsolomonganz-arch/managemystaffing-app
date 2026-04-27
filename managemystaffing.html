@@ -6067,10 +6067,16 @@ const App = {
   },
 
   // Live-updating password requirements checklist.
-  // All roles use the same minimum: 8 characters, no complexity rules.
+  // All roles: 8-char minimum + uppercase + lowercase + digit + special char.
   // When `flag` is true, unmet rules pulse red (called on submit failure).
   _pwRules(pw /* , role */) {
-    return [{ key: 'len', label: 'At least 8 characters', met: pw.length >= 8 }];
+    return [
+      { key: 'len',   label: 'At least 8 characters',           met: pw.length >= 8 },
+      { key: 'upper', label: 'At least one uppercase letter',    met: /[A-Z]/.test(pw) },
+      { key: 'lower', label: 'At least one lowercase letter',    met: /[a-z]/.test(pw) },
+      { key: 'num',   label: 'At least one number',              met: /[0-9]/.test(pw) },
+      { key: 'spec',  label: 'At least one special character',   met: /[^A-Za-z0-9]/.test(pw) },
+    ];
   },
 
   _updatePwReqs(passId, reqsId, pass2Id, matchId, flag = false) {
@@ -6195,7 +6201,7 @@ const App = {
       </div>
       <div class="form-group">
         <label for="invite-pass">Choose Password</label>
-        <input type="password" id="invite-pass" placeholder="${(this._inviteRole==='admin'||this._inviteRole==='superadmin')?'At least 12 characters':'At least 8 characters'}" maxlength="128" autocomplete="new-password"
+        <input type="password" id="invite-pass" placeholder="At least 8 characters" maxlength="128" autocomplete="new-password"
           oninput="App._updatePwReqs('invite-pass','invite-pw-reqs','invite-pass2','invite-pw-match'); const b=document.getElementById('invite-pw-bar');if(b)b.className='pw-strength-bar '+pwStrength(this.value)"
           onfocus="document.getElementById('invite-pw-reqs').style.display='block'"
           onkeydown="if(event.key==='Enter')document.getElementById('invite-pass2').focus()">

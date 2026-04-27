@@ -642,15 +642,17 @@ function requireSuperAdmin(req, res, next) {
 }
 
 // ── PASSWORD COMPLEXITY (HIPAA §164.308(a)(5)) ───────────────────────────────
-// Per product decision (2026-04-27), all roles use the same minimum: 8
-// characters, no complexity requirements. HIPAA Security Rule does not
-// mandate a specific length/complexity — it requires "procedures for
-// creating, changing, and safeguarding passwords." The 8-char floor + the
-// other technical safeguards (lockout, audit, encryption-at-rest, TOTP for
-// privileged accounts) satisfy that requirement.
-function validatePasswordComplexity(pw, role) {
+// All roles: 8-char minimum + uppercase + lowercase + digit + special character.
+// HIPAA Security Rule requires "procedures for creating, changing, and
+// safeguarding passwords." The complexity rules + lockout + audit + TOTP for
+// privileged accounts together satisfy that requirement.
+function validatePasswordComplexity(pw, _role) {
   if (!pw || typeof pw !== 'string') return 'Password is required';
-  if (pw.length < 8) return 'Password must be at least 8 characters';
+  if (pw.length < 8)              return 'Password must be at least 8 characters';
+  if (!/[A-Z]/.test(pw))         return 'Password must contain at least one uppercase letter';
+  if (!/[a-z]/.test(pw))         return 'Password must contain at least one lowercase letter';
+  if (!/[0-9]/.test(pw))         return 'Password must contain at least one number';
+  if (!/[^A-Za-z0-9]/.test(pw))  return 'Password must contain at least one special character';
   return null;
 }
 
