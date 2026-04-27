@@ -6067,22 +6067,10 @@ const App = {
   },
 
   // Live-updating password requirements checklist.
-  // Privileged roles (admin/SA) get full HIPAA complexity; employees get
-  // length-only since they don't access PHI. The role is plumbed in by the
-  // caller (set when invite/reset-link is verified).
+  // All roles use the same minimum: 8 characters, no complexity rules.
   // When `flag` is true, unmet rules pulse red (called on submit failure).
-  _pwRules(pw, role) {
-    const isPrivileged = role === 'admin' || role === 'superadmin';
-    if (!isPrivileged) {
-      return [{ key: 'len', label: 'At least 8 characters', met: pw.length >= 8 }];
-    }
-    return [
-      { key: 'len', label: 'At least 12 characters',         met: pw.length >= 12 },
-      { key: 'up',  label: 'One uppercase letter (A-Z)',     met: /[A-Z]/.test(pw) },
-      { key: 'lo',  label: 'One lowercase letter (a-z)',     met: /[a-z]/.test(pw) },
-      { key: 'num', label: 'One number (0-9)',               met: /[0-9]/.test(pw) },
-      { key: 'sym', label: 'One symbol (!@#$%^&* etc.)',     met: /[^A-Za-z0-9]/.test(pw) },
-    ];
+  _pwRules(pw /* , role */) {
+    return [{ key: 'len', label: 'At least 8 characters', met: pw.length >= 8 }];
   },
 
   _updatePwReqs(passId, reqsId, pass2Id, matchId, flag = false) {

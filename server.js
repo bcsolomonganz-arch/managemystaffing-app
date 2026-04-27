@@ -219,6 +219,30 @@ async function persistCache() {
   }
 }
 
+// ── persistAccountNow ─────────────────────────────────────────────────────────
+// Credential mutations (password set/reset, invite accept, TOTP enroll/reset,
+// failed-attempt counters, lockouts) MUST be durable before we respond to the
+// user. The 200ms markDirty debounce is fine for bulk data updates but it can
+// be lost if the container restarts in that window — exactly what wiped the
+// SA password earlier today. This helper writes the single account row
+// directly, then still markDirty()s so the rest of dataCache eventually
+// flushes too.
+async function persistAccountNow(acct) {
+  if (!acct) return;
+  try {
+    if (_useDB) {
+      await dbRepo.upsertAccount(acct);
+    } else {
+      // File-mode: do a synchronous full flush so we don't miss the change.
+      await persistCache();
+    }
+  } catch (e) {
+    logger.error('persist_account_failed', { id: acct.id, err: e.message });
+    throw e;                          // bubble so callers can return 500 instead of false success
+  }
+  markDirty();                        // keep rest of cache eventually consistent
+}
+
 async function loadData() {
   if (dataCache) return dataCache;
 
@@ -618,22 +642,15 @@ function requireSuperAdmin(req, res, next) {
 }
 
 // ── PASSWORD COMPLEXITY (HIPAA §164.308(a)(5)) ───────────────────────────────
-// Privileged roles (admin/superadmin) get the full HIPAA-grade rules.
-// Employee role (no PHI access) only needs length, since §164.308(a)(5)(ii)(D)
-// applies to ePHI-touching workforce.
+// Per product decision (2026-04-27), all roles use the same minimum: 8
+// characters, no complexity requirements. HIPAA Security Rule does not
+// mandate a specific length/complexity — it requires "procedures for
+// creating, changing, and safeguarding passwords." The 8-char floor + the
+// other technical safeguards (lockout, audit, encryption-at-rest, TOTP for
+// privileged accounts) satisfy that requirement.
 function validatePasswordComplexity(pw, role) {
   if (!pw || typeof pw !== 'string') return 'Password is required';
-  if (!isPrivilegedRole(role)) {
-    if (pw.length < EMPLOYEE_PASSWORD_MIN_LENGTH) {
-      return `Password must be at least ${EMPLOYEE_PASSWORD_MIN_LENGTH} characters`;
-    }
-    return null;
-  }
-  if (pw.length < PASSWORD_MIN_LENGTH) return `Password must be at least ${PASSWORD_MIN_LENGTH} characters`;
-  if (!/[A-Z]/.test(pw)) return 'Password must include an uppercase letter';
-  if (!/[a-z]/.test(pw)) return 'Password must include a lowercase letter';
-  if (!/[0-9]/.test(pw)) return 'Password must include a number';
-  if (!/[^A-Za-z0-9]/.test(pw)) return 'Password must include a symbol';
+  if (pw.length < 8) return 'Password must be at least 8 characters';
   return null;
 }
 
@@ -959,7 +976,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
           // Consume the code by removing its hash
           hashes.splice(i, 1);
           acct.totpRecoveryCodesHashes = hashes;
-          markDirty();
+          await persistAccountNow(acct);
           ok = true;
           viaRecovery = true;
           break;
@@ -1089,7 +1106,7 @@ app.post('/api/auth/totp/enroll', async (req, res) => {
   acct.totpEnrolledAt = new Date().toISOString();
   acct.totpRecoveryCodesHashes = hashes;
   acct.totpRecoveryCodesGeneratedAt = new Date().toISOString();
-  markDirty();
+  await persistAccountNow(acct);
   _totpPending.delete(sessionId);
   auditLog('TOTP_ENROLLED', acct, { recoveryCodesGenerated: codes.length });
 
@@ -1116,7 +1133,7 @@ app.post('/api/auth/totp/recovery-codes', requireAuth, async (req, res) => {
   const { codes, hashes } = await _generateRecoveryCodes(10);
   acct.totpRecoveryCodesHashes = hashes;
   acct.totpRecoveryCodesGeneratedAt = new Date().toISOString();
-  markDirty();
+  await persistAccountNow(acct);
   auditLog('TOTP_RECOVERY_CODES_REGENERATED', acct);
   res.json({ recoveryCodes: codes });
 });
@@ -1133,7 +1150,7 @@ app.post('/api/auth/totp/reset', requireAuth, requireSuperAdmin, async (req, res
   acct.totpEnrolledAt = null;
   acct.totpRecoveryCodesHashes = null;
   acct.totpRecoveryCodesGeneratedAt = null;
-  markDirty();
+  await persistAccountNow(acct);
   auditLog('TOTP_RESET_BY_ADMIN', req.user, { targetAccountId: accountId, targetEmail: acct.email });
   res.json({ ok: true, message: `TOTP reset for ${acct.email}. They will re-enroll on next login.` });
 });
@@ -1386,7 +1403,7 @@ app.post('/api/invite', requireAuth, requireAdmin, async (req, res) => {
   };
   data.accounts = data.accounts || [];
   data.accounts.push(newAccount);
-  markDirty();
+  await persistAccountNow(newAccount);
 
   const link    = `${APP_URL}/?invite=${inviteToken}`;
   const building = (data.buildings || []).find(b => b.id === targetBuilding);
@@ -1461,7 +1478,7 @@ app.post('/api/invite/resend', requireAuth, requireAdmin, async (req, res) => {
   acct.invitedBy    = req.user.email;
   acct.invitedAt    = new Date().toISOString();
   delete acct.activatedAt;
-  markDirty();
+  await persistAccountNow(acct);
 
   const link    = `${APP_URL}/?invite=${acct.inviteToken}`;
   const building = (data.buildings || []).find(b => b.id === acct.buildingId);
@@ -1539,7 +1556,7 @@ app.post('/api/auth/password-reset/request', authLimiter, async (req, res) => {
   const tokenHash = await bcrypt.hash(rawToken, 10);
   acct.passwordResetTokenHash = tokenHash;
   acct.passwordResetExpiry = Date.now() + 60 * 60 * 1000;     // 1 hour
-  markDirty();
+  await persistAccountNow(acct);
 
   const link = `${APP_URL}/?reset=${rawToken}&u=${encodeURIComponent(acct.id)}`;
   const escName = escapeHtml(acct.name || acct.email);
@@ -1623,7 +1640,7 @@ app.post('/api/auth/password-reset/complete', authLimiter, async (req, res) => {
   acct.passwordResetExpiry = null;
   acct.failedAttempts = 0;
   acct.lockedUntil = null;
-  markDirty();
+  await persistAccountNow(acct);
 
   auditLog('PWD_RESET_COMPLETED', acct);
   // Don't auto-issue a token — force fresh login (which will trigger TOTP)
@@ -1666,7 +1683,7 @@ app.post('/api/invite/accept', authLimiter, async (req, res) => {
   acct.activatedAt    = new Date().toISOString();
   acct.failedAttempts = 0;
   acct.lockedUntil    = null;
-  markDirty();
+  await persistAccountNow(acct);
 
   auditLog('INVITE_ACCEPTED', acct);
 
