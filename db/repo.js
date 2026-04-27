@@ -184,7 +184,6 @@ async function getAccountById(id) {
 }
 
 async function upsertAccount(a) {
-  const now = new Date();
   await _pool.query(`
     INSERT INTO accounts (id, email, name, role, building_id, building_ids, "group",
       password_hash, totp_secret_encrypted, totp_enrolled_at,
@@ -198,10 +197,10 @@ async function upsertAccount(a) {
       building_id = EXCLUDED.building_id, building_ids = EXCLUDED.building_ids,
       "group" = EXCLUDED."group",
       password_hash = EXCLUDED.password_hash,
-      totp_secret_encrypted = EXCLUDED.totp_secret_encrypted,
-      totp_enrolled_at = EXCLUDED.totp_enrolled_at,
-      totp_recovery_codes_hashes = EXCLUDED.totp_recovery_codes_hashes,
-      totp_recovery_codes_generated_at = EXCLUDED.totp_recovery_codes_generated_at,
+      totp_secret_encrypted        = COALESCE(EXCLUDED.totp_secret_encrypted,        accounts.totp_secret_encrypted),
+      totp_enrolled_at             = COALESCE(EXCLUDED.totp_enrolled_at,             accounts.totp_enrolled_at),
+      totp_recovery_codes_hashes   = COALESCE(EXCLUDED.totp_recovery_codes_hashes,   accounts.totp_recovery_codes_hashes),
+      totp_recovery_codes_generated_at = COALESCE(EXCLUDED.totp_recovery_codes_generated_at, accounts.totp_recovery_codes_generated_at),
       failed_attempts = EXCLUDED.failed_attempts,
       locked_until = EXCLUDED.locked_until,
       invite_token = EXCLUDED.invite_token, invite_expiry = EXCLUDED.invite_expiry,
@@ -220,6 +219,19 @@ async function upsertAccount(a) {
     a.invitedBy || null, a.invitedAt || null, a.activatedAt || null,
     a.passwordResetTokenHash || null, _toMs(a.passwordResetExpiry),
   ]);
+}
+
+// Explicitly wipe TOTP for an account — used ONLY by the admin TOTP-reset endpoint.
+// Regular upsertAccount uses COALESCE and will never clear an enrolled secret.
+async function clearAccountTotp(accountId) {
+  await _pool.query(
+    `UPDATE accounts
+     SET totp_secret_encrypted = NULL, totp_enrolled_at = NULL,
+         totp_recovery_codes_hashes = NULL, totp_recovery_codes_generated_at = NULL,
+         updated_at = now()
+     WHERE id = $1`,
+    [accountId]
+  );
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -315,10 +327,10 @@ async function _upsertAccountInTx(c, a) {
       building_id = EXCLUDED.building_id, building_ids = EXCLUDED.building_ids,
       "group" = EXCLUDED."group",
       password_hash = EXCLUDED.password_hash,
-      totp_secret_encrypted = EXCLUDED.totp_secret_encrypted,
-      totp_enrolled_at = EXCLUDED.totp_enrolled_at,
-      totp_recovery_codes_hashes = EXCLUDED.totp_recovery_codes_hashes,
-      totp_recovery_codes_generated_at = EXCLUDED.totp_recovery_codes_generated_at,
+      totp_secret_encrypted        = COALESCE(EXCLUDED.totp_secret_encrypted,        accounts.totp_secret_encrypted),
+      totp_enrolled_at             = COALESCE(EXCLUDED.totp_enrolled_at,             accounts.totp_enrolled_at),
+      totp_recovery_codes_hashes   = COALESCE(EXCLUDED.totp_recovery_codes_hashes,   accounts.totp_recovery_codes_hashes),
+      totp_recovery_codes_generated_at = COALESCE(EXCLUDED.totp_recovery_codes_generated_at, accounts.totp_recovery_codes_generated_at),
       failed_attempts = EXCLUDED.failed_attempts,
       locked_until = EXCLUDED.locked_until,
       invite_token = EXCLUDED.invite_token, invite_expiry = EXCLUDED.invite_expiry,
@@ -443,7 +455,7 @@ module.exports = {
   init, isEnabled, close,
   withTx, setContext,
   loadAll, saveAll,
-  getAccountByEmail, getAccountById, upsertAccount,
+  getAccountByEmail, getAccountById, upsertAccount, clearAccountTotp,
   appendAuditEntry,
   ping,
 };

@@ -1148,11 +1148,16 @@ app.post('/api/auth/totp/reset', requireAuth, requireSuperAdmin, async (req, res
   const acct = (data.accounts || []).find(a => a.id === accountId);
   if (!acct) return res.status(404).json({ error: 'Account not found' });
   if (acct.id === req.user.id) return res.status(400).json({ error: 'Cannot reset your own TOTP this way — use Account Settings' });
+  // Clear TOTP directly in DB — upsertAccount uses COALESCE and would preserve
+  // the existing secret, so we use the dedicated clear function here.
+  if (_useDB) {
+    await dbRepo.clearAccountTotp(accountId);
+  }
   acct.totpSecret = null;
   acct.totpEnrolledAt = null;
   acct.totpRecoveryCodesHashes = null;
   acct.totpRecoveryCodesGeneratedAt = null;
-  await persistAccountNow(acct);
+  markDirty();
   auditLog('TOTP_RESET_BY_ADMIN', req.user, { targetAccountId: accountId, targetEmail: acct.email });
   res.json({ ok: true, message: `TOTP reset for ${acct.email}. They will re-enroll on next login.` });
 });
