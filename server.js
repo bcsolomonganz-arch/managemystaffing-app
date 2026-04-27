@@ -1601,6 +1601,100 @@ function toE164(raw) {
   return null;
 }
 
+// ── SERVICE BUS QUEUE FOR ALERT FAN-OUT ───────────────────────────────────────
+// Without this, /api/alert blocks the request thread for the duration of all
+// email/SMS sends. Big blasts exceed App Service 230s timeout.
+let _sbSender = null;
+let _sbReceiver = null;
+let _sbClient = null;
+
+async function _initServiceBus() {
+  const connStr = process.env.SERVICEBUS_CONNECTION_STRING;
+  if (!connStr) {
+    logger.info('servicebus_disabled', { reason: 'SERVICEBUS_CONNECTION_STRING not set' });
+    return;
+  }
+  try {
+    const { ServiceBusClient } = require('@azure/service-bus');
+    _sbClient = new ServiceBusClient(connStr);
+    _sbSender = _sbClient.createSender('mms-alerts');
+    _sbReceiver = _sbClient.createReceiver('mms-alerts', { receiveMode: 'peekLock' });
+    _sbReceiver.subscribe(
+      {
+        processMessage: async (msg) => { try { await _processAlertJob(msg.body); } catch (e) { logger.error('alert_worker_error', { err: e.message }); throw e; } },
+        processError: async (args) => { logger.error('servicebus_error', { src: args.errorSource, err: args.error?.message }); },
+      },
+      { autoCompleteMessages: true, maxConcurrentCalls: 5 }
+    );
+    logger.info('servicebus_connected', { queue: 'mms-alerts' });
+  } catch (e) {
+    logger.warn('servicebus_init_failed', { err: e.message });
+  }
+}
+
+// Worker — processes one queued alert job (email + SMS fan-out).
+async function _processAlertJob(job) {
+  if (!ACS_CONNECTION_STRING) return;
+  const { kind, recipients, subject, message, fromEmail, fromPhone, jobId } = job || {};
+
+  if (kind === 'email') {
+    const { EmailClient } = require('@azure/communication-email');
+    const ec = new EmailClient(ACS_CONNECTION_STRING);
+    let sent = 0; const errors = [];
+    for (const r of (recipients || [])) {
+      try {
+        const body = message.replace(/\[Name\]/g, r.name || '');
+        const poller = await ec.beginSend({
+          senderAddress: fromEmail,
+          recipients: { to: [{ address: r.email, displayName: r.name }] },
+          content: {
+            subject: subject || 'Alert from ManageMyStaffing',
+            plainText: body,
+            html: `<pre style="font-family:sans-serif;white-space:pre-wrap">${body.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre>`,
+          },
+        });
+        await Promise.race([
+          poller.pollUntilDone(),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 30000)),
+        ]);
+        sent++;
+      } catch (e) {
+        errors.push({ name: r.name, err: e.message });
+      }
+    }
+    auditLog('ALERT_JOB_DONE', null, { jobId, kind, sent, failed: errors.length });
+  } else if (kind === 'sms') {
+    if (!fromPhone) return;
+    const { SmsClient } = require('@azure/communication-sms');
+    const sc = new SmsClient(ACS_CONNECTION_STRING);
+    let sent = 0; const errors = [];
+    for (const r of (recipients || [])) {
+      const to = toE164(r.phone);
+      if (!to) { errors.push({ name: r.name, err: 'invalid phone' }); continue; }
+      try {
+        const results = await sc.send({
+          from: fromPhone, to: [to],
+          message: message.replace(/\[Name\]/g, r.name || '').slice(0, 1600),
+        });
+        if (results[0]?.successful) sent++;
+        else errors.push({ name: r.name, err: results[0]?.errorMessage || 'failed' });
+      } catch (e) { errors.push({ name: r.name, err: e.message }); }
+    }
+    auditLog('ALERT_JOB_DONE', null, { jobId, kind, sent, failed: errors.length });
+  }
+}
+
+// Enqueue alert job; returns immediately
+async function _enqueueAlertJob(job) {
+  if (!_sbSender) {
+    // Fallback: process inline (single-instance dev mode)
+    _processAlertJob(job).catch(e => logger.error('alert_inline_failed', { err: e.message }));
+    return { queued: false, mode: 'inline' };
+  }
+  await _sbSender.sendMessages({ body: job, contentType: 'application/json' });
+  return { queued: true, mode: 'servicebus' };
+}
+
 app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
   const { groups, message, subject, viaSMS, viaEmail, buildingId } = req.body || {};
   if (!Array.isArray(groups) || !groups.length) return res.status(400).json({ error: 'groups array is required' });
@@ -1639,64 +1733,43 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
   const emailList = viaEmail ? employees.filter(e => e.notifEmail && e.email) : [];
   const smsList   = viaSMS   ? employees.filter(e => e.notifSMS  && e.phone)  : [];
 
-  let emailSent = 0, smsSent = 0;
-  const errors = [];
-
   if (!ACS_CONNECTION_STRING) {
-    errors.push('Messaging not configured (missing ACS_CONNECTION_STRING)');
-  } else {
-    if (emailList.length) {
-      const { EmailClient } = require('@azure/communication-email');
-      const emailClient = new EmailClient(ACS_CONNECTION_STRING);
-      for (const emp of emailList) {
-        try {
-          const body   = message.replace(/\[Name\]/g, emp.name);
-          const poller = await emailClient.beginSend({
-            senderAddress: ACS_FROM_EMAIL,
-            recipients:    { to: [{ address: emp.email, displayName: emp.name }] },
-            content: {
-              subject:   subject || 'Alert from ManageMyStaffing',
-              plainText: body,
-              html:      `<pre style="font-family:sans-serif;white-space:pre-wrap">${body.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre>`,
-            },
-          });
-          await Promise.race([
-            poller.pollUntilDone(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 30000)),
-          ]);
-          emailSent++;
-        } catch (e) {
-          console.error('[mms] ACS email error:', e.message);
-          errors.push(`Email to ${emp.name}: ${e.message}`);
-        }
-      }
-    }
-    if (smsList.length) {
-      if (!ACS_FROM_PHONE) {
-        errors.push('SMS not configured (missing ACS_FROM_PHONE)');
-      } else {
-        const { SmsClient } = require('@azure/communication-sms');
-        const smsClient = new SmsClient(ACS_CONNECTION_STRING);
-        for (const emp of smsList) {
-          const to = toE164(emp.phone);
-          if (!to) { errors.push(`SMS to ${emp.name}: invalid phone`); continue; }
-          try {
-            const results = await smsClient.send({
-              from: ACS_FROM_PHONE, to: [to],
-              message: message.replace(/\[Name\]/g, emp.name).slice(0, 1600),
-            });
-            if (results[0]?.successful) smsSent++;
-            else errors.push(`SMS to ${emp.name}: ${results[0]?.errorMessage || 'failed'}`);
-          } catch (e) {
-            errors.push(`SMS to ${emp.name}: ${e.message}`);
-          }
-        }
-      }
-    }
+    return res.status(503).json({ error: 'Messaging not configured' });
   }
 
-  auditLog('ALERT_SENT', req.user, { emailSent, smsSent, groups });
-  res.json({ ok: true, emailSent, smsSent, errors });
+  const jobId = crypto.randomUUID();
+  const queuedJobs = [];
+
+  if (emailList.length) {
+    await _enqueueAlertJob({
+      kind: 'email',
+      jobId,
+      recipients: emailList.map(e => ({ name: e.name, email: e.email })),
+      subject, message, fromEmail: ACS_FROM_EMAIL,
+    });
+    queuedJobs.push({ kind: 'email', count: emailList.length });
+  }
+
+  if (smsList.length) {
+    if (!ACS_FROM_PHONE) {
+      return res.status(503).json({ error: 'SMS not configured' });
+    }
+    await _enqueueAlertJob({
+      kind: 'sms',
+      jobId,
+      recipients: smsList.map(e => ({ name: e.name, phone: e.phone })),
+      message, fromPhone: ACS_FROM_PHONE,
+    });
+    queuedJobs.push({ kind: 'sms', count: smsList.length });
+  }
+
+  auditLog('ALERT_QUEUED', req.user, { jobId, jobs: queuedJobs, groups });
+  // Return 202 Accepted with jobId — actual delivery is async
+  res.status(202).json({
+    ok: true, jobId,
+    queued: { email: emailList.length, sms: smsList.length },
+    note: 'Alert dispatched to background queue. Delivery confirmation emails will follow.',
+  });
 });
 
 // ── POST /api/sms ─────────────────────────────────────────────────────────────
@@ -1797,6 +1870,7 @@ let _server;
     initAppInsights();
     _initAuditChain();
     await _initAuditCloud();           // best-effort — won't block startup
+    await _initServiceBus();           // best-effort — falls back to inline if unavailable
     await loadData();
   } catch (e) {
     logger.error('startup_failed', { err: e.message });
@@ -1823,11 +1897,15 @@ let _server;
 async function shutdown(signal) {
   logger.info('shutdown_initiated', { signal });
   if (_server) _server.close(() => logger.info('server_closed'));
-  // Flush pending data writes
+  // Flush pending data writes + close clients
   try {
     await persistCache();
     await _auditQueue;
-    logger.info('data_flushed');
+    if (_sbReceiver) await _sbReceiver.close();
+    if (_sbSender)   await _sbSender.close();
+    if (_sbClient)   await _sbClient.close();
+    if (_redis)      await _redis.quit();
+    logger.info('clean_shutdown');
   } catch (e) {
     logger.error('shutdown_flush_failed', { err: e.message });
   }

@@ -4,7 +4,9 @@
   "description": "ManageMyStaffing — HIPAA-compliant staffing platform",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test tests/smoke.test.js",
+    "test:smoke": "MMS_TEST_BASE_URL=https://www.managemystaffing.com node --test tests/smoke.test.js"
   },
   "engines": {
     "node": ">=18"
@@ -15,6 +17,7 @@
     "@azure/communication-sms": "^1.2.0-beta.4",
     "@azure/identity": "^4.13.1",
     "@azure/keyvault-secrets": "^4.11.1",
+    "@azure/service-bus": "^7.9.5",
     "@azure/storage-blob": "^12.31.0",
     "applicationinsights": "^3.14.0",
     "bcrypt": "^6.0.0",

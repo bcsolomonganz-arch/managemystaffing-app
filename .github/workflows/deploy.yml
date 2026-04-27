@@ -23,8 +23,43 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
 
-      - name: Install production dependencies
-        run: npm ci --omit=dev
+      - name: Install dependencies (full, for tests)
+        run: npm ci
+
+      # ─── Tests must pass before deploy ────────────────────────────────
+      # Server is started locally so smoke tests run against a real instance.
+      - name: Generate ephemeral test secrets
+        run: |
+          mkdir -p /tmp/mms-secure
+          cat > /tmp/mms-secure/.env <<EOF
+          NODE_ENV=test
+          PORT=3002
+          JWT_SECRET=$(openssl rand -base64 48)
+          DATA_ENCRYPTION_KEY=$(openssl rand -hex 32)
+          AUDIT_HMAC_KEY=$(openssl rand -hex 32)
+          DATA_FILE=/tmp/mms-secure/mms-data.json
+          AUDIT_LOG_FILE=/tmp/mms-secure/mms-audit.log
+          EOF
+
+      - name: Start server
+        run: |
+          MMS_SECURE_DIR=/tmp/mms-secure node server.js &
+          echo $! > /tmp/server.pid
+          for i in {1..30}; do
+            if curl -sf http://localhost:3002/health > /dev/null; then break; fi
+            sleep 1
+          done
+
+      - name: Run smoke tests
+        run: npm test
+
+      - name: Stop test server
+        if: always()
+        run: kill $(cat /tmp/server.pid) || true
+
+      # ─── Deploy ────────────────────────────────────────────────────
+      - name: Prune dev dependencies for deploy
+        run: npm prune --omit=dev
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
@@ -32,3 +67,11 @@ jobs:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
           package: .
+
+      - name: Smoke test deployed app
+        run: |
+          for i in {1..30}; do
+            if curl -sf https://www.managemystaffing.com/health > /dev/null; then echo "Live!"; exit 0; fi
+            sleep 5
+          done
+          echo "Deploy did not become healthy"; exit 1
