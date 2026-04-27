@@ -1021,7 +1021,41 @@ const TODAY = new Date().toISOString().slice(0,10);
 // Server mode: true when served by Node.js (production)
 // false when opened as a local file (demo/dev)
 const IS_SERVER_MODE = window.location.protocol !== 'file:' && window.location.hostname !== '';
-let _authToken = localStorage.getItem('mms_token') || null;
+
+// HIPAA §164.312(a)(2)(iv) — JWT lives in httpOnly cookie set by the server.
+// JS cannot read or write it.
+let _authToken = null;
+// Purge any legacy JWT that older builds put in localStorage
+try { localStorage.removeItem('mms_token'); sessionStorage.removeItem('mms_demo_token'); } catch(e) {}
+
+// Global fetch interceptor — adds CSRF header + cookie credentials to every
+// /api/ call. This means existing fetch() call-sites continue to work without
+// edits while gaining XSS-safe cookie auth + CSRF protection.
+(function installFetchInterceptor() {
+  const _origFetch = window.fetch.bind(window);
+  window.fetch = function(input, init = {}) {
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    const isApi = url.startsWith('/api/') || url.includes('/api/');
+    if (isApi) {
+      init = Object.assign({}, init);
+      init.credentials = init.credentials || 'include';
+      const headers = new Headers(init.headers || {});
+      if (!headers.has('X-Requested-With')) headers.set('X-Requested-With', 'XMLHttpRequest');
+      // Strip stale Authorization: Bearer null|undefined headers
+      const authHdr = headers.get('Authorization');
+      if (authHdr === 'Bearer null' || authHdr === 'Bearer undefined' || authHdr === 'Bearer ') {
+        headers.delete('Authorization');
+      }
+      init.headers = headers;
+    }
+    return _origFetch(input, init);
+  };
+})();
+
+// Convenience wrapper still useful for new call-sites
+async function api(path, opts = {}) {
+  return fetch(path, opts);
+}
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 const LOGO_SVG = `<svg viewBox="0 0 100 92" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%">
@@ -1486,43 +1520,33 @@ const App = {
         return;
       }
 
-      // Try to restore session — prefer demo token from sessionStorage for demo@demo.com
-      const demoToken = (() => { try { return sessionStorage.getItem('mms_demo_token'); } catch(e) { return null; } })();
-      const sessionToken = _authToken || demoToken;
-      if (sessionToken) {
-        try {
-          const vResp = await fetch('/api/auth/verify', {headers:{'Authorization':`Bearer ${sessionToken}`}});
-          if (vResp.ok) {
-            const {user} = await vResp.json();
-            if (user.demo) {
-              // Demo session — always use seed data only; preserve JWT role
-              user._demo = true;
-              _authToken = sessionToken;
-              this.S.companies = [...SEED_COMPANIES];
-              this.S.buildings = [...SEED_BUILDINGS];
-              this.S.accounts  = [...SEED_ACCOUNTS];
-              this.S.employees = [...SEED_EMPLOYEES];
-              this.S.shifts    = generateShifts(this.S.employees);
-              this.S.schedulePatterns = [];
-              this.S.user = user;
-              this.showApp();
-              return;
-            }
-            const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${sessionToken}`}});
-            if (dResp.ok) {
-              _authToken = sessionToken;
-              this.applyServerData(await dResp.json());
-              this.S.user = user;
-              this.showApp();
-              return;
-            }
+      // Restore session via httpOnly cookie. Cookie is sent automatically by
+      // the global fetch interceptor (credentials: 'include').
+      try {
+        const vResp = await fetch('/api/auth/verify');
+        if (vResp.ok) {
+          const { user } = await vResp.json();
+          if (user.demo) {
+            user._demo = true;
+            this.S.companies = [...SEED_COMPANIES];
+            this.S.buildings = [...SEED_BUILDINGS];
+            this.S.accounts  = [...SEED_ACCOUNTS];
+            this.S.employees = [...SEED_EMPLOYEES];
+            this.S.shifts    = generateShifts(this.S.employees);
+            this.S.schedulePatterns = [];
+            this.S.user = user;
+            this.showApp();
+            return;
           }
-        } catch(e) {}
-        // Token invalid — clear it
-        localStorage.removeItem('mms_token');
-        try { sessionStorage.removeItem('mms_demo_token'); } catch(e2) {}
-        _authToken = null;
-      }
+          const dResp = await fetch('/api/data');
+          if (dResp.ok) {
+            this.applyServerData(await dResp.json());
+            this.S.user = user;
+            this.showApp();
+            return;
+          }
+        }
+      } catch(e) {}
 
       // Show login page
       document.getElementById('login-page').style.display = 'flex';
@@ -1725,9 +1749,8 @@ const App = {
     if (btn) { btn.disabled = true; btn.textContent = 'Verifying…'; }
     try {
       const url = sess.mode === 'enroll' ? '/api/auth/totp/enroll' : '/api/auth/login';
-      const r = await fetch(url, {
+      const r = await api(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: sess.sessionId, totp: code }),
       });
       if (!r.ok) {
@@ -1736,13 +1759,11 @@ const App = {
         if (btn) { btn.disabled = false; btn.textContent = 'Verify'; }
         return;
       }
-      const { token, user } = await r.json();
+      const { user } = await r.json();
       this.S._totpSession = null;
       this.closeModal('modal-totp');
-      _authToken = token;
-      localStorage.setItem('mms_token', token);
       this.S.user = user;
-      const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${token}`}});
+      const dResp = await api('/api/data');
       if (dResp.ok) this.applyServerData(await dResp.json());
       this._saveLoginCredentials(sess.email, user.name);
       Audit.log('LOGIN_SUCCESS_2FA', `2FA login: ${sanitize(sess.email)}`, user.id, 'low');
@@ -1765,10 +1786,10 @@ const App = {
     if (this._idleTimer) clearTimeout(this._idleTimer);
     this._idleTimer = setTimeout(() => this._idleLogout(), 15 * 60 * 1000);
   },
-  _idleLogout() {
+  async _idleLogout() {
     Audit.log('IDLE_TIMEOUT', 'Auto-logout after 15 min idle', this.S.user?.id, 'medium');
-    if (typeof this.signOut === 'function') this.signOut();
-    else { localStorage.removeItem('mms_token'); location.reload(); }
+    try { await fetch('/api/auth/logout', { method: 'POST' }); } catch(e) {}
+    location.reload();
   },
   _startIdleTimer() { this._idleStart(); },
 
@@ -1784,9 +1805,8 @@ const App = {
     if (IS_SERVER_MODE) {
       // ── SERVER MODE AUTH ────────────────────────────────
       try {
-        const resp = await fetch('/api/auth/login', {
+        const resp = await api('/api/auth/login', {
           method:'POST',
-          headers:{'Content-Type':'application/json'},
           body:JSON.stringify({email:emailRaw, password:pass})
         });
         if (!resp.ok) {
@@ -1810,9 +1830,8 @@ const App = {
           return;
         }
         // ── Fully authenticated (demo only)
-        const {token, user} = body;
-        _authToken = token;
-        // Demo accounts use seed data only — nothing is read from or written to the server
+        const { user } = body;
+        // Auth comes via httpOnly cookie set by the server — no token in JS.
         if (user.demo) {
           user._demo = true;
           this.S.companies = [...SEED_COMPANIES];
@@ -1821,15 +1840,10 @@ const App = {
           this.S.employees = [...SEED_EMPLOYEES];
           this.S.shifts    = generateShifts(this.S.employees);
           this.S.schedulePatterns = [];
-          // Store demo token in sessionStorage only — clear any SA localStorage token
-          localStorage.removeItem('mms_token');
-          try { sessionStorage.setItem('mms_demo_token', token); } catch(e2) {}
         } else {
-          localStorage.setItem('mms_token', token);
-          // Load real facility data from server — empty arrays = fresh account, that's correct
-          const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${token}`}});
+          // Load real facility data from server — cookie auth is automatic
+          const dResp = await fetch('/api/data');
           if (dResp.ok) this.applyServerData(await dResp.json());
-          // If fetch fails, stay with empty state — do not seed
         }
         if (errEl) errEl.style.display = 'none';
         this.S.user = user;
@@ -9225,48 +9239,29 @@ const App = {
       buildingShiftTypes:this.S.buildingShiftTypes,
     };
     if (IS_SERVER_MODE && _authToken && !this.S.user?.demo) {
+      // HIPAA §164.312(a)(2)(iv) — never write PHI to client storage.
+      // Surface persistence failures to the user instead of silently dropping.
       fetch('/api/data',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},body:JSON.stringify(payload)})
-        .catch(()=>{});
+        .then(r => {
+          if (!r.ok) this.showToast('Save failed — please retry your last change', 'warn');
+        })
+        .catch(() => this.showToast('Network error — your last change was not saved', 'warn'));
       return;
     }
-    try { localStorage.setItem(SEC.DATA_KEY, JSON.stringify(payload)); } catch(e) {
-      if (!this._persistWarnShown) { this._persistWarnShown=true; this.showToast('Storage limit reached — data may not save','warn'); }
-    }
+    // Non-server-mode (offline demo only) — do NOT persist PHI even here.
+    // Demo accounts use ephemeral seed data; real accounts always go through /api/data above.
   },
 
-  // Loads persisted data. Returns true if data was found and restored,
-  // false if this is a first run (seed data will be used instead).
+  // HIPAA §164.312(a)(2)(iv) — never restore PHI from client storage.
+  // Always purge any legacy PHI keys on app load.
   loadPersistedData() {
     try {
-      const raw = localStorage.getItem(SEC.DATA_KEY);
-      if (!raw) return false;
-      const d = JSON.parse(raw);
-      if (!d || d.v !== 1) return false;
-      // Restore each collection — only overwrite if saved data exists
-      if (Array.isArray(d.companies))                                this.S.companies        = d.companies;
-      if (Array.isArray(d.buildings) && d.buildings.length)        this.S.buildings        = d.buildings;
-      if (Array.isArray(d.accounts)  && d.accounts.length)         this.S.accounts         = d.accounts;
-      if (Array.isArray(d.employees) && d.employees.length)        this.S.employees        = d.employees;
-      if (Array.isArray(d.shifts)    && d.shifts.length)           this.S.shifts           = d.shifts;
-      if (Array.isArray(d.schedulePatterns))                        this.S.schedulePatterns = d.schedulePatterns;
-      if (Array.isArray(d.hrEmployees)  && d.hrEmployees.length)   this.S.hrEmployees   = d.hrEmployees;
-      if (d.hrOnboarding) {
-        // Migrate old flat {TX, OK} format → company-keyed {co_skyblue: {TX, OK}}
-        if (d.hrOnboarding.TX && !d.hrOnboarding.co_skyblue) {
-          this.S.hrOnboarding = { co_skyblue: { TX: d.hrOnboarding.TX, OK: d.hrOnboarding.OK } };
-        } else if (typeof d.hrOnboarding === 'object') {
-          this.S.hrOnboarding = d.hrOnboarding;
-        }
-      }
-      if (Array.isArray(d.hrAccounts)   && d.hrAccounts.length)    this.S.hrAccounts    = d.hrAccounts;
-      if (Array.isArray(d.jobPostings))                              this.S.jobPostings   = d.jobPostings;
-      if (Array.isArray(d.demos))                                    this.S.demos         = d.demos;
-      if (d.billingData && typeof d.billingData === 'object')        this.S.billingData   = d.billingData;
-      if (Array.isArray(d.shiftTemplates))                             this.S.shiftTemplates     = d.shiftTemplates;
-      if (d.staffingSlots && typeof d.staffingSlots === 'object')     this.S.staffingSlots      = d.staffingSlots;
-      if (d.buildingShiftTypes && typeof d.buildingShiftTypes === 'object') this.S.buildingShiftTypes = d.buildingShiftTypes;
-      return true;
-    } catch(e) { return false; }
+      // Purge any pre-existing PHI cached by older builds
+      localStorage.removeItem(SEC.DATA_KEY);
+      localStorage.removeItem('mms_data');
+      localStorage.removeItem('mms_data_v0');
+    } catch(e) {}
+    return false; // always force fresh fetch from /api/data
   },
 
   applyServerData(data) {

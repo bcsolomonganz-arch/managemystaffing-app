@@ -49,6 +49,7 @@ const path       = require('path');
 const os         = require('os');
 const helmet     = require('helmet');
 const cors       = require('cors');
+const cookieParser = require('cookie-parser');
 const rateLimit  = require('express-rate-limit');
 const bcrypt     = require('bcrypt');
 const otplib     = require('otplib');
@@ -424,7 +425,10 @@ const revokedTokens = new Set(); // TODO[infra]: Redis with TTL=JWT exp for mult
 const lastActivity = new Map(); // sessionId → epoch ms
 
 function requireAuth(req, res, next) {
-  const token = (req.headers['authorization'] || '').replace('Bearer ', '').trim();
+  // Prefer httpOnly cookie (XSS-safe). Fall back to Authorization header
+  // for backward compatibility (older clients) and for pure API consumers.
+  const token = req.cookies?.[COOKIE_NAME]
+    || (req.headers['authorization'] || '').replace('Bearer ', '').trim();
   if (!token) return res.status(401).json({ error: 'Missing token' });
   try {
     if (revokedTokens.has(token)) return res.status(401).json({ error: 'Token revoked' });
@@ -435,6 +439,7 @@ function requireAuth(req, res, next) {
     if (last && (Date.now() - last) > IDLE_TIMEOUT_SECONDS * 1000) {
       revokedTokens.add(token);
       lastActivity.delete(sid);
+      clearAuthCookie(res);
       auditLog('SESSION_IDLE_TIMEOUT', decoded);
       return res.status(401).json({ error: 'Session expired due to inactivity' });
     }
@@ -542,21 +547,82 @@ function escapeCsv(s) {
   return /^[=+\-@\t\r]/.test(v) ? "'" + v : v;
 }
 
-// ── HIPAA DATA MINIMIZATION ───────────────────────────────────────────────────
-function getDataForUser(user, fullData) {
-  if (user.role === 'superadmin') return fullData;
-  const bId = user.buildingId;
-  if (!bId) return { ...fullData, buildings: [], employees: [], shifts: [], schedulePatterns: [] };
+// ── HIPAA DATA MINIMIZATION (§164.502) ───────────────────────────────────────
+// HR module is gated to one specific account while in development.
+const HR_ALLOWED_EMAIL = 'solomong@managemystaffing.com';
+function _canAccessHR(user) {
+  return (user?.email || '').toLowerCase() === HR_ALLOWED_EMAIL || user?.role === 'superadmin';
+}
+
+// Strip HR-related collections from any data response unless caller is allowed.
+function _stripHR(data) {
   return {
-    ...fullData,
-    buildings:        (fullData.buildings        || []).filter(b => b.id === bId),
-    employees:        (fullData.employees        || []).filter(e => e.buildingId === bId),
-    shifts:           (fullData.shifts           || []).filter(s => s.buildingId === bId),
-    schedulePatterns: (fullData.schedulePatterns || []).filter(p =>
-      (fullData.employees || []).some(e => e.id === p.empId && e.buildingId === bId)),
-    accounts:         (fullData.accounts         || []).filter(a =>
-      a.id === user.id || (a.buildingId && a.buildingId === bId)),
+    ...data,
+    hrEmployees:       [],
+    hrAccounts:        [],
+    hrTimeClock:       [],
+    hrOnboarding:      undefined,
+    jobPostings:       [],
+    demos:             [],
+    billingData:       undefined,
   };
+}
+
+// Strip account password hashes + TOTP secrets from any response.
+function _scrubSecrets(accounts = []) {
+  return accounts.map(a => {
+    const { ph, totpSecret, totpRecoveryCodesHashes, inviteToken, ...safe } = a;
+    return { ...safe, hasPassword: !!ph, totpEnrolled: !!totpSecret };
+  });
+}
+
+// Employee role: only their own record + open shifts in their building.
+function _employeeView(user, fullData) {
+  const bId = user.buildingId;
+  if (!bId) return { ..._stripHR(fullData), buildings: [], employees: [], shifts: [], schedulePatterns: [], accounts: [] };
+  const me = (fullData.employees || []).find(e => e.id === user.id) || null;
+  const myBuildings = (fullData.buildings || []).filter(b => b.id === bId);
+  const minBuildings = myBuildings.map(b => ({ id: b.id, name: b.name, color: b.color }));
+  return {
+    ..._stripHR(fullData),
+    buildings:        minBuildings,
+    employees:        me ? [me] : [],          // self only — no coworker phones/emails
+    shifts:           (fullData.shifts || []).filter(s =>
+      s.buildingId === bId && (s.employeeId === user.id || s.status === 'open')),
+    schedulePatterns: (fullData.schedulePatterns || []).filter(p => p.empId === user.id),
+    accounts:         _scrubSecrets((fullData.accounts || []).filter(a => a.id === user.id)),
+    companies:        (fullData.companies || []),
+    user: { id: user.id, name: user.name, email: user.email, role: user.role, buildingId: bId },
+  };
+}
+
+function getDataForUser(user, fullData) {
+  // Always scrub secrets from accounts before returning
+  const scrubbed = { ...fullData, accounts: _scrubSecrets(fullData.accounts || []) };
+
+  // Employees get a heavily restricted view
+  if (user.role === 'employee') return _employeeView(user, scrubbed);
+
+  // Superadmin sees everything (with secrets scrubbed) + HR if allowed
+  if (user.role === 'superadmin') {
+    return _canAccessHR(user) ? scrubbed : _stripHR(scrubbed);
+  }
+
+  // Building admin: their building(s) + HR strip unless HR-allowed
+  const bIds = new Set([user.buildingId, ...(user.buildingIds || [])].filter(Boolean));
+  if (!bIds.size) return { ..._stripHR(scrubbed), buildings: [], employees: [], shifts: [], schedulePatterns: [] };
+
+  const filtered = {
+    ...scrubbed,
+    buildings:        (scrubbed.buildings        || []).filter(b => bIds.has(b.id)),
+    employees:        (scrubbed.employees        || []).filter(e => bIds.has(e.buildingId)),
+    shifts:           (scrubbed.shifts           || []).filter(s => bIds.has(s.buildingId)),
+    schedulePatterns: (scrubbed.schedulePatterns || []).filter(p =>
+      (scrubbed.employees || []).some(e => e.id === p.empId && bIds.has(e.buildingId))),
+    accounts:         (scrubbed.accounts || []).filter(a =>
+      a.id === user.id || (a.buildingId && bIds.has(a.buildingId)) || (a.buildingIds||[]).some(id => bIds.has(id))),
+  };
+  return _canAccessHR(user) ? filtered : _stripHR(filtered);
 }
 
 // ── RATE LIMITERS ─────────────────────────────────────────────────────────────
@@ -612,7 +678,38 @@ app.use(cors({
 }));
 
 app.use(express.json({ limit: '1mb' }));      // Was 50mb — DoS surface
+app.use(cookieParser(JWT_SECRET));             // signed cookies for CSRF defense
 app.use('/api/', apiLimiter);
+
+// ── JWT COOKIE HELPERS ────────────────────────────────────────────────────────
+// HIPAA §164.312(a)(2)(iv) — JWT must NOT be readable by JavaScript.
+// httpOnly + Secure + SameSite=Strict prevents XSS exfiltration and CSRF.
+const COOKIE_NAME = 'mms_session';
+function setAuthCookie(res, token) {
+  res.cookie(COOKIE_NAME, token, {
+    httpOnly: true,
+    secure:   IS_PROD,                      // local dev allows http
+    sameSite: 'strict',
+    maxAge:   JWT_TTL_SECONDS * 1000,
+    path:     '/',
+    signed:   false,                        // signing the cookie isn't needed (JWT is self-signed)
+  });
+}
+function clearAuthCookie(res) {
+  res.clearCookie(COOKIE_NAME, { httpOnly: true, secure: IS_PROD, sameSite: 'strict', path: '/' });
+}
+
+// ── CSRF DEFENSE ──────────────────────────────────────────────────────────────
+// SameSite=Strict cookie + custom header check provides defense-in-depth.
+// All state-changing endpoints require X-Requested-With: XMLHttpRequest header,
+// which can't be set on cross-origin form POSTs without preflight.
+function requireCSRFHeader(req, res, next) {
+  const allowed = req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS';
+  if (allowed) return next();
+  if (req.headers['x-requested-with'] === 'XMLHttpRequest') return next();
+  return res.status(403).json({ error: 'Missing X-Requested-With header (CSRF protection)' });
+}
+app.use('/api/', requireCSRFHeader);
 
 // ── HEALTH ────────────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => {
@@ -788,7 +885,6 @@ app.post('/api/auth/totp/enroll', async (req, res) => {
 function _issueToken(req, res, acct, data) {
   const sid = crypto.randomBytes(16).toString('hex');
   const isDemo = acct.id === SEED_DEMO.id || acct.id === SEED_DEMO_NURSE.id;
-  // Minimal payload — name/email looked up from DB by request-time queries
   const payload = {
     id:         acct.id,
     name:       acct.name,
@@ -802,8 +898,10 @@ function _issueToken(req, res, acct, data) {
   };
   const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_TTL_SECONDS });
   lastActivity.set(sid, Date.now());
+  setAuthCookie(res, token);                // ← XSS-safe httpOnly cookie
   auditLog('LOGIN_SUCCESS', acct, { sid });
-  return res.json({ token, user: payload });
+  // Return user info but NOT the raw token — client must rely on the cookie.
+  return res.json({ user: payload, authVia: 'cookie' });
 }
 
 // ── GET /api/auth/verify ──────────────────────────────────────────────────────
@@ -813,8 +911,9 @@ app.get('/api/auth/verify', requireAuth, (req, res) => {
 
 // ── POST /api/auth/logout ─────────────────────────────────────────────────────
 app.post('/api/auth/logout', requireAuth, (req, res) => {
-  const token = (req.headers['authorization'] || '').replace('Bearer ', '').trim();
-  revokedTokens.add(token);
+  if (req._token) revokedTokens.add(req._token);
+  if (req.user?.sid) lastActivity.delete(req.user.sid);
+  clearAuthCookie(res);
   auditLog('LOGOUT', req.user);
   res.json({ ok: true });
 });
