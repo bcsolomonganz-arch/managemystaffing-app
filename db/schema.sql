@@ -6,6 +6,7 @@
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;       -- gen_random_uuid()
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS citext;         -- case-insensitive email
 
 -- ──────────────────────────────────────────────────────────────────────────
 -- Companies (top-level tenant) — multiple buildings can belong to one company
@@ -58,7 +59,6 @@ CREATE TABLE IF NOT EXISTS accounts (
   created_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at                      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE EXTENSION IF NOT EXISTS citext;   -- case-insensitive email
 CREATE INDEX IF NOT EXISTS idx_accounts_building ON accounts(building_id);
 CREATE INDEX IF NOT EXISTS idx_accounts_invite_token ON accounts(invite_token) WHERE invite_token IS NOT NULL;
 
