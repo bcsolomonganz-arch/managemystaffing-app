@@ -459,32 +459,94 @@ async function verifyAuditChain() {
   }
 }
 
-// ── AUTH MIDDLEWARE ───────────────────────────────────────────────────────────
-const revokedTokens = new Set(); // TODO[infra]: Redis with TTL=JWT exp for multi-instance
-// Per-account session activity (for idle timeout enforcement). In-memory; fine
-// for single instance, must move to Redis when scaling out.
-const lastActivity = new Map(); // sessionId → epoch ms
+// ── REDIS (sessions + revoked tokens) ─────────────────────────────────────────
+// When REDIS_CONNECTION_STRING is set, sessions persist across restarts and
+// scale across instances. Falls back to in-memory if Redis is not configured
+// (single-instance dev only — NOT HIPAA-safe in multi-instance prod).
+let _redis = null;
+try {
+  const Redis = require('ioredis');
+  if (process.env.REDIS_CONNECTION_STRING) {
+    _redis = new Redis(process.env.REDIS_CONNECTION_STRING, {
+      tls: process.env.REDIS_CONNECTION_STRING.startsWith('rediss://') ? {} : undefined,
+      lazyConnect: true,
+      connectTimeout: 3000,
+      maxRetriesPerRequest: 3,
+      // Fail-soft: return null instead of throwing on transient errors
+      reconnectOnError: (err) => err.message.includes('READONLY'),
+    });
+    _redis.on('error', (e) => logger.warn('redis_error', { err: e.message }));
+    _redis.connect().then(
+      () => logger.info('redis_connected'),
+      (e) => { logger.warn('redis_connect_failed', { err: e.message }); _redis = null; }
+    );
+  }
+} catch (e) {
+  logger.warn('redis_init_failed', { err: e.message });
+}
 
-function requireAuth(req, res, next) {
-  // Prefer httpOnly cookie (XSS-safe). Fall back to Authorization header
-  // for backward compatibility (older clients) and for pure API consumers.
+// In-memory fallbacks (used when Redis unavailable)
+const _memRevokedTokens = new Set();
+const _memLastActivity = new Map();
+
+const revokedTokens = {
+  async add(token) {
+    _memRevokedTokens.add(token);
+    if (_redis) {
+      try { await _redis.set(`revoked:${token}`, '1', 'EX', JWT_TTL_SECONDS); } catch (e) {}
+    }
+  },
+  async has(token) {
+    if (_memRevokedTokens.has(token)) return true;
+    if (_redis) {
+      try { return (await _redis.exists(`revoked:${token}`)) === 1; } catch (e) {}
+    }
+    return false;
+  },
+};
+
+const lastActivity = {
+  async set(sid, ts) {
+    _memLastActivity.set(sid, ts);
+    if (_redis) {
+      try { await _redis.set(`act:${sid}`, String(ts), 'EX', JWT_TTL_SECONDS); } catch (e) {}
+    }
+  },
+  async get(sid) {
+    if (_redis) {
+      try {
+        const v = await _redis.get(`act:${sid}`);
+        if (v != null) return parseInt(v, 10);
+      } catch (e) {}
+    }
+    return _memLastActivity.get(sid);
+  },
+  async delete(sid) {
+    _memLastActivity.delete(sid);
+    if (_redis) { try { await _redis.del(`act:${sid}`); } catch (e) {} }
+  },
+};
+
+// ── AUTH MIDDLEWARE ───────────────────────────────────────────────────────────
+
+async function requireAuth(req, res, next) {
   const token = req.cookies?.[COOKIE_NAME]
     || (req.headers['authorization'] || '').replace('Bearer ', '').trim();
   if (!token) return res.status(401).json({ error: 'Missing token' });
   try {
-    if (revokedTokens.has(token)) return res.status(401).json({ error: 'Token revoked' });
+    if (await revokedTokens.has(token)) return res.status(401).json({ error: 'Token revoked' });
     const decoded = jwt.verify(token, JWT_SECRET);
     // Idle timeout: if last activity > 15 min ago, force logout
     const sid = decoded.sid;
-    const last = lastActivity.get(sid);
+    const last = await lastActivity.get(sid);
     if (last && (Date.now() - last) > IDLE_TIMEOUT_SECONDS * 1000) {
-      revokedTokens.add(token);
-      lastActivity.delete(sid);
+      await revokedTokens.add(token);
+      await lastActivity.delete(sid);
       clearAuthCookie(res);
       auditLog('SESSION_IDLE_TIMEOUT', decoded);
       return res.status(401).json({ error: 'Session expired due to inactivity' });
     }
-    lastActivity.set(sid, Date.now());
+    await lastActivity.set(sid, Date.now());
     req.user = decoded;
     req._token = token;
     next();
@@ -1009,7 +1071,7 @@ app.post('/api/auth/totp/reset', requireAuth, requireSuperAdmin, async (req, res
   res.json({ ok: true, message: `TOTP reset for ${acct.email}. They will re-enroll on next login.` });
 });
 
-function _issueToken(req, res, acct, data) {
+async function _issueToken(req, res, acct, data) {
   const sid = crypto.randomBytes(16).toString('hex');
   const isDemo = acct.id === SEED_DEMO.id || acct.id === SEED_DEMO_NURSE.id;
   const payload = {
@@ -1024,10 +1086,9 @@ function _issueToken(req, res, acct, data) {
     sid,
   };
   const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_TTL_SECONDS });
-  lastActivity.set(sid, Date.now());
+  await lastActivity.set(sid, Date.now());
   setAuthCookie(res, token);                // ← XSS-safe httpOnly cookie
   auditLog('LOGIN_SUCCESS', acct, { sid });
-  // Return user info but NOT the raw token — client must rely on the cookie.
   return res.json({ user: payload, authVia: 'cookie' });
 }
 
@@ -1037,9 +1098,9 @@ app.get('/api/auth/verify', requireAuth, (req, res) => {
 });
 
 // ── POST /api/auth/logout ─────────────────────────────────────────────────────
-app.post('/api/auth/logout', requireAuth, (req, res) => {
-  if (req._token) revokedTokens.add(req._token);
-  if (req.user?.sid) lastActivity.delete(req.user.sid);
+app.post('/api/auth/logout', requireAuth, async (req, res) => {
+  if (req._token) await revokedTokens.add(req._token);
+  if (req.user?.sid) await lastActivity.delete(req.user.sid);
   clearAuthCookie(res);
   auditLog('LOGOUT', req.user);
   res.json({ ok: true });
