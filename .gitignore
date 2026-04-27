@@ -1,4 +1,32 @@
 node_modules/
+
+# Secrets and runtime data — must NEVER be committed (HIPAA)
 .env
+.env.local
+.env.production
+*.env
+
+# Encrypted PHI data file
 mms-data.json
 mms-data.json.tmp
+mms-data.json.bak.*
+
+# Audit log (HIPAA — append-only, lives outside repo)
+mms-audit.log
+
+# Server runtime logs
+server-stdout.log
+server-stderr.log
+
+# Local rotation/migration helpers (run-once tools)
+rotate-data-key.js
+
+# OS / editor
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# Deploy artifacts
+*.zip
+mms-deploy*.zip

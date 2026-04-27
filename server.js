@@ -1,5 +1,44 @@
 'use strict';
-require('dotenv').config();
+// HIPAA: secrets and PHI must NOT live in OneDrive (synced cloud storage).
+// Load .env from a non-synced secure location. Falls back to local .env for
+// dev parity if the secure path doesn't exist.
+const path0 = require('path');
+const fs0   = require('fs');
+
+// Detect Azure App Service: WEBSITE_INSTANCE_ID is always set on App Service.
+// In cloud, persistent data lives on the mounted Azure Files share at /mounts/data.
+const IS_AZURE = !!process.env.WEBSITE_INSTANCE_ID;
+const SECURE_DIR = IS_AZURE
+  ? '/mounts/data'
+  : (process.env.MMS_SECURE_DIR || (process.platform === 'win32' ? 'C:\\ProgramData\\ManageMyStaffing' : '/var/lib/mms'));
+
+const SECURE_ENV = path0.join(SECURE_DIR, '.env');
+if (fs0.existsSync(SECURE_ENV)) {
+  require('dotenv').config({ path: SECURE_ENV });
+} else {
+  require('dotenv').config();
+}
+
+// On Azure App Service, secrets come via Key Vault REFERENCES in App Settings,
+// which the platform resolves before Node starts. So process.env.JWT_SECRET etc.
+// are already populated by the time this code runs. No runtime fetch needed.
+
+// Application Insights — auto-instruments Express, fetch, console
+function initAppInsights() {
+  if (!process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) return;
+  const appInsights = require('applicationinsights');
+  appInsights.setup(process.env.APPLICATIONINSIGHTS_CONNECTION_STRING)
+    .setAutoDependencyCorrelation(true)
+    .setAutoCollectRequests(true)
+    .setAutoCollectPerformance(true, true)
+    .setAutoCollectExceptions(true)
+    .setAutoCollectDependencies(true)
+    .setAutoCollectConsole(true, true)
+    .setUseDiskRetryCaching(true)
+    .setSendLiveMetrics(true)
+    .start();
+  console.log('[mms] Application Insights initialized');
+}
 
 const express    = require('express');
 const jwt        = require('jsonwebtoken');
@@ -11,15 +50,53 @@ const os         = require('os');
 const helmet     = require('helmet');
 const cors       = require('cors');
 const rateLimit  = require('express-rate-limit');
-const bcrypt     = require('bcryptjs');
+const bcrypt     = require('bcrypt');
+const otplib     = require('otplib');
+const QRCode     = require('qrcode');
+
+// otplib v13+ exports flat functions; wrap to match the older `authenticator` API
+const authenticator = {
+  generateSecret: () => otplib.generateSecret(),
+  keyuri: (account, issuer, secret) => otplib.generateURI({ secret, accountName: account, issuer }),
+  check: (token, secret) => {
+    try { return otplib.verifySync({ secret, token, options: { window: 1 } }); }
+    catch { return false; }
+  },
+};
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 const PORT       = process.env.PORT       || 3002;
+const NODE_ENV   = process.env.NODE_ENV   || 'development';
+const IS_PROD    = NODE_ENV === 'production';
 const JWT_SECRET = process.env.JWT_SECRET || (() => { throw new Error('JWT_SECRET env var is required'); })();
-const DATA_FILE  = process.env.DATA_FILE  || path.join(process.env.HOME || os.homedir() || __dirname, 'mms-data.json');
+if (JWT_SECRET.length < 32) throw new Error('JWT_SECRET must be at least 32 chars');
+// Default data file lives in the secure non-OneDrive directory
+const DATA_FILE  = process.env.DATA_FILE  || path.join(SECURE_DIR, 'mms-data.json');
 const DATA_ENCRYPTION_KEY = process.env.DATA_ENCRYPTION_KEY || (() => { throw new Error('DATA_ENCRYPTION_KEY (32-byte hex) required'); })();
+if (Buffer.from(DATA_ENCRYPTION_KEY, 'hex').length !== 32) throw new Error('DATA_ENCRYPTION_KEY must be 32-byte hex');
 const HTML_FILE  = path.join(__dirname, 'managemystaffing.html');
 const APP_URL    = process.env.APP_URL || 'https://managemystaffing.com';
+
+// ── HIPAA SECURITY POLICY ─────────────────────────────────────────────────────
+const JWT_TTL_SECONDS      = 60 * 60;            // 1 hour absolute (HIPAA-compliant)
+const IDLE_TIMEOUT_SECONDS = 15 * 60;            // 15 min idle → server-enforced via lastActivity
+const MAX_FAILED_ATTEMPTS  = 5;
+const LOCKOUT_MS           = 30 * 60 * 1000;     // 30 min
+const PASSWORD_MIN_LENGTH  = 12;
+const AUDIT_LOG_FILE       = process.env.AUDIT_LOG_FILE || path.join(path.dirname(DATA_FILE), 'mms-audit.log');
+const AUDIT_HMAC_KEY       = process.env.AUDIT_HMAC_KEY || (() => { throw new Error('AUDIT_HMAC_KEY required for tamper-evident audit log'); })();
+const TOTP_ISSUER          = 'ManageMyStaffing';
+
+// ── STRUCTURED LOGGING ────────────────────────────────────────────────────────
+function log(level, msg, meta = {}) {
+  const entry = { ts: new Date().toISOString(), level, msg, ...meta };
+  console.log(JSON.stringify(entry));
+}
+const logger = {
+  info:  (msg, meta) => log('info', msg, meta),
+  warn:  (msg, meta) => log('warn', msg, meta),
+  error: (msg, meta) => log('error', msg, meta),
+};
 
 // ── MESSAGING CONFIG — Azure Communication Services ───────────────────────────
 const ACS_CONNECTION_STRING = process.env.ACS_CONNECTION_STRING || null;
@@ -207,8 +284,31 @@ async function applyMigrations(data) {
   // ── Password reset via env var ─────────────────────────────────────────────
   if (process.env.RESET_SA_PASSWORD === '1') {
     const sa = (data.accounts || []).find(a => a.id === SEED_SA.id);
-    if (sa) { sa.ph = null; dirty = true; }
-    console.log('[mms] SA password reset — next login sets new password');
+    if (sa) {
+      sa.ph = null;
+      sa.totpSecret = null;
+      sa.failedAttempts = 0;
+      sa.lockedUntil = null;
+      sa.inviteToken = crypto.randomBytes(24).toString('hex');
+      sa.inviteExpiry = Date.now() + 24 * 60 * 60 * 1000; // 24h
+      dirty = true;
+      console.log('\n=================================================================');
+      console.log('SA password reset. Use the link below within 24h to set password:');
+      console.log(`${process.env.APP_URL || 'http://localhost:3002'}/?invite=${sa.inviteToken}`);
+      console.log('=================================================================\n');
+    }
+  }
+
+  // ── Bootstrap SA invite if no password & no token (new install) ─────────────
+  const sa = (data.accounts || []).find(a => a.id === SEED_SA.id);
+  if (sa && !sa.ph && !sa.inviteToken) {
+    sa.inviteToken = crypto.randomBytes(24).toString('hex');
+    sa.inviteExpiry = Date.now() + 7 * 24 * 60 * 60 * 1000;
+    dirty = true;
+    console.log('\n=================================================================');
+    console.log('First-time bootstrap. Use the link below within 7 days to set SA password:');
+    console.log(`${process.env.APP_URL || 'http://localhost:3002'}/?invite=${sa.inviteToken}`);
+    console.log('=================================================================\n');
   }
 
   // ── Ensure seed accounts always exist with correct immutable fields ─────────
@@ -250,26 +350,97 @@ async function applyMigrations(data) {
 }
 
 // ── AUDIT LOGGING (HIPAA §164.312(b)) ─────────────────────────────────────────
+// Tamper-evident: each entry hashes the previous entry's HMAC. Append-only file.
+let _lastAuditHash = null;
+let _auditQueue = Promise.resolve();
+
+function _initAuditChain() {
+  try {
+    if (!fsSync.existsSync(AUDIT_LOG_FILE)) {
+      _lastAuditHash = '0'.repeat(64);
+      return;
+    }
+    const lines = fsSync.readFileSync(AUDIT_LOG_FILE, 'utf8').trim().split('\n').filter(Boolean);
+    if (!lines.length) { _lastAuditHash = '0'.repeat(64); return; }
+    const last = JSON.parse(lines[lines.length - 1]);
+    _lastAuditHash = last.hmac;
+    logger.info('audit_chain_resumed', { entries: lines.length, lastHash: _lastAuditHash.slice(0, 16) });
+  } catch (e) {
+    logger.error('audit_chain_init_failed', { err: e.message });
+    _lastAuditHash = '0'.repeat(64);
+  }
+}
+
 function auditLog(action, user, details = {}) {
   const entry = {
     ts:     new Date().toISOString(),
     userId: user?.id    || 'anonymous',
-    email:  user?.email || '',
+    role:   user?.role  || null,
     action,
     ...details,
   };
-  console.log('[AUDIT]', JSON.stringify(entry));
+  // Serialize audit writes to ensure chain integrity
+  _auditQueue = _auditQueue.then(async () => {
+    if (_lastAuditHash === null) _initAuditChain();
+    entry.prevHash = _lastAuditHash;
+    const body = JSON.stringify(entry);
+    const h = crypto.createHmac('sha256', AUDIT_HMAC_KEY);
+    h.update(body);
+    entry.hmac = h.digest('hex');
+    _lastAuditHash = entry.hmac;
+    try {
+      await fs.appendFile(AUDIT_LOG_FILE, JSON.stringify(entry) + '\n', { mode: 0o600 });
+    } catch (e) {
+      logger.error('audit_write_failed', { err: e.message, action });
+    }
+    logger.info('audit', { action, userId: entry.userId, role: entry.role });
+  }).catch(e => logger.error('audit_queue_failure', { err: e.message }));
+}
+
+// Verify audit chain integrity (call from /health/ready or manually)
+async function verifyAuditChain() {
+  try {
+    const data = await fs.readFile(AUDIT_LOG_FILE, 'utf8').catch(() => '');
+    const lines = data.trim().split('\n').filter(Boolean);
+    let prev = '0'.repeat(64);
+    for (const [i, line] of lines.entries()) {
+      const e = JSON.parse(line);
+      if (e.prevHash !== prev) return { ok: false, brokenAt: i, reason: 'prevHash mismatch' };
+      const { hmac, ...body } = e;
+      const h = crypto.createHmac('sha256', AUDIT_HMAC_KEY).update(JSON.stringify(body)).digest('hex');
+      if (h !== hmac) return { ok: false, brokenAt: i, reason: 'hmac mismatch' };
+      prev = hmac;
+    }
+    return { ok: true, entries: lines.length };
+  } catch (e) {
+    return { ok: false, reason: e.message };
+  }
 }
 
 // ── AUTH MIDDLEWARE ───────────────────────────────────────────────────────────
-const revokedTokens = new Set(); // use Redis in production
+const revokedTokens = new Set(); // TODO[infra]: Redis with TTL=JWT exp for multi-instance
+// Per-account session activity (for idle timeout enforcement). In-memory; fine
+// for single instance, must move to Redis when scaling out.
+const lastActivity = new Map(); // sessionId → epoch ms
 
 function requireAuth(req, res, next) {
   const token = (req.headers['authorization'] || '').replace('Bearer ', '').trim();
   if (!token) return res.status(401).json({ error: 'Missing token' });
   try {
     if (revokedTokens.has(token)) return res.status(401).json({ error: 'Token revoked' });
-    req.user = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET);
+    // Idle timeout: if last activity > 15 min ago, force logout
+    const sid = decoded.sid;
+    const last = lastActivity.get(sid);
+    if (last && (Date.now() - last) > IDLE_TIMEOUT_SECONDS * 1000) {
+      revokedTokens.add(token);
+      lastActivity.delete(sid);
+      auditLog('SESSION_IDLE_TIMEOUT', decoded);
+      return res.status(401).json({ error: 'Session expired due to inactivity' });
+    }
+    lastActivity.set(sid, Date.now());
+    req.user = decoded;
+    req._token = token;
     next();
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' });
@@ -281,6 +452,94 @@ function requireAdmin(req, res, next) {
     return res.status(403).json({ error: 'Insufficient permissions' });
   }
   next();
+}
+
+function requireSuperAdmin(req, res, next) {
+  if (req.user?.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Superadmin only' });
+  }
+  next();
+}
+
+// ── PASSWORD COMPLEXITY (HIPAA §164.308(a)(5)) ───────────────────────────────
+function validatePasswordComplexity(pw) {
+  if (!pw || typeof pw !== 'string') return 'Password is required';
+  if (pw.length < PASSWORD_MIN_LENGTH) return `Password must be at least ${PASSWORD_MIN_LENGTH} characters`;
+  if (!/[A-Z]/.test(pw)) return 'Password must include an uppercase letter';
+  if (!/[a-z]/.test(pw)) return 'Password must include a lowercase letter';
+  if (!/[0-9]/.test(pw)) return 'Password must include a number';
+  if (!/[^A-Za-z0-9]/.test(pw)) return 'Password must include a symbol';
+  return null;
+}
+
+// ── ACCOUNT LOCKOUT (HIPAA §164.308(a)(5)(ii)(C)) ────────────────────────────
+function isAccountLocked(acct) {
+  if (!acct.lockedUntil) return false;
+  if (Date.now() < acct.lockedUntil) return true;
+  // expired — clear
+  acct.lockedUntil = null;
+  acct.failedAttempts = 0;
+  return false;
+}
+
+function recordFailedLogin(acct) {
+  acct.failedAttempts = (acct.failedAttempts || 0) + 1;
+  if (acct.failedAttempts >= MAX_FAILED_ATTEMPTS) {
+    acct.lockedUntil = Date.now() + LOCKOUT_MS;
+    auditLog('ACCOUNT_LOCKED', acct, { until: new Date(acct.lockedUntil).toISOString() });
+  }
+  markDirty();
+}
+
+function clearFailedAttempts(acct) {
+  if (acct.failedAttempts || acct.lockedUntil) {
+    acct.failedAttempts = 0;
+    acct.lockedUntil = null;
+    markDirty();
+  }
+}
+
+// ── PHI GUARD FOR OUTBOUND SMS (HIPAA §164.312(e)) ───────────────────────────
+// SMS is unencrypted in transit by carriers. We reject any outbound SMS that
+// contains identifiable info — employee names, dates, SSN-like patterns, or
+// common medical terms. Admins should send generic notifications and let users
+// log in for details.
+function scanMessageForPHI(message, employeesScope) {
+  const m = String(message || '');
+  const lower = m.toLowerCase();
+  // 1. SSN-like patterns
+  if (/\b\d{3}-\d{2}-\d{4}\b/.test(m)) return 'Looks like an SSN — never send PHI via SMS';
+  // 2. Date-of-birth-like patterns (MM/DD/YYYY or YYYY-MM-DD)
+  if (/\b(0?[1-9]|1[0-2])\/(0?[1-9]|[12]\d|3[01])\/(19|20)\d{2}\b/.test(m)) return 'Looks like a date of birth — never send PHI via SMS';
+  // 3. MRN-like patterns
+  if (/\b(MRN|mrn|medical record (number|#)|patient (id|#))\s*[:#]?\s*\w+/i.test(m)) return 'Looks like a medical record number — never send PHI via SMS';
+  // 4. Common diagnosis / medication / care terms
+  const phiKeywords = ['diagnosis', 'prescription', 'medication', 'patient ', 'resident ', 'admitted', 'discharge', 'icd-', 'cpt code', 'lab result', 'test result', 'biopsy', 'tumor', 'cancer', 'hiv', 'aids', 'dialysis', 'hospice', 'positive for', 'negative for'];
+  for (const kw of phiKeywords) {
+    if (lower.includes(kw)) return `Contains potentially clinical term ("${kw}") — never send PHI via SMS`;
+  }
+  // 5. Employee names from the caller's scope (workforce-PHI when tied to facility)
+  for (const e of (employeesScope || [])) {
+    if (!e.name) continue;
+    const parts = e.name.split(/\s+/).filter(p => p.length >= 4);
+    for (const p of parts) {
+      const re = new RegExp(`\\b${p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+      if (re.test(m)) return `Contains an employee name ("${p}") — keep SMS generic, link recipients to the app`;
+    }
+  }
+  return null;
+}
+
+// ── HTML ESCAPE (used in email bodies) ───────────────────────────────────────
+function escapeHtml(s) {
+  return String(s||'').replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#x27;'}[c]));
+}
+
+// ── CSV ESCAPE (defense against formula injection) ───────────────────────────
+function escapeCsv(s) {
+  const v = String(s == null ? '' : s);
+  // Excel formula injection: prefix any cell starting with =+-@ with single quote
+  return /^[=+\-@\t\r]/.test(v) ? "'" + v : v;
 }
 
 // ── HIPAA DATA MINIMIZATION ───────────────────────────────────────────────────
@@ -301,57 +560,132 @@ function getDataForUser(user, fullData) {
 }
 
 // ── RATE LIMITERS ─────────────────────────────────────────────────────────────
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 50,  message: { error: 'Too many requests' } });
-const apiLimiter  = rateLimit({ windowMs:       60 * 1000, max: 300, message: { error: 'Too many requests' } });
+// Login: 10 per 15 min per IP (account lockout handles per-account brute force)
+const authLimiter   = rateLimit({ windowMs: 15 * 60 * 1000, max: 10,  message: { error: 'Too many login attempts' } });
+const inviteVerifyLimiter = rateLimit({ windowMs: 60 * 1000, max: 20, message: { error: 'Too many requests' } });
+const apiLimiter    = rateLimit({ windowMs:       60 * 1000, max: 300, message: { error: 'Too many requests' } });
 
 // ── EXPRESS APP ───────────────────────────────────────────────────────────────
 const app = express();
+app.set('trust proxy', 1);     // Behind App Service / Front Door
+app.disable('x-powered-by');
+
+// Request ID for log correlation
+app.use((req, res, next) => {
+  req.id = crypto.randomBytes(8).toString('hex');
+  res.setHeader('X-Request-Id', req.id);
+  next();
+});
 
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc:    ["'self'"],
-      scriptSrc:     ["'self'", "'unsafe-inline'"],
-      scriptSrcAttr: ["'unsafe-inline'"], // allow onclick/onchange handlers
+      scriptSrc:     ["'self'", "'unsafe-inline'"],     // inline scripts in single-file SPA
+      scriptSrcAttr: ["'unsafe-inline'"],               // onclick handlers throughout SPA
       styleSrc:      ["'self'", "'unsafe-inline'"],
       imgSrc:        ["'self'", 'data:'],
+      connectSrc:    ["'self'"],
+      frameAncestors: ["'none'"],                       // prevent clickjacking
+      objectSrc:     ["'none'"],
+      baseUri:       ["'self'"],
+      formAction:    ["'self'"],
     },
   },
+  hsts: { maxAge: 63072000, includeSubDomains: true, preload: true }, // 2 years
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  crossOriginOpenerPolicy: { policy: 'same-origin' },
+  crossOriginResourcePolicy: { policy: 'same-origin' },
 }));
 
+// Force HTTPS in production
+if (IS_PROD) {
+  app.use((req, res, next) => {
+    if (req.secure || req.headers['x-forwarded-proto'] === 'https') return next();
+    return res.redirect(308, `https://${req.headers.host}${req.url}`);
+  });
+}
+
 app.use(cors({
-  origin: [APP_URL, 'http://localhost:3002'],
+  origin: IS_PROD ? [APP_URL] : [APP_URL, 'http://localhost:3002', 'http://localhost:3000'],
   credentials: true,
 }));
 
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '1mb' }));      // Was 50mb — DoS surface
 app.use('/api/', apiLimiter);
 
 // ── HEALTH ────────────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => {
-  res.json({
-    ok: true,
-    mode: 'production',
-    hipaaCompliant: true,
-    encryption: 'AES-256-GCM',
+  res.json({ ok: true, env: NODE_ENV });
+});
+
+// Deep readiness probe — checks dependencies. Use for load-balancer health.
+app.get('/health/ready', async (_req, res) => {
+  const checks = {
+    dataFile:     false,
+    auditChain:   false,
+    encryption:   'AES-256-GCM',
     messaging: {
-      acsConfigured:   !!ACS_CONNECTION_STRING,
-      emailConfigured: !!ACS_FROM_EMAIL,
-      smsConfigured:   !!ACS_FROM_PHONE,
+      acs:   !!ACS_CONNECTION_STRING,
+      email: !!ACS_FROM_EMAIL,
+      sms:   !!ACS_FROM_PHONE,
     },
-  });
+  };
+  try {
+    await loadData();
+    checks.dataFile = true;
+  } catch (e) {
+    return res.status(503).json({ ok: false, ...checks, error: 'data_unreachable' });
+  }
+  const chain = await verifyAuditChain();
+  checks.auditChain = chain.ok;
+  if (!chain.ok) return res.status(503).json({ ok: false, ...checks, auditChainError: chain });
+  res.json({ ok: true, ...checks });
 });
 
 // ── SERVE HTML ────────────────────────────────────────────────────────────────
 app.get('/', (_req, res) => res.sendFile(HTML_FILE));
 
 // ── POST /api/auth/login ──────────────────────────────────────────────────────
-// Body: { email, password }
-// - Demo accounts accept any password.
-// - ph===null (first login): any password → saved as bcrypt hash.
-// - ph starts with $2 (bcrypt): bcrypt.compare.
+// Body: { email, password, totp?, totpSetupCode? }
+// Returns:
+//   - { needsTotpSetup: true, totpSecret, qrDataUrl } if first 2FA enrollment
+//   - { needsTotp: true, sessionId } if password OK, awaiting TOTP code
+//   - { token, user } when fully authenticated
+//
+// Security:
+//   - Account lockout after 5 failed password attempts (30 min)
+//   - First login requires inviteToken (passed in `password` field via /api/invite/accept)
+//   - Demo accounts disabled in production
+//   - TOTP required for all non-demo accounts
+const _totpPending = new Map(); // sessionId → { acctId, expiresAt }
+
 app.post('/api/auth/login', authLimiter, async (req, res) => {
-  const { email, password } = req.body || {};
+  const { email, password, totp, sessionId } = req.body || {};
+
+  // Step 2: TOTP verification
+  if (sessionId && totp) {
+    const pend = _totpPending.get(sessionId);
+    if (!pend || Date.now() > pend.expiresAt) {
+      _totpPending.delete(sessionId);
+      return res.status(401).json({ error: 'TOTP session expired. Sign in again.' });
+    }
+    const data = await loadData();
+    const acct = (data.accounts || []).find(a => a.id === pend.acctId);
+    if (!acct || !acct.totpSecret) {
+      _totpPending.delete(sessionId);
+      return res.status(401).json({ error: 'Account error' });
+    }
+    const ok = authenticator.check(String(totp).replace(/\s/g, ''), acct.totpSecret);
+    if (!ok) {
+      auditLog('TOTP_FAILED', acct);
+      return res.status(401).json({ error: 'Invalid TOTP code' });
+    }
+    _totpPending.delete(sessionId);
+    return _issueToken(req, res, acct, data);
+  }
+
+  // Step 1: email + password
   if (!email || !password) return res.status(400).json({ error: 'email and password are required' });
 
   let data;
@@ -359,43 +693,112 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
   const acct = (data.accounts || []).find(a => (a.email || '').toLowerCase() === email.toLowerCase());
   if (!acct) {
-    auditLog('LOGIN_FAILED', null, { email, reason: 'unknown_email' });
+    auditLog('LOGIN_FAILED', null, { email: email.toLowerCase(), reason: 'unknown_email' });
+    // Constant-time-ish: still hash a dummy
+    await bcrypt.compare(password, '$2b$12$' + 'a'.repeat(53));
+    return res.status(401).json({ error: 'Invalid email or password' });
+  }
+
+  // Lockout check
+  if (isAccountLocked(acct)) {
+    auditLog('LOGIN_BLOCKED_LOCKED', acct);
+    const minutesLeft = Math.ceil((acct.lockedUntil - Date.now()) / 60000);
+    return res.status(429).json({ error: `Account locked. Try again in ${minutesLeft} min.` });
+  }
+
+  // Demo accounts disabled in production
+  const isDemo = acct.id === SEED_DEMO.id || acct.id === SEED_DEMO_NURSE.id;
+  if (isDemo && IS_PROD) {
+    auditLog('LOGIN_FAILED', acct, { reason: 'demo_disabled_in_prod' });
     return res.status(401).json({ error: 'Invalid email or password' });
   }
 
   let authenticated = false;
-  const isDemo = acct.id === SEED_DEMO.id || acct.id === SEED_DEMO_NURSE.id;
-
   if (isDemo) {
     authenticated = true;
   } else if (!acct.ph) {
-    // First login — set permanent bcrypt password
-    acct.ph = await bcrypt.hash(password, 12);
-    markDirty();
-    authenticated = true;
+    // First login MUST go through /api/invite/accept (uses inviteToken).
+    // Direct login with no password set is blocked — closes the first-login hijack.
+    auditLog('LOGIN_FAILED', acct, { reason: 'no_password_set_use_invite' });
+    return res.status(403).json({ error: 'Account not yet activated. Use the invitation link sent to your email.' });
   } else {
     authenticated = await bcrypt.compare(password, acct.ph);
   }
 
   if (!authenticated) {
-    auditLog('LOGIN_FAILED', acct, { reason: 'wrong_password' });
+    recordFailedLogin(acct);
+    auditLog('LOGIN_FAILED', acct, { reason: 'wrong_password', failedAttempts: acct.failedAttempts });
     return res.status(401).json({ error: 'Invalid email or password' });
   }
 
+  clearFailedAttempts(acct);
+
+  // TOTP gating: all non-demo accounts require TOTP.
+  if (!isDemo) {
+    if (!acct.totpSecret) {
+      // First-time TOTP enrollment
+      const secret = authenticator.generateSecret();
+      const otpauth = authenticator.keyuri(acct.email, TOTP_ISSUER, secret);
+      const qrDataUrl = await QRCode.toDataURL(otpauth);
+      // Stash pending secret — confirmed on /api/auth/totp/enroll
+      const sid = crypto.randomBytes(16).toString('hex');
+      _totpPending.set(sid, { acctId: acct.id, pendingSecret: secret, expiresAt: Date.now() + 10 * 60 * 1000, mode: 'enroll' });
+      auditLog('TOTP_ENROLL_STARTED', acct);
+      return res.json({ needsTotpSetup: true, sessionId: sid, totpSecret: secret, qrDataUrl, issuer: TOTP_ISSUER });
+    }
+    // Existing TOTP — require code
+    const sid = crypto.randomBytes(16).toString('hex');
+    _totpPending.set(sid, { acctId: acct.id, expiresAt: Date.now() + 5 * 60 * 1000, mode: 'verify' });
+    return res.json({ needsTotp: true, sessionId: sid });
+  }
+
+  // Demo path — issue token directly
+  return _issueToken(req, res, acct, data);
+});
+
+// Confirm TOTP enrollment (user scanned QR + entered first code)
+app.post('/api/auth/totp/enroll', async (req, res) => {
+  const { sessionId, totp } = req.body || {};
+  if (!sessionId || !totp) return res.status(400).json({ error: 'sessionId and totp are required' });
+  const pend = _totpPending.get(sessionId);
+  if (!pend || pend.mode !== 'enroll' || Date.now() > pend.expiresAt) {
+    _totpPending.delete(sessionId);
+    return res.status(401).json({ error: 'Enrollment session expired' });
+  }
+  const ok = authenticator.check(String(totp).replace(/\s/g, ''), pend.pendingSecret);
+  if (!ok) return res.status(401).json({ error: 'Invalid TOTP code' });
+
+  const data = await loadData();
+  const acct = (data.accounts || []).find(a => a.id === pend.acctId);
+  if (!acct) return res.status(404).json({ error: 'Account not found' });
+  acct.totpSecret = pend.pendingSecret;
+  acct.totpEnrolledAt = new Date().toISOString();
+  markDirty();
+  _totpPending.delete(sessionId);
+  auditLog('TOTP_ENROLLED', acct);
+  return _issueToken(req, res, acct, data);
+});
+
+function _issueToken(req, res, acct, data) {
+  const sid = crypto.randomBytes(16).toString('hex');
+  const isDemo = acct.id === SEED_DEMO.id || acct.id === SEED_DEMO_NURSE.id;
+  // Minimal payload — name/email looked up from DB by request-time queries
   const payload = {
     id:         acct.id,
     name:       acct.name,
     email:      acct.email,
     role:       acct.role,
     buildingId: acct.buildingId || null,
-    demo:       isDemo || undefined,
+    buildingIds: acct.buildingIds || [],
     group:      acct.group || undefined,
+    demo:       isDemo || undefined,
+    sid,
   };
-  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '8h' });
-
-  auditLog('LOGIN_SUCCESS', acct);
-  res.json({ token, user: payload });
-});
+  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_TTL_SECONDS });
+  lastActivity.set(sid, Date.now());
+  auditLog('LOGIN_SUCCESS', acct, { sid });
+  return res.json({ token, user: payload });
+}
 
 // ── GET /api/auth/verify ──────────────────────────────────────────────────────
 app.get('/api/auth/verify', requireAuth, (req, res) => {
@@ -423,24 +826,97 @@ app.get('/api/data', requireAuth, async (req, res) => {
 });
 
 // ── POST /api/data ────────────────────────────────────────────────────────────
+// Per-tenant write authz: building admins can only modify entities tied to
+// their own building. Superadmin can modify everything. Seed accounts are
+// protected from role tampering. Caller cannot escalate their own role.
 app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   const payload = req.body;
   if (!payload || typeof payload !== 'object') return res.status(400).json({ error: 'Invalid payload' });
 
-  // Guard seed account roles
+  const data = await loadData();
+  const isSA = req.user.role === 'superadmin';
+  const callerBId = req.user.buildingId;
+  const callerBIds = new Set([callerBId, ...(req.user.buildingIds||[])].filter(Boolean));
+
+  // ── Per-collection merge with authz scoping ────────────────────────────────
+  const mergeScoped = (existing = [], incoming = [], scopeOk) => {
+    if (isSA) return Array.isArray(incoming) ? incoming : existing;
+    if (!Array.isArray(incoming)) return existing;
+    const result = [];
+    const seen = new Set();
+    // Take incoming items that are in caller's scope
+    for (const item of incoming) {
+      if (scopeOk(item)) { result.push(item); seen.add(item.id); }
+    }
+    // Preserve existing items that are OUT of scope (caller can't touch them)
+    for (const item of existing) {
+      if (!scopeOk(item) && !seen.has(item.id)) result.push(item);
+    }
+    return result;
+  };
+
+  const inScopeBuilding   = b => callerBIds.has(b.id);
+  const inScopeEmployee   = e => callerBIds.has(e.buildingId);
+  const inScopeShift      = s => callerBIds.has(s.buildingId);
+  const inScopePattern    = p => {
+    const emp = (data.employees || []).find(e => e.id === p.empId);
+    return emp ? callerBIds.has(emp.buildingId) : false;
+  };
+  const inScopeAccount    = a => {
+    if (a.role === 'superadmin') return false;        // never let admins touch SA
+    return callerBIds.has(a.buildingId) || (a.buildingIds||[]).some(id => callerBIds.has(id));
+  };
+
+  data.buildings        = mergeScoped(data.buildings,        payload.buildings,        inScopeBuilding);
+  data.employees        = mergeScoped(data.employees,        payload.employees,        inScopeEmployee);
+  data.shifts           = mergeScoped(data.shifts,           payload.shifts,           inScopeShift);
+  data.schedulePatterns = mergeScoped(data.schedulePatterns, payload.schedulePatterns, inScopePattern);
+  data.hrEmployees      = mergeScoped(data.hrEmployees,      payload.hrEmployees,      inScopeEmployee);
+  data.hrTimeClock      = mergeScoped(data.hrTimeClock,      payload.hrTimeClock,      inScopeEmployee);
+
+  // Accounts: protect seed accounts; prevent caller from escalating own role.
   if (Array.isArray(payload.accounts)) {
-    for (const seed of [SEED_SA, SEED_DEMO]) {
-      const acct = payload.accounts.find(a => a.id === seed.id);
-      if (acct && acct.role !== seed.role) {
-        console.warn(`[mms] WARN: blocked role change on ${seed.id}`);
-        acct.role = seed.role;
+    const accountsScoped = mergeScoped(data.accounts, payload.accounts, inScopeAccount);
+    for (const seed of [SEED_SA, SEED_DEMO, SEED_DEMO_NURSE]) {
+      const a = accountsScoped.find(x => x.id === seed.id);
+      const orig = (data.accounts || []).find(x => x.id === seed.id);
+      if (a && orig) {
+        // Restore immutable seed fields
+        a.role = orig.role; a.email = orig.email;
+        if (a.id === SEED_SA.id) a.buildingId = orig.buildingId;
       }
     }
+    // Prevent caller self-escalation
+    const me = accountsScoped.find(a => a.id === req.user.id);
+    if (me && me.role !== req.user.role) {
+      logger.warn('blocked_self_role_escalation', { userId: req.user.id, attempted: me.role });
+      me.role = req.user.role;
+    }
+    // Prevent caller from removing TOTP from any account
+    for (const a of accountsScoped) {
+      const orig = (data.accounts || []).find(x => x.id === a.id);
+      if (orig?.totpSecret && !a.totpSecret) a.totpSecret = orig.totpSecret;
+      if (orig?.totpEnrolledAt && !a.totpEnrolledAt) a.totpEnrolledAt = orig.totpEnrolledAt;
+    }
+    data.accounts = accountsScoped;
   }
 
-  dataCache = payload;
+  // Superadmin-only top-level fields
+  if (isSA) {
+    if (Array.isArray(payload.companies))   data.companies   = payload.companies;
+    if (Array.isArray(payload.jobPostings)) data.jobPostings = payload.jobPostings;
+    if (Array.isArray(payload.hrAccounts))  data.hrAccounts  = payload.hrAccounts;
+  }
+
+  dataCache = data;
   markDirty();
-  auditLog('DATA_UPDATE', req.user);
+  auditLog('DATA_UPDATE', req.user, {
+    counts: {
+      buildings: data.buildings?.length || 0,
+      employees: data.employees?.length || 0,
+      shifts:    data.shifts?.length    || 0,
+    },
+  });
   res.json({ ok: true });
 });
 
@@ -483,6 +959,11 @@ app.post('/api/invite', requireAuth, requireAdmin, async (req, res) => {
   const link    = `${APP_URL}/?invite=${inviteToken}`;
   const building = (data.buildings || []).find(b => b.id === targetBuilding);
   const bName   = building?.name || 'your facility';
+  const escName = escapeHtml(name.trim());
+  const escB    = escapeHtml(bName);
+  // CRLF-safe plaintext version
+  const safePlainName = String(name.trim()).replace(/[\r\n]/g, ' ');
+  const safePlainB    = String(bName).replace(/[\r\n]/g, ' ');
 
   if (ACS_CONNECTION_STRING) {
     try {
@@ -493,7 +974,7 @@ app.post('/api/invite', requireAuth, requireAdmin, async (req, res) => {
         recipients: { to: [{ address: emailNorm, displayName: name.trim() }] },
         content: {
           subject: "You've been invited to ManageMyStaffing",
-          plainText: `Hi ${name.trim()},\n\nYou've been invited to manage ${bName} on ManageMyStaffing.\n\nClick the link below to set your password:\n${link}\n\nThis invitation expires in 7 days.\n\n— ManageMyStaffing`,
+          plainText: `Hi ${safePlainName},\n\nYou've been invited to manage ${safePlainB} on ManageMyStaffing.\n\nClick the link below to set your password:\n${link}\n\nThis invitation expires in 7 days.\n\n— ManageMyStaffing`,
           html: `<div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#f9fafb">
   <div style="background:#fff;border-radius:12px;padding:32px;border:1px solid #e5e7eb">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px">
@@ -501,7 +982,7 @@ app.post('/api/invite', requireAuth, requireAdmin, async (req, res) => {
       <span style="font-size:17px;font-weight:700;color:#111827">ManageMyStaffing</span>
     </div>
     <h2 style="font-size:20px;font-weight:700;color:#111827;margin:0 0 8px">You've been invited!</h2>
-    <p style="color:#6b7280;font-size:14px;margin:0 0 20px">Hi ${name.trim()}, you've been invited to manage <strong>${bName}</strong> on ManageMyStaffing.</p>
+    <p style="color:#6b7280;font-size:14px;margin:0 0 20px">Hi ${escName}, you've been invited to manage <strong>${escB}</strong> on ManageMyStaffing.</p>
     <a href="${link}" style="display:inline-block;background:#6B9E7A;color:#fff;font-weight:700;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px">Set Your Password &amp; Sign In →</a>
     <p style="color:#9ca3af;font-size:12px;margin:20px 0 0">This invitation expires in 7 days. If you didn't expect this, safely ignore this email.</p>
   </div>
@@ -522,8 +1003,81 @@ app.post('/api/invite', requireAuth, requireAdmin, async (req, res) => {
   res.json({ ok: true, accountId: newAccount.id, inviteLink: link });
 });
 
+// ── POST /api/invite/resend ───────────────────────────────────────────────────
+// Body: { accountId } — regenerates invite token, clears password, emails link.
+// Whatever password the user sets on first login becomes permanent.
+app.post('/api/invite/resend', requireAuth, requireAdmin, async (req, res) => {
+  const { accountId } = req.body || {};
+  if (!accountId) return res.status(400).json({ error: 'accountId is required' });
+
+  const data = await loadData();
+  const acct = (data.accounts || []).find(a => a.id === accountId);
+  if (!acct) return res.status(404).json({ error: 'Account not found' });
+
+  // Building admins can only resend invites within their building
+  if (req.user.role === 'admin' && acct.buildingId !== req.user.buildingId &&
+      !(acct.buildingIds||[]).includes(req.user.buildingId)) {
+    return res.status(403).json({ error: 'Cannot resend invites for accounts outside your building' });
+  }
+  if (acct.role === 'superadmin') {
+    return res.status(403).json({ error: 'Cannot reset superadmin password via invite' });
+  }
+
+  acct.inviteToken  = crypto.randomBytes(24).toString('hex');
+  acct.inviteExpiry = Date.now() + 7 * 24 * 60 * 60 * 1000;
+  acct.ph           = null;
+  acct.invitedBy    = req.user.email;
+  acct.invitedAt    = new Date().toISOString();
+  delete acct.activatedAt;
+  markDirty();
+
+  const link    = `${APP_URL}/?invite=${acct.inviteToken}`;
+  const building = (data.buildings || []).find(b => b.id === acct.buildingId);
+  const bName   = building?.name || 'your facility';
+
+  if (ACS_CONNECTION_STRING) {
+    try {
+      const { EmailClient } = require('@azure/communication-email');
+      const ec     = new EmailClient(ACS_CONNECTION_STRING);
+      const escName = String(acct.name).replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#x27;'}[c]));
+      const escB    = String(bName).replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#x27;'}[c]));
+      const poller = await ec.beginSend({
+        senderAddress: ACS_FROM_EMAIL,
+        recipients: { to: [{ address: acct.email, displayName: acct.name }] },
+        content: {
+          subject: "Your ManageMyStaffing invitation has been resent",
+          plainText: `Hi ${acct.name},\n\nYour ManageMyStaffing invitation for ${bName} has been resent.\n\nClick the link below to set your password and sign in:\n${link}\n\nThe password you choose will become your permanent password. This invitation expires in 7 days.\n\n— ManageMyStaffing`,
+          html: `<div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#f9fafb">
+  <div style="background:#fff;border-radius:12px;padding:32px;border:1px solid #e5e7eb">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px">
+      <div style="width:36px;height:36px;background:#6B9E7A;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:16px">M</div>
+      <span style="font-size:17px;font-weight:700;color:#111827">ManageMyStaffing</span>
+    </div>
+    <h2 style="font-size:20px;font-weight:700;color:#111827;margin:0 0 8px">Your invitation has been resent</h2>
+    <p style="color:#6b7280;font-size:14px;margin:0 0 20px">Hi ${escName}, your invitation to manage <strong>${escB}</strong> on ManageMyStaffing has been resent.</p>
+    <a href="${link}" style="display:inline-block;background:#6B9E7A;color:#fff;font-weight:700;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px">Set Your Password &amp; Sign In →</a>
+    <p style="color:#9ca3af;font-size:12px;margin:20px 0 0">The password you choose becomes your permanent password. This invitation expires in 7 days.</p>
+  </div>
+</div>`,
+        },
+      });
+      await Promise.race([
+        poller.pollUntilDone(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 30000)),
+      ]);
+    } catch (e) {
+      console.error('[mms] Resend invite email error:', e.message);
+      auditLog('INVITE_RESENT', req.user, { to: acct.email, emailFailed: true });
+      return res.json({ ok: true, emailWarning: e.message, inviteLink: link });
+    }
+  }
+
+  auditLog('INVITE_RESENT', req.user, { to: acct.email });
+  res.json({ ok: true, inviteLink: link });
+});
+
 // ── GET /api/invite/verify ────────────────────────────────────────────────────
-app.get('/api/invite/verify', async (req, res) => {
+app.get('/api/invite/verify', inviteVerifyLimiter, async (req, res) => {
   const { token } = req.query;
   if (!token) return res.status(400).json({ error: 'token is required' });
   const data = await loadData();
@@ -537,9 +1091,12 @@ app.get('/api/invite/verify', async (req, res) => {
 
 // ── POST /api/invite/accept ───────────────────────────────────────────────────
 // Body: { token, password }  — plaintext password, hashed with bcrypt server-side
-app.post('/api/invite/accept', async (req, res) => {
+app.post('/api/invite/accept', authLimiter, async (req, res) => {
   const { token, password } = req.body || {};
   if (!token || !password) return res.status(400).json({ error: 'token and password are required' });
+
+  const complexityErr = validatePasswordComplexity(password);
+  if (complexityErr) return res.status(400).json({ error: complexityErr });
 
   const data = await loadData();
   const acct = (data.accounts || []).find(a => a.inviteToken === token);
@@ -548,19 +1105,19 @@ app.post('/api/invite/accept', async (req, res) => {
     return res.status(410).json({ error: 'This invitation has expired.' });
   }
 
-  acct.ph           = await bcrypt.hash(password, 12);
-  acct.inviteToken  = undefined;
-  acct.inviteExpiry = undefined;
-  acct.activatedAt  = new Date().toISOString();
+  acct.ph             = await bcrypt.hash(password, 12);
+  acct.inviteToken    = undefined;
+  acct.inviteExpiry   = undefined;
+  acct.activatedAt    = new Date().toISOString();
+  acct.failedAttempts = 0;
+  acct.lockedUntil    = null;
   markDirty();
 
-  const userPayload = {
-    id: acct.id, name: acct.name, email: acct.email,
-    role: acct.role, buildingId: acct.buildingId || null,
-  };
-  const jwtToken = jwt.sign(userPayload, JWT_SECRET, { expiresIn: '8h' });
   auditLog('INVITE_ACCEPTED', acct);
-  res.json({ ok: true, token: jwtToken, user: userPayload });
+
+  // After invite acceptance, account still requires TOTP enrollment via login flow.
+  // Don't auto-issue a token here — force them to log in (which triggers TOTP setup).
+  res.json({ ok: true, requiresLogin: true, email: acct.email });
 });
 
 // ── GET /api/pcc/status ───────────────────────────────────────────────────────
@@ -755,10 +1312,36 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
   const { groups, message, subject, viaSMS, viaEmail, buildingId } = req.body || {};
   if (!Array.isArray(groups) || !groups.length) return res.status(400).json({ error: 'groups array is required' });
   if (!message) return res.status(400).json({ error: 'message is required' });
+  if (message.length > 4000) return res.status(400).json({ error: 'message too long (4000 char max)' });
 
   const data      = await loadData();
+  const isSA      = req.user.role === 'superadmin';
+  const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds||[])].filter(Boolean));
+
+  // Enforce per-building scoping for non-superadmins. Caller cannot blast
+  // staff from buildings they don't manage.
+  let scopedBId = buildingId;
+  if (!isSA) {
+    if (buildingId && !callerBIds.has(buildingId)) {
+      return res.status(403).json({ error: 'Cannot send alerts to that building' });
+    }
+    scopedBId = buildingId || req.user.buildingId;
+  }
+
   const employees = (data.employees || []).filter(e =>
-    groups.includes(e.group) && (!buildingId || e.buildingId === buildingId) && !e.inactive);
+    groups.includes(e.group) && (!scopedBId || e.buildingId === scopedBId) && !e.inactive
+    && (isSA || callerBIds.has(e.buildingId)));
+
+  // PHI guard for SMS path of /api/alert (HIPAA §164.312(e)).
+  // Email is hop-by-hop TLS so PHI is allowed in email; SMS is unencrypted
+  // so we scan and block PHI before sending SMS.
+  if (viaSMS) {
+    const phiReason = scanMessageForPHI(message, employees);
+    if (phiReason) {
+      auditLog('ALERT_BLOCKED_PHI', req.user, { reason: phiReason, channel: 'sms' });
+      return res.status(400).json({ error: `Alert SMS blocked: ${phiReason}. Use a generic notification and link to the app, or send via email only.` });
+    }
+  }
 
   const emailList = viaEmail ? employees.filter(e => e.notifEmail && e.email) : [];
   const smsList   = viaSMS   ? employees.filter(e => e.notifSMS  && e.phone)  : [];
@@ -827,11 +1410,35 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
 app.post('/api/sms', requireAuth, requireAdmin, async (req, res) => {
   const { to, message } = req.body || {};
   if (!to || !message) return res.status(400).json({ error: 'to and message are required' });
+  if (message.length > 1600) return res.status(400).json({ error: 'message too long (1600 char max)' });
   if (!ACS_CONNECTION_STRING || !ACS_FROM_PHONE) {
     return res.status(503).json({ error: 'SMS not configured' });
   }
   const normalized = toE164(to);
   if (!normalized) return res.status(400).json({ error: `Invalid phone number: ${to}` });
+
+  // Authz: non-superadmins can only SMS phones belonging to employees in their
+  // own building(s). This stops toll fraud and external-phishing pivots via
+  // company SMS gateway.
+  const data = await loadData();
+  let scopedEmployees = data.employees || [];
+  if (req.user.role !== 'superadmin') {
+    const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds||[])].filter(Boolean));
+    scopedEmployees = scopedEmployees.filter(e => callerBIds.has(e.buildingId));
+    const allowed = scopedEmployees.some(e => !e.inactive && toE164(e.phone) === normalized);
+    if (!allowed) {
+      auditLog('SMS_BLOCKED', req.user, { to: normalized, reason: 'phone_not_in_building_roster' });
+      return res.status(403).json({ error: 'Phone number is not in your building roster' });
+    }
+  }
+
+  // PHI guard (HIPAA §164.312(e)) — block any message containing PHI patterns.
+  const phiReason = scanMessageForPHI(message, scopedEmployees);
+  if (phiReason) {
+    auditLog('SMS_BLOCKED_PHI', req.user, { to: normalized, reason: phiReason });
+    return res.status(400).json({ error: `SMS blocked: ${phiReason}. Use a generic notification and link to the app.` });
+  }
+
   try {
     const { SmsClient } = require('@azure/communication-sms');
     const smsClient = new SmsClient(ACS_CONNECTION_STRING);
@@ -843,8 +1450,8 @@ app.post('/api/sms', requireAuth, requireAdmin, async (req, res) => {
       res.status(502).json({ error: results[0]?.errorMessage || 'SMS send failed' });
     }
   } catch (e) {
-    console.error('[mms] /api/sms error:', e.message);
-    res.status(500).json({ error: e.message });
+    logger.error('sms_send_failed', { reqId: req.id, err: e.message });
+    res.status(500).json({ error: 'SMS send failed' });
   }
 });
 
@@ -878,21 +1485,66 @@ app.post('/api/demo/message', requireAuth, async (req, res) => {
   }
 });
 
+// ── 404 HANDLER ───────────────────────────────────────────────────────────────
+app.use((req, res) => {
+  if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Not found' });
+  res.status(404).send('Not found');
+});
+
+// ── ERROR HANDLER (don't leak stack traces) ──────────────────────────────────
+app.use((err, req, res, _next) => {
+  logger.error('unhandled_error', { reqId: req.id, err: err.message, stack: IS_PROD ? undefined : err.stack });
+  res.status(500).json({ error: IS_PROD ? 'Internal server error' : err.message });
+});
+
 // ── STARTUP ───────────────────────────────────────────────────────────────────
+let _server;
 (async () => {
   try {
+    initAppInsights();
+    _initAuditChain();
     await loadData();
   } catch (e) {
-    console.error('[mms] Fatal startup error:', e.message);
+    logger.error('startup_failed', { err: e.message });
     process.exit(1);
   }
 
-  if (!ACS_CONNECTION_STRING) console.warn('[mms] WARN: ACS_CONNECTION_STRING not set — email/SMS disabled');
-  if (!ACS_FROM_PHONE)        console.warn('[mms] WARN: ACS_FROM_PHONE not set — SMS disabled');
+  if (!ACS_CONNECTION_STRING) logger.warn('acs_not_configured');
+  if (!ACS_FROM_PHONE)        logger.warn('acs_sms_not_configured');
+  if (IS_PROD && DATA_FILE.toLowerCase().includes('onedrive')) {
+    logger.error('PHI_DATA_FILE_ON_ONEDRIVE_NOT_PERMITTED_IN_PRODUCTION');
+    process.exit(1);
+  }
 
-  app.listen(PORT, () => {
-    console.log(`[mms] ManageMyStaffing running on http://localhost:${PORT}`);
-    console.log(`[mms] Data file: ${DATA_FILE} | Encryption: AES-256-GCM`);
-    console.log(`[mms] PCC: ${PCC_CLIENT_ID && PCC_FACILITY_ID ? `ENABLED (facilityId=${PCC_FACILITY_ID})` : 'not configured'}`);
+  _server = app.listen(PORT, () => {
+    logger.info('server_started', {
+      port: PORT, env: NODE_ENV, dataFile: DATA_FILE,
+      auditLog: AUDIT_LOG_FILE,
+      pcc: !!(PCC_CLIENT_ID && PCC_FACILITY_ID),
+    });
   });
 })();
+
+// ── GRACEFUL SHUTDOWN ─────────────────────────────────────────────────────────
+async function shutdown(signal) {
+  logger.info('shutdown_initiated', { signal });
+  if (_server) _server.close(() => logger.info('server_closed'));
+  // Flush pending data writes
+  try {
+    await persistCache();
+    await _auditQueue;
+    logger.info('data_flushed');
+  } catch (e) {
+    logger.error('shutdown_flush_failed', { err: e.message });
+  }
+  setTimeout(() => process.exit(0), 1000).unref();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
+process.on('uncaughtException', (e) => {
+  logger.error('uncaught_exception', { err: e.message, stack: e.stack });
+  shutdown('uncaughtException');
+});
+process.on('unhandledRejection', (reason) => {
+  logger.error('unhandled_rejection', { reason: String(reason) });
+});

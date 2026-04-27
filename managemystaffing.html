@@ -653,11 +653,20 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
         <div class="form-group"><label>Email</label><input type="email" id="emp-email" placeholder="jane@example.com"></div>
         <div class="form-group"><label>Phone</label><input type="tel" id="emp-phone" placeholder="555-0100"></div>
       </div>
-      <div class="form-group"><label>Role</label>
-        <select id="emp-role">
-          <option value="employee">Employee</option>
-          <option value="admin">Building Admin</option>
-        </select>
+      <div class="grid-2">
+        <div class="form-group"><label>Role</label>
+          <select id="emp-role">
+            <option value="employee">Employee</option>
+            <option value="admin">Building Admin</option>
+          </select>
+        </div>
+        <div class="form-group"><label>Employment Type</label>
+          <select id="emp-employment-type">
+            <option value="full-time">Full Time</option>
+            <option value="part-time">Part Time</option>
+            <option value="prn">PRN</option>
+          </select>
+        </div>
       </div>
       <div class="section-label">Alert Timing &amp; Channels</div>
       <div class="notif-timing-group">
@@ -943,6 +952,7 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
     <div id="modal-assign-shift-body" style="overflow-y:auto;flex:1;padding:20px"></div>
     <div id="modal-assign-shift-footer" class="modal-footer" style="flex-shrink:0">
       <button class="btn btn-secondary" onclick="App.closeModal('modal-assign-shift')">Cancel</button>
+      <button class="btn btn-ghost" onclick="App.saveAssignShiftOnly()">This Shift Only</button>
       <button class="btn btn-primary" onclick="App.saveAssignShift()">Assign &amp; Apply Rotation</button>
     </div>
   </div>
@@ -1301,6 +1311,19 @@ function sanitize(s) {
     .replace(/"/g,'&quot;').replace(/'/g,'&#x27;').replace(/`/g,'&#x60;');
 }
 
+// Strict allow-list for CSS color values to prevent style-attribute XSS.
+// Only allows #RGB / #RRGGBB / rgb()/rgba() with safe numeric content / known color names.
+function sanitizeColor(c) {
+  if (!c) return '#999';
+  const s = String(c).trim();
+  if (/^#[0-9a-fA-F]{3}$/.test(s) || /^#[0-9a-fA-F]{6}$/.test(s) || /^#[0-9a-fA-F]{8}$/.test(s)) return s;
+  if (/^rgb\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\)$/.test(s)) return s;
+  if (/^rgba\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*[0-9.]+\s*\)$/.test(s)) return s;
+  // Conservative named-color allow-list
+  if (/^(red|green|blue|black|white|gray|grey|orange|yellow|purple|pink|brown|cyan|magenta|transparent|inherit|currentColor)$/i.test(s)) return s;
+  return '#999';
+}
+
 /** FNV-1a 32-bit hash */
 function fnv32(str) {
   let h = 2166136261 >>> 0;
@@ -1648,6 +1671,107 @@ const App = {
     try { localStorage.setItem('mms_remember_me', (cb?.checked) ? '1' : '0'); } catch(e) {}
   },
 
+  // ── TWO-FACTOR (TOTP) ─────────────────────────────────────
+  _openTotpEnroll(sessionId, qrDataUrl, secret, email) {
+    this.S._totpSession = { sessionId, mode: 'enroll', email };
+    document.getElementById('totp-title').textContent = 'Set Up Two-Factor Authentication';
+    document.getElementById('modal-totp-body').innerHTML = `
+      <div style="text-align:center">
+        <p style="font-size:13px;color:var(--g600);margin-bottom:14px">
+          Two-factor authentication is required to access PHI under HIPAA. Scan the QR code below with Google Authenticator, Microsoft Authenticator, or any TOTP app.
+        </p>
+        <div style="display:inline-block;padding:14px;background:#fff;border:1px solid var(--g200);border-radius:10px;margin-bottom:14px">
+          <img src="${qrDataUrl}" alt="TOTP QR Code" width="200" height="200" style="display:block">
+        </div>
+        <details style="margin-bottom:14px;text-align:left">
+          <summary style="font-size:12px;color:var(--g500);cursor:pointer">Can't scan? Show secret key</summary>
+          <div style="margin-top:8px;padding:10px;background:var(--g50);border-radius:6px;font-family:monospace;font-size:13px;word-break:break-all;color:var(--g700)">${sanitize(secret)}</div>
+        </details>
+        <label style="display:block;font-size:12px;font-weight:700;color:var(--g700);margin-bottom:6px;text-align:left">Enter the 6-digit code from your authenticator app:</label>
+        <input type="text" id="totp-input" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" placeholder="123456" style="width:100%;padding:12px;text-align:center;font-size:18px;letter-spacing:6px;font-family:monospace;border:2px solid var(--g200);border-radius:8px" onkeydown="if(event.key==='Enter')App._submitTotp()">
+        <div id="totp-error" style="color:var(--red,#DC2626);font-size:12px;margin-top:8px;display:none"></div>
+      </div>`;
+    this.openModal('modal-totp');
+    setTimeout(() => document.getElementById('totp-input')?.focus(), 100);
+  },
+
+  _openTotpVerify(sessionId, email) {
+    this.S._totpSession = { sessionId, mode: 'verify', email };
+    document.getElementById('totp-title').textContent = 'Two-Factor Authentication';
+    document.getElementById('modal-totp-body').innerHTML = `
+      <p style="font-size:13px;color:var(--g600);margin-bottom:14px;text-align:center">
+        Enter the 6-digit code from your authenticator app to complete sign in.
+      </p>
+      <input type="text" id="totp-input" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" placeholder="123456" style="width:100%;padding:12px;text-align:center;font-size:18px;letter-spacing:6px;font-family:monospace;border:2px solid var(--g200);border-radius:8px" onkeydown="if(event.key==='Enter')App._submitTotp()">
+      <div id="totp-error" style="color:var(--red,#DC2626);font-size:12px;margin-top:8px;display:none;text-align:center"></div>`;
+    this.openModal('modal-totp');
+    setTimeout(() => document.getElementById('totp-input')?.focus(), 100);
+  },
+
+  _cancelTotp() {
+    this.S._totpSession = null;
+    this.closeModal('modal-totp');
+  },
+
+  async _submitTotp() {
+    const sess = this.S._totpSession;
+    if (!sess) return;
+    const code = (document.getElementById('totp-input')?.value || '').replace(/\s/g, '');
+    const errEl = document.getElementById('totp-error');
+    const showErr = m => { if (errEl) { errEl.textContent = m; errEl.style.display = 'block'; } };
+    if (!/^[0-9]{6}$/.test(code)) { showErr('Enter a 6-digit code'); return; }
+
+    const btn = document.getElementById('totp-submit-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Verifying…'; }
+    try {
+      const url = sess.mode === 'enroll' ? '/api/auth/totp/enroll' : '/api/auth/login';
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: sess.sessionId, totp: code }),
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        showErr(body.error || 'Verification failed');
+        if (btn) { btn.disabled = false; btn.textContent = 'Verify'; }
+        return;
+      }
+      const { token, user } = await r.json();
+      this.S._totpSession = null;
+      this.closeModal('modal-totp');
+      _authToken = token;
+      localStorage.setItem('mms_token', token);
+      this.S.user = user;
+      const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${token}`}});
+      if (dResp.ok) this.applyServerData(await dResp.json());
+      this._saveLoginCredentials(sess.email, user.name);
+      Audit.log('LOGIN_SUCCESS_2FA', `2FA login: ${sanitize(sess.email)}`, user.id, 'low');
+      this.showApp();
+      this._startIdleTimer();
+    } catch (e) {
+      showErr('Connection error. Try again.');
+      if (btn) { btn.disabled = false; btn.textContent = 'Verify'; }
+    }
+  },
+
+  // ── 15-MIN IDLE TIMEOUT (HIPAA §164.312(a)(2)(iii)) ──────
+  _idleTimer: null,
+  _idleStart() {
+    this._idleReset();
+    ['mousemove','mousedown','keydown','touchstart','scroll'].forEach(ev =>
+      document.addEventListener(ev, () => this._idleReset(), { passive: true }));
+  },
+  _idleReset() {
+    if (this._idleTimer) clearTimeout(this._idleTimer);
+    this._idleTimer = setTimeout(() => this._idleLogout(), 15 * 60 * 1000);
+  },
+  _idleLogout() {
+    Audit.log('IDLE_TIMEOUT', 'Auto-logout after 15 min idle', this.S.user?.id, 'medium');
+    if (typeof this.signOut === 'function') this.signOut();
+    else { localStorage.removeItem('mms_token'); location.reload(); }
+  },
+  _startIdleTimer() { this._idleStart(); },
+
   // ── LOGIN FORM (rate-limited, audited) ───────────────────
   async loginForm() {
     const emailRaw = (document.getElementById('login-email').value || '').trim().toLowerCase();
@@ -1667,13 +1791,26 @@ const App = {
         });
         if (!resp.ok) {
           const body = await resp.json().catch(()=>({}));
-          if (resp.status === 401) showErr('Invalid email or password.');
-          else if (resp.status === 423) showErr('Account locked. Please try again later.');
+          if (resp.status === 401) showErr(body.error || 'Invalid email or password.');
+          else if (resp.status === 403) showErr(body.error || 'Account not yet activated.');
+          else if (resp.status === 423 || resp.status === 429) showErr(body.error || 'Account locked. Please try again later.');
           else showErr(body.error || 'Login failed. Please try again.');
           Audit.log('LOGIN_FAILED', 'Server auth failed: '+sanitize(emailRaw), null, 'high');
           return;
         }
-        const {token, user} = await resp.json();
+        const body = await resp.json();
+        // ── TOTP enrollment (first time)
+        if (body.needsTotpSetup) {
+          this._openTotpEnroll(body.sessionId, body.qrDataUrl, body.totpSecret, emailRaw);
+          return;
+        }
+        // ── TOTP verification (existing user)
+        if (body.needsTotp) {
+          this._openTotpVerify(body.sessionId, emailRaw);
+          return;
+        }
+        // ── Fully authenticated (demo only)
+        const {token, user} = body;
         _authToken = token;
         // Demo accounts use seed data only — nothing is read from or written to the server
         if (user.demo) {
@@ -1773,6 +1910,10 @@ const App = {
     const u = this.S.user;
     if (u.role === 'employee') this.S.selectedGroup = u.group;
     else this.S.selectedGroup = 'CNA';
+    // HR module gated to specific account while in development.
+    if (this.S.appMode === 'hr' && !this._canAccessHR()) this.S.appMode = 'schedule';
+    // Start HIPAA-required 15-min idle timer
+    if (typeof this._startIdleTimer === 'function') this._startIdleTimer();
     this.render();
     // Show or hide DEMO MODE banner
     const demoBanner = document.getElementById('demo-mode-banner');
@@ -2468,11 +2609,24 @@ const App = {
     const twoWeeksOut = new Date(); twoWeeksOut.setDate(twoWeeksOut.getDate() + 14);
     const twoWeeksStr = twoWeeksOut.toISOString().slice(0,10);
     const openShifts = this.S.shifts.filter(s => s.buildingId === b.id && s.status === 'open' && s.date >= TODAY && s.date <= twoWeeksStr).length;
-    const primaryAdmin = admins[0];
-    const bInitials = primaryAdmin ? sanitize(primaryAdmin.name.split(' ').map(w=>w[0]).join('').slice(0,2)) : '';
+    const adminList = admins.length ? admins.map(a => {
+      const initials = sanitize(a.name.split(' ').map(w=>w[0]).join('').slice(0,2));
+      const pending = a.ph === null && a.inviteToken;
+      return `
+        <div class="building-admin" style="cursor:pointer;margin-bottom:6px" onclick="event.stopPropagation();App.openManageAdmin('${a.id}','${b.id}')" title="Click to manage">
+          <div class="building-admin-avatar">${initials}</div>
+          <div class="building-admin-info">
+            <div class="building-admin-name">${sanitize(a.name)}</div>
+            <div class="building-admin-email">${sanitize(a.email)}</div>
+          </div>
+          ${pending ? `<span class="tag" style="font-size:10px;background:#FEF3C7;color:#92400E;border:1px solid #FDE68A">Pending</span>` : `<span class="tag tag-blue" style="font-size:10px">Admin</span>`}
+        </div>`;
+    }).join('') : '<div style="font-size:13px;color:var(--g400);padding:8px 0;margin-bottom:8px">No admin assigned</div>';
+
+    const safeColor = sanitizeColor(b.color);
     return `
-      <div class="building-card" style="--accent:${b.color};cursor:pointer" onclick="App.enterBuilding('${b.id}')">
-        <div style="position:absolute;top:0;left:0;right:0;height:4px;background:${b.color}"></div>
+      <div class="building-card" style="--accent:${safeColor};cursor:pointer" onclick="App.enterBuilding('${b.id}')">
+        <div style="position:absolute;top:0;left:0;right:0;height:4px;background:${safeColor}"></div>
         <div class="building-name">${sanitize(b.name)}</div>
         <div class="building-addr"><svg viewBox="0 0 16 20" width="11" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M8 1C4.69 1 2 3.69 2 7c0 4.5 6 12 6 12s6-7.5 6-12c0-3.31-2.69-6-6-6z"/><circle cx="8" cy="7" r="2"/></svg> ${sanitize(b.address||'')}</div>
         <div class="building-stats">
@@ -2481,16 +2635,7 @@ const App = {
           <div class="building-stat"><div class="building-stat-val" style="color:var(--g600)">${openShifts}</div><div class="building-stat-label">Open</div></div>
           <div class="building-stat"><div class="building-stat-val">${b.beds || '—'}</div><div class="building-stat-label">Beds</div></div>
         </div>
-        ${primaryAdmin ? `
-          <div class="building-admin">
-            <div class="building-admin-avatar">${bInitials}</div>
-            <div class="building-admin-info">
-              <div class="building-admin-name">${sanitize(primaryAdmin.name)}</div>
-              <div class="building-admin-email">${sanitize(primaryAdmin.email)}</div>
-            </div>
-            <span class="tag tag-blue" style="font-size:11px">Admin</span>
-          </div>
-        ` : '<div style="font-size:13px;color:var(--g400);padding:8px 0;margin-bottom:8px">No admin assigned</div>'}
+        ${adminList}
         <div class="building-actions">
           <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();App.enterBuilding('${b.id}')">Enter Dashboard →</button>
           <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.addAdminToBuilding('${b.id}')">+ Add Admin</button>
@@ -2758,7 +2903,7 @@ const App = {
       // Open shifts available to claim
       const openCount = this.S.shifts.filter(s => s.status==='open' && s.group===u.group && s.buildingId===(u.buildingId||'b1')).length;
       const bname = building ? `<div style="padding:12px 16px 4px;font-size:12px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;display:flex;align-items:center;gap:5px"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="14" height="11" rx="1"/><path d="M5 15V9h6v6"/><path d="M1 8l7-6 7 6"/></svg>${sanitize(building.name)}</div>` : '';
-      const empModeToggle = `<div class="mode-toggle">
+      const empModeToggle = this._canAccessHR() ? `<div class="mode-toggle">
         <button class="mode-toggle-btn active" onclick="App.switchMode('schedule')">
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 6h14"/><path d="M5 2v4"/><path d="M11 2v4"/></svg>
           Schedule
@@ -2767,7 +2912,7 @@ const App = {
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5"/><path d="M11 9v6M8 12h6"/></svg>
           HR
         </button>
-      </div>`;
+      </div>` : '';
       document.getElementById('sidebar').innerHTML = `
         ${empModeToggle}
         ${bname}
@@ -2814,7 +2959,7 @@ const App = {
     if (u.role === 'regionaladmin' && !this.S.activeBuildingId) {
       const buildingIds = u.buildingIds || [];
       const myBuildings = (this.S.buildings || []).filter(b => buildingIds.includes(b.id));
-      const modeToggle = `<div class="mode-toggle">
+      const modeToggle = this._canAccessHR() ? `<div class="mode-toggle">
         <button class="mode-toggle-btn active" onclick="App.switchMode('schedule')">
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 6h14"/><path d="M5 2v4"/><path d="M11 2v4"/></svg>
           Schedule
@@ -2823,7 +2968,7 @@ const App = {
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5"/><path d="M11 9v6M8 12h6"/></svg>
           HR
         </button>
-      </div>`;
+      </div>` : '';
       const bItems = myBuildings.map(b => `
         <div class="group-item" onclick="App.enterRegionalBuilding('${b.id}')" style="cursor:pointer">
           <div class="group-icon" style="background:${b.color||'var(--blue)'}22;color:${b.color||'var(--blue)'}">
@@ -2866,7 +3011,7 @@ const App = {
     }
 
     const bname = building ? `<div style="padding:12px 16px 4px;font-size:12px;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.06em;display:flex;align-items:center;gap:5px"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="14" height="11" rx="1"/><path d="M5 15V9h6v6"/><path d="M1 8l7-6 7 6"/></svg>${sanitize(building.name)}</div>` : '';
-    const modeToggle = `<div class="mode-toggle">
+    const modeToggle = this._canAccessHR() ? `<div class="mode-toggle">
       <button class="mode-toggle-btn active" onclick="App.switchMode('schedule')">
         <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 6h14"/><path d="M5 2v4"/><path d="M11 2v4"/></svg>
         Schedule
@@ -2875,7 +3020,7 @@ const App = {
         <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5"/><path d="M11 9v6M8 12h6"/></svg>
         HR
       </button>
-    </div>`;
+    </div>` : '';
     const regionalBackBtn = u.role === 'regionaladmin'
       ? `<div style="padding:4px 8px 0"><button class="btn btn-ghost btn-sm" onclick="App.exitRegionalBuilding()" style="color:var(--g500);font-size:11px;gap:4px"><svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 1L3 6l5 5"/></svg> All Buildings</button></div>`
       : '';
@@ -2891,10 +3036,32 @@ const App = {
       <div class="group-item${this.S.ppdView?'':''}" onclick="App.openPPDCalc()" style="cursor:pointer">
         <div class="group-icon" style="background:#FFF7ED;color:#C2410C"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="1" width="14" height="14" rx="2"/><path d="M4 8h8M8 4v8"/></svg></div>
         PPD Calculator
-      </div>`;
+      </div>
+      ${(() => {
+        const pendingClaims = (this.S.shifts || []).filter(s => s.claimRequest && s.buildingId === effBuildingId);
+        if (!pendingClaims.length) return '';
+        return `<div class="sidebar-divider"></div>
+        <div class="sidebar-section-title">Notifications</div>
+        <div class="group-item" onclick="App.openPendingClaims()" style="cursor:pointer;background:#FFFBEB">
+          <div class="group-icon" style="background:#FEF3C7;color:#D97706"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1l1.5 3 3.5.5-2.5 2.5.5 3.5L8 9l-3 1.5.5-3.5L3 4.5l3.5-.5z"/></svg></div>
+          Shift Claims
+          <span class="group-badge" style="background:#D97706;color:#fff;margin-left:auto">${pendingClaims.length}</span>
+        </div>`;
+      })()}
+    `;
+  },
+
+  // HR module is in development — only the SA login can see it for now.
+  _canAccessHR() {
+    const email = (this.S.user?.email || '').toLowerCase();
+    return email === 'solomong@managemystaffing.com';
   },
 
   switchMode(mode) {
+    if (mode === 'hr' && !this._canAccessHR()) {
+      this.showToast('HR module is not yet available', 'warn');
+      return;
+    }
     this.S.appMode = mode;
     if (mode === 'hr') {
       // close right panel when switching to HR
@@ -4397,7 +4564,9 @@ const App = {
     const shiftDef = this.resolveShiftDef(group, shiftType, bId) || {};
     const d = new Date(date + 'T12:00:00');
     const dl = d.toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric'});
-    const defaultMsg = `Hi, we have an open ${shiftType} shift (${shiftDef.start||''}–${shiftDef.end||''}) on ${dl}. Can you cover it? Reply YES if available.`;
+    // HIPAA-safe SMS: no shift type, no time, no date, no facility — generic notification.
+    // PHI-safe by design (HIPAA §164.312(e) — SMS is unencrypted by carriers).
+    const defaultMsg = `An open shift is available. Sign in at ManageMyStaffing.com to view details and claim.`;
     this.S._assignShiftState = {
       date, group, shiftType, buildingId: bId, empId: null,
       selectedDays: clickedIdx >= 0 ? [clickedIdx] : [],
@@ -4546,6 +4715,7 @@ const App = {
     // Restore default footer
     document.getElementById('modal-assign-shift-footer').innerHTML = `
       <button class="btn btn-secondary" onclick="App.closeModal('modal-assign-shift')">Cancel</button>
+      <button class="btn btn-ghost" onclick="App.saveAssignShiftOnly()">This Shift Only</button>
       <button class="btn btn-primary" onclick="App.saveAssignShift()">Assign &amp; Apply Rotation</button>`;
   },
 
@@ -4633,11 +4803,44 @@ const App = {
     this.showToast(`${sanitize(emp.name.split(' ')[0])} assigned to ${assigned} shift${assigned===1?'':'s'}`);
   },
 
+  saveAssignShiftOnly() {
+    const st = this.S._assignShiftState;
+    if (!st) return;
+    if (!st.empId) { this.showToast('Select an employee', 'warn'); return; }
+    const emp = this.S.employees.find(e => e.id === st.empId);
+    if (!emp) { this.showToast('Employee not found', 'warn'); return; }
+    const { group: g, buildingId: bId, shiftType, date } = st;
+    const shiftDef = this.resolveShiftDef(g, shiftType) || {};
+    // Assign only the single shift that was clicked
+    if (this.S.shifts.find(s => s.date===date && s.group===g && s.type===shiftType && s.buildingId===bId && s.employeeId===emp.id)) {
+      this.showToast('Employee already scheduled for this shift', 'warn'); return;
+    }
+    const openSlot = this.S.shifts.find(s => s.date===date && s.group===g && s.type===shiftType && s.buildingId===bId && s.status==='open' && !s.employeeId);
+    if (openSlot) {
+      openSlot.status = 'scheduled'; openSlot.employeeId = emp.id;
+    } else {
+      this.S.shifts.push({
+        id: 'sh' + Date.now() + Math.random().toString(36).slice(2, 5),
+        date, group: g, type: shiftType,
+        start: shiftDef.start || '', end: shiftDef.end || '',
+        status: 'scheduled', buildingId: bId, employeeId: emp.id,
+      });
+    }
+    Audit.log('SHIFT_ASSIGNED', `Assigned ${sanitize(emp.name)} to single ${shiftType} ${g} shift on ${date}`, this.S.user?.id, 'medium');
+    this.persistData();
+    this.closeModal('modal-assign-shift');
+    this.renderMain();
+    this.showToast(`${sanitize(emp.name.split(' ')[0])} assigned to this shift`);
+  },
+
   // ── REMOVE FROM DAY ─────────────────────────────────────────
   openRemoveShiftModal(date, shiftId, shiftType, empId) {
     const emp = this.S.employees.find(e => e.id === empId);
     const shift = this.S.shifts.find(s => s.id === shiftId);
     if (!emp || !shift) return;
+    // Remember context so the staff picker's Back button can re-open this modal
+    this.S._coverShiftId = shiftId;
+    this.S._coverShiftEmpId = empId;
 
     const bId = this.S.user?.buildingId || 'b1';
     const g = this.S.selectedGroup || shift.group;
@@ -4667,12 +4870,17 @@ const App = {
         </div>
 
         <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
-          <button class="btn btn-danger" onclick="App.removeFromDay('${shiftId}','${date}','${empId}')" style="justify-content:flex-start;text-align:left">
+          <button class="btn btn-secondary" onclick="App.removeFromDay('${shiftId}','${date}','${empId}')" style="justify-content:flex-start;text-align:left;color:var(--g800)">
             <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 8h12M6 4l-4 4 4 4"/></svg>
             Remove from ${new Date(date+'T00:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})} only
-            <span style="font-size:11px;color:#FCA5A5;margin-left:auto">Keeps rotation</span>
+            <span style="font-size:11px;color:var(--g500);margin-left:auto">Keeps rotation</span>
           </button>
-          <button class="btn btn-secondary" onclick="App.closeModal('modal-remove-shift')" style="justify-content:flex-start">
+          <button class="btn btn-secondary" onclick="App.removeFromAllFuture('${shiftId}','${date}','${empId}','${shiftType}')" style="justify-content:flex-start;text-align:left;color:var(--g800)">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h10M5 6V4a2 2 0 012-2h2a2 2 0 012 2v2M6 6v7M10 6v7M4 6l1 9h6l1-9"/></svg>
+            Remove from this and all future shifts
+            <span style="font-size:11px;color:var(--g500);margin-left:auto">Ends rotation</span>
+          </button>
+          <button class="btn btn-secondary" onclick="App.closeModal('modal-remove-shift')" style="justify-content:flex-start;color:var(--blue-d)">
             <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 1v14M1 8h14"/></svg>
             Keep on schedule
           </button>
@@ -4700,13 +4908,14 @@ const App = {
                 </div>`).join('')}
             </div>` : `<div style="font-size:12px;color:var(--g400);padding:8px 0">No available staff found for this shift.</div>`}
 
-          <div style="background:var(--g50);border:1.5px solid var(--g200);border-radius:8px;padding:12px">
+          <div id="cover-msg-section" style="background:var(--g50);border:1.5px solid var(--g200);border-radius:8px;padding:12px">
             <label style="font-size:11px;font-weight:700;color:var(--g600);display:block;margin-bottom:6px">MESSAGE TO STAFF</label>
-            <textarea id="cover-sms-body" rows="3" style="width:100%;padding:8px;border:1.5px solid var(--g200);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical">${sanitize(emp.name)} is unable to work the ${shiftType} shift on ${dateDisplay}. We need coverage — please reply if available.</textarea>
+            <textarea id="cover-sms-body" rows="3" style="width:100%;padding:8px;border:1.5px solid var(--g200);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical">A shift needs coverage. Sign in at ManageMyStaffing.com to view details and claim.</textarea>
+          <p style="font-size:11px;color:var(--g500);margin-top:6px;display:flex;align-items:start;gap:6px"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="#D97706" stroke-width="1.8" stroke-linecap="round" style="flex-shrink:0;margin-top:1px"><path d="M8 1l7 14H1L8 1zM8 6v4M8 12v.01"/></svg><span>SMS is unencrypted by carriers — never include patient names, dates of service, or other PHI in this message.</span></p>
             <div style="display:flex;justify-content:flex-end;margin-top:8px">
-              <button class="btn btn-primary btn-sm" onclick="App.sendCoverageAlert('${date}','${shiftType}','${g}')">
+              <button class="btn btn-primary btn-sm" onclick="App.openStaffPicker('${date}','${shiftType}','${g}')">
                 <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 6l7 4 7-4"/></svg>
-                Text All Available Staff
+                Message Staff
               </button>
             </div>
           </div>
@@ -4730,6 +4939,39 @@ const App = {
     this.showToast(`${emp?.name||'Employee'} removed from ${date} shift`);
   },
 
+  removeFromAllFuture(shiftId, date, empId, shiftType) {
+    const emp = this.S.employees.find(e => e.id === empId);
+    const shift = this.S.shifts.find(s => s.id === shiftId);
+    if (!emp || !shift) return;
+    const g = shift.group;
+    if (!confirm(`Remove ${emp.name} from ALL future ${shiftType} ${g} shifts starting ${date}?\n\nThis ends the rotation and opens every future shift currently assigned to them.`)) return;
+
+    let removed = 0;
+    for (const s of this.S.shifts) {
+      if (s.employeeId === empId && s.date >= date && s.type === shiftType && s.group === g && s.status === 'scheduled') {
+        s.employeeId = null;
+        s.status = 'open';
+        s._endedRotation = date;
+        removed++;
+      }
+    }
+    // Also disable any matching schedule pattern so future generation stops
+    if (Array.isArray(this.S.schedulePatterns)) {
+      for (const p of this.S.schedulePatterns) {
+        if (p.empId === empId && (!p.shiftType || p.shiftType === shiftType) && (!p.group || p.group === g)) {
+          p.endDate = date;
+          p.active = false;
+        }
+      }
+    }
+
+    this.logAudit('SHIFT_ROTATION_ENDED', `${emp.name} removed from all future ${shiftType} ${g} shifts on/after ${date} (${removed} shifts opened)`);
+    this.persistData();
+    this.closeModal('modal-remove-shift');
+    this.renderMain();
+    this.showToast(`${emp.name} removed from ${removed} future ${shiftType} shift${removed===1?'':'s'}`, removed?'success':'warn');
+  },
+
   assignCoverEmployee(shiftId, empId) {
     const shift = this.S.shifts.find(s => s.id === shiftId);
     const emp = this.S.employees.find(e => e.id === empId);
@@ -4750,6 +4992,140 @@ const App = {
     if (!msg.trim()) { this.showToast('Enter a message first', 'warn'); return; }
     const ok = await this._sendSMS(emp.phone, msg);
     if (ok) this.showToast(`Message sent to ${sanitize(emp.name)}`);
+  },
+
+  openStaffPicker(date, shiftType, group) {
+    const bId = this.S.user?.buildingId || 'b1';
+    const ag = getActualGroups(group);
+    // Same eligibility filter as the Available Staff list above
+    const workingIds = new Set(
+      this.S.shifts.filter(s => s.date===date && ag.includes(s.group) && s.status==='scheduled' && s.type===shiftType).map(s=>s.employeeId)
+    );
+    const eligible = this.S.employees.filter(e =>
+      ag.includes(e.group) && e.buildingId===bId && !e.inactive && !workingIds.has(e.id) && e.phone);
+
+    if (!eligible.length) {
+      this.showToast('No staff with phone numbers match this shift', 'warn');
+      return;
+    }
+
+    // Preserve the message currently in the textarea
+    const currentMsg = document.getElementById('cover-sms-body')?.value
+      || 'A shift needs coverage. Sign in at ManageMyStaffing.com to view details and claim.';
+
+    document.getElementById('cover-msg-section').innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <button class="btn btn-ghost btn-sm" onclick="App._restoreCoverMessage('${date}','${shiftType}','${group}')" style="padding:4px 8px;font-size:11px;color:var(--g600)">
+          <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 1L3 6l5 5"/></svg>
+          Back
+        </button>
+        <span style="font-size:13px;font-weight:700;color:var(--g800)">Select recipients</span>
+      </div>
+
+      <label style="font-size:11px;font-weight:700;color:var(--g600);display:block;margin-bottom:6px">MESSAGE TO STAFF</label>
+      <textarea id="cover-sms-body" rows="3" style="width:100%;padding:8px;border:1.5px solid var(--g200);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical;margin-bottom:10px">${sanitize(currentMsg)}</textarea>
+      <p style="font-size:11px;color:var(--g500);margin-bottom:10px;display:flex;align-items:start;gap:6px"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="#D97706" stroke-width="1.8" stroke-linecap="round" style="flex-shrink:0;margin-top:1px"><path d="M8 1l7 14H1L8 1zM8 6v4M8 12v.01"/></svg><span>SMS is unencrypted — never include patient names or other PHI.</span></p>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:11px;font-weight:700;color:var(--g600)">RECIPIENTS (${eligible.length})</span>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-ghost btn-sm" onclick="App._toggleAllStaffPicker(true)" style="font-size:11px;color:var(--blue-d);padding:2px 8px">Select all</button>
+          <button class="btn btn-ghost btn-sm" onclick="App._toggleAllStaffPicker(false)" style="font-size:11px;color:var(--g500);padding:2px 8px">Clear</button>
+        </div>
+      </div>
+      <div style="max-height:200px;overflow-y:auto;border:1px solid var(--g100);border-radius:7px;background:#fff">
+        ${eligible.map(e => {
+          const initials = sanitize(e.name.split(' ').map(w=>w[0]).join('').slice(0,2));
+          return `
+            <label style="display:flex;align-items:center;gap:10px;padding:9px 11px;border-bottom:1px solid var(--g100);cursor:pointer">
+              <input type="checkbox" class="cover-staff-cb" data-eid="${e.id}" data-phone="${sanitize(e.phone||'')}" data-name="${sanitize(e.name)}" checked style="width:16px;height:16px;cursor:pointer;accent-color:var(--blue)">
+              <div style="width:28px;height:28px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${initials}</div>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:12px;font-weight:600;color:var(--g900)">${sanitize(e.name)}</div>
+                <div style="font-size:11px;color:var(--g500)">${sanitize(e.group)}${e.phone?` · ${sanitize(e.phone)}`:''}</div>
+              </div>
+            </label>`;
+        }).join('')}
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;margin-top:12px;gap:6px">
+        <button class="btn btn-secondary btn-sm" onclick="App._restoreCoverMessage('${date}','${shiftType}','${group}')">Cancel</button>
+        <button class="btn btn-primary btn-sm" id="cover-send-btn" onclick="App.sendCoverageToSelected('${date}','${shiftType}','${group}')">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 6l7 4 7-4"/></svg>
+          Send to <span id="cover-selected-count">${eligible.length}</span>
+        </button>
+      </div>`;
+
+    // Wire checkbox change to update the count
+    document.querySelectorAll('.cover-staff-cb').forEach(cb => {
+      cb.addEventListener('change', () => this._updateStaffPickerCount());
+    });
+  },
+
+  _restoreCoverMessage(date, shiftType, group) {
+    // Re-render the modal with the original Message Staff button restored
+    const empId = this.S._coverShiftEmpId;
+    const shiftId = this.S._coverShiftId;
+    if (empId && shiftId) {
+      this.openRemoveShiftModal(date, shiftId, shiftType, empId);
+    } else {
+      // Fallback: re-render the message section
+      const currentMsg = document.getElementById('cover-sms-body')?.value || '';
+      document.getElementById('cover-msg-section').innerHTML = `
+        <label style="font-size:11px;font-weight:700;color:var(--g600);display:block;margin-bottom:6px">MESSAGE TO STAFF</label>
+        <textarea id="cover-sms-body" rows="3" style="width:100%;padding:8px;border:1.5px solid var(--g200);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical">${sanitize(currentMsg)}</textarea>
+        <p style="font-size:11px;color:var(--g500);margin-top:6px;display:flex;align-items:start;gap:6px"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="#D97706" stroke-width="1.8" stroke-linecap="round" style="flex-shrink:0;margin-top:1px"><path d="M8 1l7 14H1L8 1zM8 6v4M8 12v.01"/></svg><span>SMS is unencrypted by carriers — never include patient names, dates of service, or other PHI in this message.</span></p>
+        <div style="display:flex;justify-content:flex-end;margin-top:8px">
+          <button class="btn btn-primary btn-sm" onclick="App.openStaffPicker('${date}','${shiftType}','${group}')">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 6l7 4 7-4"/></svg>
+            Message Staff
+          </button>
+        </div>`;
+    }
+  },
+
+  _toggleAllStaffPicker(checked) {
+    document.querySelectorAll('.cover-staff-cb').forEach(cb => { cb.checked = !!checked; });
+    this._updateStaffPickerCount();
+  },
+
+  _updateStaffPickerCount() {
+    const count = document.querySelectorAll('.cover-staff-cb:checked').length;
+    const el = document.getElementById('cover-selected-count');
+    if (el) el.textContent = count;
+    const btn = document.getElementById('cover-send-btn');
+    if (btn) btn.disabled = count === 0;
+  },
+
+  async sendCoverageToSelected(date, shiftType, group) {
+    const checked = Array.from(document.querySelectorAll('.cover-staff-cb:checked'));
+    if (!checked.length) { this.showToast('Select at least one staff member', 'warn'); return; }
+    const msg = document.getElementById('cover-sms-body')?.value || '';
+    if (!msg.trim()) { this.showToast('Enter a message first', 'warn'); return; }
+
+    const btn = document.getElementById('cover-send-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+
+    let sent = 0;
+    const failed = [];
+    for (const cb of checked) {
+      const phone = cb.dataset.phone;
+      const name  = cb.dataset.name;
+      if (!phone) { failed.push(name); continue; }
+      const ok = await this._sendSMS(phone, msg);
+      if (ok) sent++;
+      else failed.push(name);
+    }
+
+    if (sent > 0) {
+      this.logAudit('COVERAGE_SMS_SENT', `Sent coverage request to ${sent} staff for ${shiftType} ${group} on ${date}`);
+    }
+    if (failed.length) {
+      this.showToast(`Sent to ${sent}; failed: ${failed.slice(0,3).join(', ')}${failed.length>3?'…':''}`, 'warn');
+    } else {
+      this.showToast(`Coverage request sent to ${sent} staff`);
+    }
+    this.closeModal('modal-remove-shift');
   },
 
   async sendCoverageAlert(date, shiftType, group) {
@@ -5442,7 +5818,12 @@ const App = {
     const pass2 = document.getElementById('invite-pass2')?.value || '';
     const errEl = document.getElementById('invite-error');
     const showErr = msg => { if(errEl){errEl.textContent=msg;errEl.style.display='block';} };
-    if (pass.length < 8) { showErr('Password must be at least 8 characters.'); return; }
+    // HIPAA-aligned password complexity (matches server-side validatePasswordComplexity)
+    if (pass.length < 12) { showErr('Password must be at least 12 characters.'); return; }
+    if (!/[A-Z]/.test(pass)) { showErr('Password must include an uppercase letter.'); return; }
+    if (!/[a-z]/.test(pass)) { showErr('Password must include a lowercase letter.'); return; }
+    if (!/[0-9]/.test(pass)) { showErr('Password must include a number.'); return; }
+    if (!/[^A-Za-z0-9]/.test(pass)) { showErr('Password must include a symbol.'); return; }
     if (pass !== pass2)  { showErr('Passwords do not match.'); return; }
     const btn = document.querySelector('.login-card .btn-primary');
     if (btn) { btn.disabled = true; btn.textContent = 'Activating…'; }
@@ -5454,18 +5835,139 @@ const App = {
       });
       const data = await r.json();
       if (!r.ok) { showErr(data.error || 'Activation failed.'); if(btn){btn.disabled=false;btn.textContent='Set Password & Sign In';} return; }
-      // Log in automatically
-      _authToken = data.token;
-      localStorage.setItem('mms_token', data.token);
-      const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${data.token}`}});
-      if (dResp.ok) this.applyServerData(await dResp.json());
-      this.S.user = data.user;
-      this.showToast(`Welcome, ${data.user.name}! Your account is ready.`);
-      this.showApp();
+      // Per HIPAA: account requires TOTP enrollment before access. Send user back to login.
+      // Pre-fill the email field so they can immediately sign in (which triggers TOTP setup).
+      this.showToast('Account activated! Please sign in to set up two-factor authentication.', 'success');
+      // Show login page with email pre-filled
+      window.history.replaceState({}, '', '/');
+      document.getElementById('login-page').style.display = 'flex';
+      document.getElementById('app').style.display = 'none';
+      const emailInput = document.getElementById('login-email');
+      if (emailInput) emailInput.value = email || data.email || '';
+      const passInput = document.getElementById('login-pass');
+      if (passInput) { passInput.value = ''; passInput.focus(); }
     } catch(e) {
       showErr('Connection error. Please try again.');
       if(btn){btn.disabled=false;btn.textContent='Set Password & Sign In';}
     }
+  },
+
+  openManageAdmin(accountId, originBuildingId) {
+    const acct = this.S.accounts.find(a => a.id === accountId);
+    if (!acct) { this.showToast('Admin not found', 'warn'); return; }
+    if (acct.role === 'superadmin') { this.showToast('Superadmin is not managed here', 'warn'); return; }
+
+    this.S._manageAdminId = accountId;
+    this.S._manageAdminOriginBId = originBuildingId;
+
+    const pending = acct.ph === null && acct.inviteToken;
+    const initials = sanitize(acct.name.split(' ').map(w=>w[0]).join('').slice(0,2));
+    const currentBIds = new Set([acct.buildingId, ...(acct.buildingIds||[])].filter(Boolean));
+    const allBuildings = this.S.buildings || [];
+
+    const buildingChecks = allBuildings.map(b => {
+      const checked = currentBIds.has(b.id) ? 'checked' : '';
+      const isPrimary = b.id === acct.buildingId;
+      return `
+        <label style="display:flex;align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--g100);border-radius:7px;margin-bottom:5px;cursor:pointer;background:#fff" onmouseover="this.style.background='var(--g50)'" onmouseout="this.style.background='#fff'">
+          <input type="checkbox" class="manage-admin-bld-cb" data-bid="${b.id}" ${checked} style="width:16px;height:16px;cursor:pointer" ${isPrimary?'data-primary="1"':''}>
+          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${sanitizeColor(b.color)}"></span>
+          <span style="flex:1;font-size:13px;color:var(--g800)">${sanitize(b.name)}</span>
+          ${isPrimary?'<span style="font-size:10px;color:var(--g500);font-weight:600;background:var(--g100);padding:2px 7px;border-radius:10px">PRIMARY</span>':''}
+        </label>`;
+    }).join('') || '<div style="font-size:12px;color:var(--g400);padding:8px 0">No buildings yet.</div>';
+
+    document.getElementById('modal-manage-admin-body').innerHTML = `
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;padding:14px;background:var(--g50);border-radius:10px;border:1px solid var(--g100)">
+        <div style="width:44px;height:44px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px">${initials}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:14px;font-weight:700;color:var(--g900)">${sanitize(acct.name)}</div>
+          <div style="font-size:12px;color:var(--g500);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${sanitize(acct.email)}</div>
+        </div>
+        ${pending ? '<span class="tag" style="font-size:10px;background:#FEF3C7;color:#92400E;border:1px solid #FDE68A">Pending</span>' : '<span class="tag" style="font-size:10px;background:#D1FAE5;color:#065F46;border:1px solid #A7F3D0">Active</span>'}
+      </div>
+
+      <div style="margin-bottom:18px">
+        <button class="btn btn-secondary" id="resend-invite-btn" onclick="App.resendAdminInvite()" style="width:100%;justify-content:center">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 8l5-4v3h7v2H7v3z" transform="rotate(180 8 8)"/><rect x="1" y="3" width="14" height="10" rx="1.5"/></svg>
+          ${pending ? 'Resend Invitation Email' : 'Reset Password &amp; Resend Invitation'}
+        </button>
+        <p style="font-size:11px;color:var(--g500);margin:6px 2px 0;line-height:1.5">${pending ? 'Sends a new invite link. Their existing invite token will be replaced.' : 'Clears their current password and sends a new invite link. Whatever password they set on first login becomes their permanent password.'}</p>
+      </div>
+
+      <div>
+        <label style="font-size:12px;font-weight:700;color:var(--g700);display:block;margin-bottom:8px">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="vertical-align:-2px;margin-right:4px"><path d="M2 6l6-4 6 4v8H2z"/><path d="M6 14V9h4v5"/></svg>
+          Building Access
+        </label>
+        <div style="max-height:240px;overflow-y:auto;padding:2px">${buildingChecks}</div>
+        <p style="font-size:11px;color:var(--g500);margin:6px 2px 0;line-height:1.5">Check every building this admin should manage. The PRIMARY building stays as their default; additional buildings give them shared access.</p>
+      </div>`;
+    document.getElementById('manage-admin-save-btn').style.display = '';
+    this.openModal('modal-manage-admin');
+  },
+
+  async resendAdminInvite() {
+    const accountId = this.S._manageAdminId;
+    if (!accountId) return;
+    const acct = this.S.accounts.find(a => a.id === accountId);
+    if (!acct) return;
+    if (!confirm(`Resend invitation to ${acct.name} (${acct.email})?\n\nTheir current password will be cleared. The password they set on first login becomes their permanent password.`)) return;
+
+    const btn = document.getElementById('resend-invite-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+    try {
+      const r = await fetch('/api/invite/resend', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},
+        body: JSON.stringify({ accountId }),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        this.showToast(data.error || 'Failed to resend invitation', 'warn');
+        if (btn) { btn.disabled = false; btn.textContent = 'Resend Invitation Email'; }
+        return;
+      }
+      if (data.emailWarning) {
+        this.showToast('Invite reset, but email failed. Share the link manually.', 'warn');
+        this.S._lastInviteLink = data.inviteLink;
+      } else {
+        this.showToast(`Invitation sent to ${acct.email}`);
+      }
+      this.logAudit('ADMIN_INVITE_RESENT', `${acct.name} (${acct.email})`);
+      this.closeModal('modal-manage-admin');
+      // Refresh data so the Pending tag appears
+      if (IS_SERVER_MODE) {
+        const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${_authToken}`}});
+        if (dResp.ok) { this.applyServerData(await dResp.json()); this.render(); }
+      }
+    } catch(e) {
+      this.showToast('Connection error. Please try again.', 'warn');
+      if (btn) { btn.disabled = false; btn.textContent = 'Resend Invitation Email'; }
+    }
+  },
+
+  saveAdminBuildings() {
+    const accountId = this.S._manageAdminId;
+    if (!accountId) return;
+    const acct = this.S.accounts.find(a => a.id === accountId);
+    if (!acct) return;
+
+    const cbs = Array.from(document.querySelectorAll('.manage-admin-bld-cb'));
+    const selected = cbs.filter(c => c.checked).map(c => c.dataset.bid);
+    if (!selected.length) { this.showToast('Admin must have at least one building', 'warn'); return; }
+    if (!selected.includes(acct.buildingId)) {
+      // Primary building was unchecked — promote first selected to primary
+      acct.buildingId = selected[0];
+    }
+    const additional = selected.filter(id => id !== acct.buildingId);
+    acct.buildingIds = additional;
+
+    this.logAudit('ADMIN_BUILDINGS_UPDATED', `${acct.name} now has access to ${selected.length} building${selected.length===1?'':'s'}`);
+    this.persistData();
+    this.closeModal('modal-manage-admin');
+    this.render();
+    this.showToast(`Building access updated for ${acct.name}`);
   },
 
   openInviteModal(buildingId, role = 'admin') {
@@ -6739,8 +7241,19 @@ const App = {
     const bId = u.buildingId || 'b1';
     const building = this.S.buildings.find(b => b.id === bId);
     const allEmps = this.S.employees.filter(e => e.buildingId === bId);
-    const active   = allEmps.filter(e => !e.inactive);
-    const inactive = allEmps.filter(e => e.inactive);
+
+    // Sort state — default by name ascending
+    const sort = this.S._rosterSort || { col: 'name', dir: 'asc' };
+    this.S._rosterSort = sort;
+    const cmp = (a, b) => {
+      const av = String(sort.col === 'name' ? (a.name||'') : (a.group||'')).toLowerCase();
+      const bv = String(sort.col === 'name' ? (b.name||'') : (b.group||'')).toLowerCase();
+      if (av < bv) return sort.dir === 'asc' ? -1 : 1;
+      if (av > bv) return sort.dir === 'asc' ? 1 : -1;
+      return 0;
+    };
+    const active   = allEmps.filter(e => !e.inactive).sort(cmp);
+    const inactive = allEmps.filter(e =>  e.inactive).sort(cmp);
 
     const empRow = (emp, isActive) => {
       const col = G_COLORS[emp.group] || 'var(--blue)';
@@ -6786,8 +7299,10 @@ const App = {
     const activeRows   = active.map(e => empRow(e, true)).join('');
     const inactiveRows = inactive.map(e => empRow(e, false)).join('');
 
+    const arrow = c => sort.col === c ? (sort.dir === 'asc' ? ' ↑' : ' ↓') : '';
+    const sortableTh = (col, label) => `<th onclick="App.sortRoster('${col}')" style="cursor:pointer;user-select:none" title="Sort by ${label.toLowerCase()}">${label}<span style="color:var(--blue-d);font-weight:700">${arrow(col)}</span></th>`;
     const tableHdr = `<tr>
-      <th>Employee</th><th>Position</th><th>Phone</th><th>Status</th><th></th>
+      ${sortableTh('name','Employee')}${sortableTh('group','Position')}<th>Phone</th><th>Status</th><th></th>
     </tr>`;
 
     return `<div style="padding:20px;max-width:900px">
@@ -6829,6 +7344,18 @@ const App = {
     </div>`;
   },
 
+  sortRoster(col) {
+    const cur = this.S._rosterSort || { col: 'name', dir: 'asc' };
+    if (cur.col === col) {
+      cur.dir = cur.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      cur.col = col;
+      cur.dir = 'asc';
+    }
+    this.S._rosterSort = cur;
+    document.getElementById('main').innerHTML = this.renderRoster();
+  },
+
   showInactivateForm(empId) {
     const container = document.getElementById(`inactivate-form-${empId}`);
     if (!container) return;
@@ -6865,9 +7392,32 @@ const App = {
       by: this.S.user?.name || 'Admin'
     });
     emp.inactive = true;
-    Audit.log('EMP_INACTIVATED', `${sanitize(emp.name)} inactivated: ${sanitize(reason)}`, this.S.user?.id, 'high');
+
+    // Remove from all shifts (past shifts left intact for audit; only future + today's open up)
+    const today = new Date().toISOString().slice(0,10);
+    let opened = 0;
+    for (const s of this.S.shifts) {
+      if (s.employeeId === empId && s.date >= today) {
+        s.employeeId = null;
+        s.status = 'open';
+        s._removedDate = today;
+        s._removedReason = 'employee_inactivated';
+        opened++;
+      }
+    }
+    // Also disable any rotation patterns
+    if (Array.isArray(this.S.schedulePatterns)) {
+      for (const p of this.S.schedulePatterns) {
+        if (p.empId === empId) {
+          p.endDate = today;
+          p.active = false;
+        }
+      }
+    }
+
+    Audit.log('EMP_INACTIVATED', `${sanitize(emp.name)} inactivated: ${sanitize(reason)} — ${opened} future shift${opened===1?'':'s'} opened`, this.S.user?.id, 'high');
     this.persistData();
-    this.showToast(`${sanitize(emp.name)} has been inactivated`, '');
+    this.showToast(`${sanitize(emp.name)} inactivated · ${opened} future shift${opened===1?'':'s'} opened`, '');
     this.renderMain();
     this.renderSidebar();
   },
@@ -7240,7 +7790,7 @@ const App = {
     else calHtml = this.renderShiftView();
 
     document.getElementById('main').innerHTML = `${stats}
-      <div class="cal-toolbar">${viewTabs}${groupPill}${g?addShiftsBtn:''}${g?slotsBtn:''}${filterTabs}</div>${calHtml}`;
+      <div class="cal-toolbar">${viewTabs}${groupPill}${g?addShiftsBtn:''}${filterTabs}</div>${calHtml}`;
   },
 
   // ── PPD CALCULATOR ──────────────────────────────────────────
@@ -7463,6 +8013,18 @@ const App = {
           const dl = d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
           const isPast = slot.date < TODAY;
           const sh = shiftTypes.find(s=>s.type===slot.type);
+          const myPending = slot.claimRequest?.empId === u.id;
+          const otherPending = slot.claimRequest && slot.claimRequest.empId !== u.id;
+          let actionHtml;
+          if (isPast) {
+            actionHtml = '<span style="font-size:12px;color:var(--g400)">Expired</span>';
+          } else if (myPending) {
+            actionHtml = `<span style="font-size:12px;font-weight:700;color:#92400E;background:#FEF3C7;border-radius:6px;padding:4px 10px">Pending Approval</span>`;
+          } else if (otherPending) {
+            actionHtml = `<span style="font-size:12px;color:var(--g400)">Claim pending</span>`;
+          } else {
+            actionHtml = `<button class="btn btn-primary btn-sm" onclick="App.confirmClaim('${slot.id}')">Claim Shift</button>`;
+          }
           rows += `<div style="display:flex;align-items:center;gap:14px;padding:14px 16px;border-bottom:1px solid var(--g100)${isPast?';opacity:.45':''}">
             <div style="min-width:90px">
               <div style="font-weight:700;font-size:13px;color:var(--g900)">${dl}</div>
@@ -7472,7 +8034,7 @@ const App = {
               <div style="font-weight:600;font-size:13px;color:var(--g800)">${slot.type} Shift</div>
               <div style="font-size:12px;color:var(--g500)">${sh ? sh.start+'–'+sh.end : ''}</div>
             </div>
-            ${!isPast ? `<button class="btn btn-primary btn-sm" onclick="App.confirmClaim('${slot.id}')">Claim Shift</button>` : '<span style="font-size:12px;color:var(--g400)">Expired</span>'}
+            ${actionHtml}
           </div>`;
         });
       }
@@ -7499,6 +8061,16 @@ const App = {
     const myShiftDates = {};
     myShifts.forEach(s => { myShiftDates[s.date] = s; });
 
+    // Open shifts for my group this month (not yet assigned to anyone)
+    const openByDate = {};
+    this.S.shifts.filter(s =>
+      s.status === 'open' && s.group === u.group && s.buildingId === (u.buildingId || 'b1') &&
+      s.date.startsWith(monthKey) && s.date >= TODAY
+    ).forEach(s => {
+      if (!openByDate[s.date]) openByDate[s.date] = [];
+      openByDate[s.date].push(s);
+    });
+
     let cells = '';
     for (let i=firstDay-1;i>=0;i--) {
       cells += `<div class="cal-cell other-month"><div class="cal-date">${prevDays-i}</div></div>`;
@@ -7508,9 +8080,14 @@ const App = {
       const isToday = ds === TODAY;
       const shift = myShiftDates[ds];
       const sh = shift ? shiftTypes.find(s=>s.type===shift.type) : null;
-      cells += `<div class="cal-cell ${isToday?'today':''} ${shift?'selected':''}" style="cursor:${shift?'pointer':'default'}" ${shift?`onclick="App.empSelectDay('${ds}')"`:''}}>
+      const openSlots = openByDate[ds] || [];
+      const myPending = openSlots.filter(s => s.claimRequest?.empId === u.id);
+      const unclaimed = openSlots.filter(s => !s.claimRequest);
+      cells += `<div class="cal-cell ${isToday?'today':''} ${shift?'selected':''}" style="cursor:${(shift||openSlots.length)?'pointer':'default'}" ${shift?`onclick="App.empSelectDay('${ds}')"`:''}}>
         <div class="cal-date">${d}</div>
         ${shift ? `<div style="margin-top:4px"><div style="font-size:10px;font-weight:700;color:${col};background:${col}18;border-radius:4px;padding:2px 5px;display:inline-block">${shift.type}</div>${sh?`<div style="font-size:10px;color:var(--g500);margin-top:2px">${sh.start}</div>`:''}</div>` : ''}
+        ${myPending.length ? `<div style="font-size:9px;font-weight:700;color:#92400E;background:#FEF3C7;border-radius:3px;padding:1px 4px;margin-top:2px">Pending</div>` : ''}
+        ${unclaimed.length ? `<div onclick="event.stopPropagation();App.confirmClaim('${unclaimed[0].id}')" style="font-size:9px;font-weight:700;color:var(--blue);background:var(--blue-l,#EFF6FF);border-radius:3px;padding:1px 4px;margin-top:2px;cursor:pointer">${unclaimed.length > 1 ? unclaimed.length+' Open' : 'Open'} +</div>` : ''}
       </div>`;
     }
     const total = Math.ceil((firstDay+daysInMonth)/7)*7;
@@ -8319,7 +8896,7 @@ const App = {
         <div style="font-size:14px;color:var(--g600)">${shift.start} – ${shift.end}</div>
         <div style="font-size:13px;color:var(--g500);margin-top:4px">${shift.group}</div>
       </div>
-      <p style="font-size:13px;color:var(--g500)">Confirming will assign this shift to you and notify your supervisor.</p>`;
+      <p style="font-size:13px;color:var(--g500)">Your request will be sent to your supervisor for approval. You'll be notified once it's confirmed.</p>`;
     document.getElementById('claim-confirm-btn').onclick=()=>this.claimShift(shiftId);
     this.openModal('modal-claim');
   },
@@ -8328,15 +8905,84 @@ const App = {
     const u=this.S.user;
     const shift=this.S.shifts.find(s=>s.id===shiftId);
     if(!shift) return;
-    // Employees can only claim shifts in their own group
     if(u.role==='employee' && u.group !== shift.group) { this.showToast('Not authorized for this shift group','warn'); return; }
-    shift.employeeId=u.id; shift.status='scheduled';
-    Audit.log('SHIFT_CLAIMED', `Shift ${sanitize(shiftId)} claimed by ${sanitize(u.name)}`, u.id, 'low');
+    if(shift.claimRequest) { this.showToast('This shift already has a pending claim','warn'); return; }
+    shift.claimRequest = { empId: u.id, empName: u.name, requestedAt: new Date().toISOString() };
+    Audit.log('SHIFT_CLAIM_REQUESTED', `${sanitize(u.name)} requested to claim ${shift.type} ${shift.group} shift on ${shift.date}`, u.id, 'medium');
     this.persistData();
     this.closeModal('modal-claim');
-    this.showToast('Shift claimed!');
+    this.showToast('Claim submitted — waiting for admin approval');
     if(this.S.panelOpen&&this.S.selectedDate) this.renderPanel(this.S.selectedDate);
     this.renderMain(); this.renderSidebar();
+  },
+
+  openPendingClaims() {
+    const u = this.S.user;
+    const effBId = this.S.activeBuildingId || u.buildingId || 'b1';
+    const claims = (this.S.shifts || []).filter(s => s.claimRequest && s.buildingId === effBId)
+      .sort((a, b) => a.claimRequest.requestedAt.localeCompare(b.claimRequest.requestedAt));
+    const shiftTypes = (g) => SHIFT_TYPES(g);
+    let rows = '';
+    if (!claims.length) {
+      rows = `<div style="padding:24px;text-align:center;color:var(--g400);font-size:13px">No pending shift claims.</div>`;
+    } else {
+      claims.forEach(shift => {
+        const { empId, empName, requestedAt } = shift.claimRequest;
+        const d = new Date(shift.date + 'T12:00:00');
+        const dl = d.toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'});
+        const st = shiftTypes(shift.group).find(s => s.type === shift.type);
+        const reqAt = new Date(requestedAt).toLocaleString('en-US', {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'});
+        rows += `<div style="display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--g100)">
+          <div style="width:36px;height:36px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0">${sanitize(empName.split(' ').map(w=>w[0]).join('').slice(0,2))}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:13px;color:var(--g900)">${sanitize(empName)}</div>
+            <div style="font-size:12px;color:var(--g600)">${shift.type} ${shift.group} · ${dl}${st ? ' · ' + st.start + '–' + st.end : ''}</div>
+            <div style="font-size:11px;color:var(--g400);margin-top:2px">Requested ${reqAt}</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-shrink:0">
+            <button class="btn btn-secondary btn-sm" onclick="App.rejectShiftClaim('${shift.id}')">Reject</button>
+            <button class="btn btn-green btn-sm" onclick="App.approveShiftClaim('${shift.id}')">Approve</button>
+          </div>
+        </div>`;
+      });
+    }
+    document.getElementById('main').innerHTML = `
+      <div style="padding:0 0 16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px 12px;border-bottom:1px solid var(--g100)">
+          <div>
+            <div style="font-size:18px;font-weight:800;color:var(--g900)">Pending Shift Claims</div>
+            <div style="font-size:13px;color:var(--g500);margin-top:2px">${claims.length} request${claims.length===1?'':'s'} awaiting approval</div>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="App.renderMain()">← Back</button>
+        </div>
+        <div>${rows}</div>
+      </div>`;
+  },
+
+  approveShiftClaim(shiftId) {
+    const shift = this.S.shifts.find(s => s.id === shiftId);
+    if (!shift?.claimRequest) return;
+    const { empId, empName } = shift.claimRequest;
+    shift.status = 'scheduled';
+    shift.employeeId = empId;
+    delete shift.claimRequest;
+    Audit.log('SHIFT_CLAIM_APPROVED', `Approved ${sanitize(empName)}'s claim for ${shift.type} ${shift.group} on ${shift.date}`, this.S.user?.id, 'medium');
+    this.persistData();
+    this.showToast(`${sanitize(empName.split(' ')[0])}'s shift claim approved`);
+    this.openPendingClaims();
+    this.renderSidebar();
+  },
+
+  rejectShiftClaim(shiftId) {
+    const shift = this.S.shifts.find(s => s.id === shiftId);
+    if (!shift?.claimRequest) return;
+    const { empName } = shift.claimRequest;
+    delete shift.claimRequest;
+    Audit.log('SHIFT_CLAIM_REJECTED', `Rejected ${sanitize(empName)}'s claim for ${shift.type} ${shift.group} on ${shift.date}`, this.S.user?.id, 'medium');
+    this.persistData();
+    this.showToast(`${sanitize(empName.split(' ')[0])}'s claim rejected — shift remains open`, 'warn');
+    this.openPendingClaims();
+    this.renderSidebar();
   },
 
   // ── SAVE EMPLOYEE ────────────────────────────────────────────
@@ -8347,6 +8993,7 @@ const App = {
     const email=sanitizeInput(document.getElementById('emp-email').value.trim().toLowerCase(), 254);
     const phone=sanitizeInput(document.getElementById('emp-phone').value.trim(), 20);
     const role=document.getElementById('emp-role').value;
+    const employmentType=document.getElementById('emp-employment-type').value;
     if(!name||!pos||!email){this.showToast('Name, position, and email are required','warn');return;}
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){this.showToast('Invalid email address','warn');return;}
     if(!['Nurse Management','Charge Nurse','CNA','CMA','Housekeeping','Laundry','Cook','Dietary Aid'].includes(pos)){this.showToast('Invalid position','warn');return;}
@@ -8382,7 +9029,7 @@ const App = {
       this.S.accounts.push({id:`a${Date.now()}`,name,email,role:'admin',buildingId:bId});
     } else {
       const termLog = prior?.terminationLog || [];
-      this.S.employees.push({id:`e${Date.now()}`,name,group:pos,email,phone,buildingId:bId,notifEmail,notifSMS,notifPrefs:prefs,notifChannels,initials,terminationLog:termLog,inactive:false});
+      this.S.employees.push({id:`e${Date.now()}`,name,group:pos,email,phone,buildingId:bId,notifEmail,notifSMS,notifPrefs:prefs,notifChannels,initials,terminationLog:termLog,inactive:false,employmentType});
     }
     Audit.log('EMPLOYEE_ADDED', `Added ${sanitize(name)} (${sanitize(pos)})`, this.S.user?.id, 'medium');
     this.persistData();
@@ -8495,10 +9142,10 @@ const App = {
     const actualGroups=displayGroups.flatMap(g=>getActualGroups(g));
     const openCnt=this.getMonthShifts().filter(s=>s.status==='open'&&(!actualGroups.length||actualGroups.includes(s.group))).length;
     let msg='';
-    if(type==='open') msg=`Hi [Name], there ${openCnt===1?'is':'are'} currently ${openCnt} open shift${openCnt!==1?'s':''} available${displayGroups.length?' for '+displayGroups.join(', '):''}.
-
-Tap the link below to view and claim:\nhttps://managemystaffing.com/claim?token=[token]\n\n— ManageMyStaffing`;
-    else if(type==='urgent') msg=`⚠️ URGENT COVERAGE NEEDED\n\nWe need someone to cover a shift starting soon. Please claim immediately:\nhttps://managemystaffing.com/claim?token=[token]\n\nThank you!`;
+    // HIPAA-safe SMS templates: no names, no shift counts, no group/department,
+    // no facility specialty. Generic notification → drives to authenticated app.
+    if(type==='open') msg=`Open shifts are available in ManageMyStaffing.\n\nSign in to view and claim:\nhttps://managemystaffing.com\n\n— ManageMyStaffing`;
+    else if(type==='urgent') msg=`Urgent: a shift needs coverage. Sign in to view and claim:\nhttps://managemystaffing.com\n\n— ManageMyStaffing`;
     else msg=document.getElementById('custom-msg')?.value||'[Enter custom message above]';
     const el=document.getElementById('alert-preview-text');
     if(el) el.textContent=msg;
@@ -8780,6 +9427,42 @@ App.init().catch(e => {
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="App.closeModal('modal-invite')">Cancel</button>
       <button class="btn btn-primary" id="invite-send-btn" onclick="App.sendInvite()">Send Invitation</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOTP ENROLLMENT / VERIFICATION MODAL (HIPAA §164.312(d)) -->
+<div class="modal-overlay" id="modal-totp" role="dialog" aria-modal="true" aria-label="Two-Factor Authentication">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-header">
+      <span class="modal-title" id="totp-title">Two-Factor Authentication</span>
+    </div>
+    <div id="modal-totp-body" class="modal-body">
+      <!-- filled by _openTotpEnroll / _openTotpVerify -->
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="App._cancelTotp()">Cancel</button>
+      <button class="btn btn-primary" id="totp-submit-btn" onclick="App._submitTotp()">Verify</button>
+    </div>
+  </div>
+</div>
+
+<!-- MANAGE ADMIN MODAL -->
+<div class="modal-overlay" id="modal-manage-admin" role="dialog" aria-modal="true" aria-label="Manage Admin">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-header">
+      <span class="modal-title">
+        <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px"><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>
+        Manage Admin
+      </span>
+      <button class="modal-close" onclick="App.closeModal('modal-manage-admin')">✕</button>
+    </div>
+    <div id="modal-manage-admin-body" class="modal-body">
+      <!-- filled by openManageAdmin() -->
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="App.closeModal('modal-manage-admin')">Close</button>
+      <button class="btn btn-primary" id="manage-admin-save-btn" onclick="App.saveAdminBuildings()" style="display:none">Save Building Access</button>
     </div>
   </div>
 </div>
