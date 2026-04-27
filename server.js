@@ -766,7 +766,7 @@ const _totpPending = new Map(); // sessionId → { acctId, expiresAt }
 app.post('/api/auth/login', authLimiter, async (req, res) => {
   const { email, password, totp, sessionId } = req.body || {};
 
-  // Step 2: TOTP verification
+  // Step 2: TOTP or Recovery Code verification
   if (sessionId && totp) {
     const pend = _totpPending.get(sessionId);
     if (!pend || Date.now() > pend.expiresAt) {
@@ -779,12 +779,36 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       _totpPending.delete(sessionId);
       return res.status(401).json({ error: 'Account error' });
     }
-    const ok = authenticator.check(String(totp).replace(/\s/g, ''), acct.totpSecret);
+    const cleaned = String(totp).replace(/\s/g, '');
+    let ok = false;
+    let viaRecovery = false;
+    // Try as TOTP code first
+    if (/^\d{6}$/.test(cleaned)) {
+      ok = authenticator.check(cleaned, acct.totpSecret);
+    }
+    // Fall back to recovery code (single-use, format xxxxxxxx-xxxxxxxx)
+    if (!ok && /^[a-f0-9]{8}-[a-f0-9]{8}$/i.test(cleaned)) {
+      const hashes = acct.totpRecoveryCodesHashes || [];
+      for (let i = 0; i < hashes.length; i++) {
+        if (await bcrypt.compare(cleaned.toLowerCase(), hashes[i])) {
+          // Consume the code by removing its hash
+          hashes.splice(i, 1);
+          acct.totpRecoveryCodesHashes = hashes;
+          markDirty();
+          ok = true;
+          viaRecovery = true;
+          break;
+        }
+      }
+    }
     if (!ok) {
       auditLog('TOTP_FAILED', acct);
-      return res.status(401).json({ error: 'Invalid TOTP code' });
+      return res.status(401).json({ error: 'Invalid code' });
     }
     _totpPending.delete(sessionId);
+    if (viaRecovery) {
+      auditLog('TOTP_RECOVERY_CODE_USED', acct, { codesRemaining: (acct.totpRecoveryCodesHashes || []).length });
+    }
     return _issueToken(req, res, acct, data);
   }
 
@@ -859,6 +883,20 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   return _issueToken(req, res, acct, data);
 });
 
+// Generate N single-use recovery codes. Each is shown ONCE to the user.
+// Stored as bcrypt hashes server-side; consumed on use.
+async function _generateRecoveryCodes(n = 10) {
+  const codes = [];
+  const hashes = [];
+  for (let i = 0; i < n; i++) {
+    // Format: xxxx-xxxx (8 hex chars + dash + 8 hex chars) — easy to read/type
+    const raw = crypto.randomBytes(4).toString('hex') + '-' + crypto.randomBytes(4).toString('hex');
+    codes.push(raw);
+    hashes.push(await bcrypt.hash(raw, 10));
+  }
+  return { codes, hashes };
+}
+
 // Confirm TOTP enrollment (user scanned QR + entered first code)
 app.post('/api/auth/totp/enroll', async (req, res) => {
   const { sessionId, totp } = req.body || {};
@@ -874,12 +912,60 @@ app.post('/api/auth/totp/enroll', async (req, res) => {
   const data = await loadData();
   const acct = (data.accounts || []).find(a => a.id === pend.acctId);
   if (!acct) return res.status(404).json({ error: 'Account not found' });
+
+  // Generate recovery codes — show ONCE, never stored plaintext server-side
+  const { codes, hashes } = await _generateRecoveryCodes(10);
   acct.totpSecret = pend.pendingSecret;
   acct.totpEnrolledAt = new Date().toISOString();
+  acct.totpRecoveryCodesHashes = hashes;
+  acct.totpRecoveryCodesGeneratedAt = new Date().toISOString();
   markDirty();
   _totpPending.delete(sessionId);
-  auditLog('TOTP_ENROLLED', acct);
-  return _issueToken(req, res, acct, data);
+  auditLog('TOTP_ENROLLED', acct, { recoveryCodesGenerated: codes.length });
+
+  // Issue cookie/session, then return user info + the plaintext codes (shown once)
+  const sid = crypto.randomBytes(16).toString('hex');
+  const isDemo = acct.id === SEED_DEMO.id || acct.id === SEED_DEMO_NURSE.id;
+  const payload = {
+    id: acct.id, name: acct.name, email: acct.email, role: acct.role,
+    buildingId: acct.buildingId || null, buildingIds: acct.buildingIds || [],
+    group: acct.group || undefined, demo: isDemo || undefined, sid,
+  };
+  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_TTL_SECONDS });
+  lastActivity.set(sid, Date.now());
+  setAuthCookie(res, token);
+  auditLog('LOGIN_SUCCESS', acct, { sid, via: 'totp_enrollment' });
+  return res.json({ user: payload, authVia: 'cookie', recoveryCodes: codes });
+});
+
+// Regenerate recovery codes (user must be authenticated)
+app.post('/api/auth/totp/recovery-codes', requireAuth, async (req, res) => {
+  const data = await loadData();
+  const acct = (data.accounts || []).find(a => a.id === req.user.id);
+  if (!acct?.totpSecret) return res.status(400).json({ error: 'TOTP not enrolled' });
+  const { codes, hashes } = await _generateRecoveryCodes(10);
+  acct.totpRecoveryCodesHashes = hashes;
+  acct.totpRecoveryCodesGeneratedAt = new Date().toISOString();
+  markDirty();
+  auditLog('TOTP_RECOVERY_CODES_REGENERATED', acct);
+  res.json({ recoveryCodes: codes });
+});
+
+// Superadmin-only: reset another user's TOTP (forces re-enrollment on next login)
+app.post('/api/auth/totp/reset', requireAuth, requireSuperAdmin, async (req, res) => {
+  const { accountId } = req.body || {};
+  if (!accountId) return res.status(400).json({ error: 'accountId is required' });
+  const data = await loadData();
+  const acct = (data.accounts || []).find(a => a.id === accountId);
+  if (!acct) return res.status(404).json({ error: 'Account not found' });
+  if (acct.id === req.user.id) return res.status(400).json({ error: 'Cannot reset your own TOTP this way — use Account Settings' });
+  acct.totpSecret = null;
+  acct.totpEnrolledAt = null;
+  acct.totpRecoveryCodesHashes = null;
+  acct.totpRecoveryCodesGeneratedAt = null;
+  markDirty();
+  auditLog('TOTP_RESET_BY_ADMIN', req.user, { targetAccountId: accountId, targetEmail: acct.email });
+  res.json({ ok: true, message: `TOTP reset for ${acct.email}. They will re-enroll on next login.` });
 });
 
 function _issueToken(req, res, acct, data) {

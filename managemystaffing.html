@@ -1726,15 +1726,119 @@ const App = {
       <p style="font-size:13px;color:var(--g600);margin-bottom:14px;text-align:center">
         Enter the 6-digit code from your authenticator app to complete sign in.
       </p>
-      <input type="text" id="totp-input" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" placeholder="123456" style="width:100%;padding:12px;text-align:center;font-size:18px;letter-spacing:6px;font-family:monospace;border:2px solid var(--g200);border-radius:8px" onkeydown="if(event.key==='Enter')App._submitTotp()">
-      <div id="totp-error" style="color:var(--red,#DC2626);font-size:12px;margin-top:8px;display:none;text-align:center"></div>`;
+      <input type="text" id="totp-input" maxlength="17" inputmode="text" placeholder="123456" style="width:100%;padding:12px;text-align:center;font-size:18px;letter-spacing:4px;font-family:monospace;border:2px solid var(--g200);border-radius:8px" onkeydown="if(event.key==='Enter')App._submitTotp()">
+      <div id="totp-error" style="color:var(--red,#DC2626);font-size:12px;margin-top:8px;display:none;text-align:center"></div>
+      <div style="text-align:center;margin-top:14px">
+        <a href="#" onclick="event.preventDefault();App._showRecoveryCodeHint()" style="font-size:12px;color:var(--g500);text-decoration:underline">Lost your phone? Use a recovery code</a>
+      </div>`;
     this.openModal('modal-totp');
     setTimeout(() => document.getElementById('totp-input')?.focus(), 100);
+  },
+
+  _showRecoveryCodeHint() {
+    const input = document.getElementById('totp-input');
+    if (input) {
+      input.placeholder = 'xxxxxxxx-xxxxxxxx';
+      input.focus();
+    }
+    this.showToast('Enter one of the recovery codes you saved during enrollment');
   },
 
   _cancelTotp() {
     this.S._totpSession = null;
     this.closeModal('modal-totp');
+  },
+
+  // Show one-time recovery codes after TOTP enrollment.
+  // Codes are displayed ONCE, server only stores hashes.
+  _showRecoveryCodes(codes, user, email) {
+    const codesHtml = codes.map(c => `<div style="font-family:monospace;font-size:14px;padding:6px 10px;background:#fff;border:1px solid var(--g200);border-radius:4px;letter-spacing:1px">${sanitize(c)}</div>`).join('');
+    document.getElementById('totp-title').textContent = 'Save Your Recovery Codes';
+    document.getElementById('modal-totp-body').innerHTML = `
+      <div style="margin-bottom:14px">
+        <div style="background:#FEF3C7;border:1px solid #FDE68A;border-radius:8px;padding:12px;margin-bottom:14px">
+          <div style="display:flex;gap:8px;align-items:start">
+            <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="#92400E" stroke-width="1.8" stroke-linecap="round" style="flex-shrink:0;margin-top:1px"><path d="M8 1l7 14H1L8 1zM8 6v4M8 12v.01"/></svg>
+            <div style="font-size:13px;color:#92400E;line-height:1.5">
+              <strong>Save these recovery codes now — they will not be shown again.</strong> Use one to sign in if you lose access to your authenticator app. Each code works only once.
+            </div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:14px">
+          ${codesHtml}
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <button class="btn btn-secondary btn-sm" onclick="App._downloadRecoveryCodes()" style="flex:1">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 1v10M3 7l5 4 5-4M2 13h12"/></svg>
+            Download as text file
+          </button>
+          <button class="btn btn-secondary btn-sm" onclick="App._copyRecoveryCodes()" style="flex:1">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="4" width="9" height="11" rx="1.5"/><path d="M11 4V3a1.5 1.5 0 00-1.5-1.5h-5A1.5 1.5 0 003 3v9.5"/></svg>
+            Copy to clipboard
+          </button>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--g700)">
+          <input type="checkbox" id="totp-codes-acked" onchange="document.getElementById('totp-recovery-continue').disabled = !this.checked">
+          I have saved these codes in a secure location.
+        </label>
+      </div>`;
+    // Replace footer with single "Continue" button
+    const footer = document.querySelector('#modal-totp .modal-footer');
+    if (footer) {
+      footer.innerHTML = `<button class="btn btn-primary" id="totp-recovery-continue" disabled onclick="App._finishTotpEnrollment()">Continue</button>`;
+    }
+    this.S._pendingTotpCodes = codes;
+    this.S._pendingTotpUser = user;
+    this.S._pendingTotpEmail = email;
+  },
+
+  _downloadRecoveryCodes() {
+    const codes = this.S._pendingTotpCodes || [];
+    if (!codes.length) return;
+    const blob = new Blob(
+      [`ManageMyStaffing — Two-Factor Recovery Codes\nAccount: ${this.S._pendingTotpEmail}\nGenerated: ${new Date().toISOString()}\n\n` + codes.join('\n') + '\n\nEach code works only once. Keep these in a safe place (password manager, printed in a safe).\n'],
+      { type: 'text/plain' }
+    );
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `mms-recovery-codes-${new Date().toISOString().slice(0,10)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    this.showToast('Recovery codes downloaded');
+  },
+
+  _copyRecoveryCodes() {
+    const codes = this.S._pendingTotpCodes || [];
+    navigator.clipboard.writeText(codes.join('\n')).then(
+      () => this.showToast('Recovery codes copied to clipboard'),
+      () => this.showToast('Copy failed — please use Download', 'warn')
+    );
+  },
+
+  async _finishTotpEnrollment() {
+    const user = this.S._pendingTotpUser;
+    const email = this.S._pendingTotpEmail;
+    // Clear the codes from memory
+    this.S._pendingTotpCodes = null;
+    this.S._pendingTotpUser = null;
+    this.S._pendingTotpEmail = null;
+    this.closeModal('modal-totp');
+    // Restore the modal footer to original state for next time
+    const footer = document.querySelector('#modal-totp .modal-footer');
+    if (footer) {
+      footer.innerHTML = `
+        <button class="btn btn-ghost" onclick="App._cancelTotp()">Cancel</button>
+        <button class="btn btn-primary" id="totp-submit-btn" onclick="App._submitTotp()">Verify</button>`;
+    }
+    // Proceed into the app
+    this.S.user = user;
+    const dResp = await fetch('/api/data');
+    if (dResp.ok) this.applyServerData(await dResp.json());
+    this._saveLoginCredentials(email, user.name);
+    Audit.log('TOTP_ENROLLED', `2FA enrolled: ${sanitize(email)}`, user.id, 'medium');
+    this.showApp();
+    this._startIdleTimer();
   },
 
   async _submitTotp() {
@@ -1759,8 +1863,14 @@ const App = {
         if (btn) { btn.disabled = false; btn.textContent = 'Verify'; }
         return;
       }
-      const { user } = await r.json();
+      const body = await r.json();
+      const { user, recoveryCodes } = body;
       this.S._totpSession = null;
+      // If this was an enrollment, show the recovery codes ONCE before proceeding
+      if (sess.mode === 'enroll' && Array.isArray(recoveryCodes) && recoveryCodes.length) {
+        this._showRecoveryCodes(recoveryCodes, user, sess.email);
+        return;
+      }
       this.closeModal('modal-totp');
       this.S.user = user;
       const dResp = await api('/api/data');
