@@ -145,6 +145,36 @@ test('Security headers present on root HTML', async () => {
   assert.match(csp, /object-src 'none'/);
 });
 
+test('Password reset request: constant-time response (always 200 + safe message)', async () => {
+  const r = await fetch(`${BASE}/api/auth/password-reset/request`, {
+    method: 'POST',
+    headers: CSRF,
+    body: JSON.stringify({ email: 'unknown-' + Date.now() + '@example.com' }),
+  });
+  assert.equal(r.status, 200, 'must always return 200 to avoid enumeration');
+  const body = await r.json();
+  assert.match(body.message || '', /reset link has been sent/i);
+});
+
+test('Password reset request: CSRF check', async () => {
+  const r = await fetch(`${BASE}/api/auth/password-reset/request`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'x@y.z' }),
+  });
+  assert.equal(r.status, 403);
+});
+
+test('Password reset complete: bad token returns 404', async () => {
+  const r = await fetch(`${BASE}/api/auth/password-reset/complete`, {
+    method: 'POST',
+    headers: CSRF,
+    body: JSON.stringify({ token: 'badtoken', u: 'acc_nonexistent', password: 'NotImportantHere1!' }),
+  });
+  // 404 (account/token not found), 410 (expired), or 429 (rate limit hit during test) all acceptable
+  assert.ok([404, 410, 429].includes(r.status), `unexpected status ${r.status}`);
+});
+
 test('Rate limit on /api/invite/verify (>20 in 60s → 429)', async () => {
   let blocked = false;
   for (let i = 0; i < 25; i++) {

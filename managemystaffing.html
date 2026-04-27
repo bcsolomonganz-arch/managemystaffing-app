@@ -556,6 +556,14 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
       </label>
     </div>
     <button class="btn btn-primary btn-full" onclick="App.loginForm()">Sign In</button>
+    <div id="forgot-pwd-section" style="display:none;margin-top:14px;padding:12px;border:1px solid var(--g200);border-radius:8px;background:var(--g50)">
+      <p style="font-size:12px;color:var(--g700);margin:0 0 8px;line-height:1.5">Trouble signing in? We can email a password reset link to you.</p>
+      <button class="btn btn-secondary btn-full" id="forgot-pwd-btn" onclick="App.requestPasswordReset()" style="font-size:13px">
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 6l7 4 7-4"/></svg>
+        Send password reset link
+      </button>
+      <div id="forgot-pwd-msg" style="font-size:12px;color:var(--blue-d);margin-top:8px;display:none;text-align:center"></div>
+    </div>
     <p style="font-size:11px;color:var(--g600);text-align:center;margin-top:12px">Unauthorized access is prohibited. All sessions are monitored and audited per HIPAA 45 CFR §164.312.</p>
   </div>
 </div>
@@ -1526,9 +1534,16 @@ const App = {
       const urlParams = new URLSearchParams(window.location.search);
       const inviteToken = urlParams.get('invite');
       if (inviteToken) {
-        // Clean token from URL without reload
         window.history.replaceState({}, document.title, window.location.pathname);
         await this._handleInviteLink(inviteToken);
+        return;
+      }
+      // Check for password reset token (?reset=TOKEN&u=ACCOUNT_ID)
+      const resetToken = urlParams.get('reset');
+      const resetUid   = urlParams.get('u');
+      if (resetToken && resetUid) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+        await this._handleResetLink(resetToken, resetUid);
         return;
       }
 
@@ -1916,6 +1931,48 @@ const App = {
   _startIdleTimer() { this._idleStart(); },
 
   // ── LOGIN FORM (rate-limited, audited) ───────────────────
+  // Show "Forgot password" reset section (after a failed login or by request)
+  _showForgotPassword() {
+    const sec = document.getElementById('forgot-pwd-section');
+    if (sec) sec.style.display = 'block';
+  },
+
+  async requestPasswordReset() {
+    const emailEl = document.getElementById('login-email');
+    const btn = document.getElementById('forgot-pwd-btn');
+    const msgEl = document.getElementById('forgot-pwd-msg');
+    const email = (emailEl?.value || '').trim().toLowerCase();
+    if (!email) {
+      if (msgEl) { msgEl.style.color = 'var(--red,#DC2626)'; msgEl.textContent = 'Enter your email above first.'; msgEl.style.display = 'block'; }
+      emailEl?.focus();
+      return;
+    }
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+    try {
+      const r = await fetch('/api/auth/password-reset/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        body: JSON.stringify({ email }),
+      });
+      // Always treat as success — server returns 200 even if email doesn't exist (no enumeration)
+      const data = await r.json().catch(() => ({}));
+      if (msgEl) {
+        msgEl.style.color = 'var(--blue-d)';
+        msgEl.textContent = data.message || 'If an account with that email exists, a reset link has been sent.';
+        msgEl.style.display = 'block';
+      }
+      Audit.log('PWD_RESET_REQUESTED', `Reset link requested for ${sanitize(email)}`, null, 'medium');
+      if (btn) { btn.disabled = false; btn.textContent = 'Resend reset link'; }
+    } catch (e) {
+      if (msgEl) {
+        msgEl.style.color = 'var(--red,#DC2626)';
+        msgEl.textContent = 'Connection error. Please try again.';
+        msgEl.style.display = 'block';
+      }
+      if (btn) { btn.disabled = false; btn.textContent = 'Send password reset link'; }
+    }
+  },
+
   async loginForm() {
     const emailRaw = (document.getElementById('login-email').value || '').trim().toLowerCase();
     const pass     = (document.getElementById('login-pass').value || '');
@@ -1937,6 +1994,8 @@ const App = {
           else if (resp.status === 403) showErr(body.error || 'Account not yet activated.');
           else if (resp.status === 423 || resp.status === 429) showErr(body.error || 'Account locked. Please try again later.');
           else showErr(body.error || 'Login failed. Please try again.');
+          // Show "forgot password" section so user can request a reset link
+          this._showForgotPassword();
           Audit.log('LOGIN_FAILED', 'Server auth failed: '+sanitize(emailRaw), null, 'high');
           return;
         }
@@ -5893,6 +5952,103 @@ const App = {
     } catch(e) {
       const errEl = document.getElementById('login-error');
       if (errEl) { errEl.textContent = 'Could not verify invitation. Please try again.'; errEl.style.display = 'block'; }
+    }
+  },
+
+  // Handles ?reset=TOKEN&u=ACCOUNT_ID landing
+  async _handleResetLink(token, uid) {
+    document.getElementById('login-page').style.display = 'flex';
+    document.getElementById('app').style.display = 'none';
+    try {
+      const r = await fetch(`/api/auth/password-reset/verify?token=${encodeURIComponent(token)}&u=${encodeURIComponent(uid)}`);
+      const data = await r.json();
+      if (!r.ok) {
+        const errEl = document.getElementById('login-error');
+        if (errEl) { errEl.textContent = data.error || 'Invalid or expired reset link.'; errEl.style.display = 'block'; }
+        return;
+      }
+      this._showResetPasswordForm(token, uid, data.email, data.name);
+    } catch (e) {
+      const errEl = document.getElementById('login-error');
+      if (errEl) { errEl.textContent = 'Could not verify reset link. Please try again.'; errEl.style.display = 'block'; }
+    }
+  },
+
+  _showResetPasswordForm(token, uid, email, name) {
+    const card = document.querySelector('.login-card');
+    if (!card) return;
+    card.innerHTML = `
+      <div class="login-logo">
+        <div class="login-logo-icon" style="background:transparent;padding:0;width:52px;height:52px" id="reset-logo"></div>
+        <div>
+          <div class="login-logo-name">ManageMyStaffing</div>
+          <div class="login-logo-tag">Reset password</div>
+        </div>
+      </div>
+      <div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:8px;padding:12px 14px;margin-bottom:18px;font-size:13px;color:var(--g700)">
+        Resetting password for <strong>${sanitize(email)}</strong>${name?` (${sanitize(name)})`:''}.
+      </div>
+      <div id="reset-error" class="login-error-msg" role="alert" aria-live="assertive"></div>
+      <div class="form-group">
+        <label for="reset-pass">New password</label>
+        <input type="password" id="reset-pass" placeholder="••••••••••••" autocomplete="new-password" maxlength="128"
+          oninput="App._updateResetPwStrength()"
+          onkeydown="if(event.key==='Enter')document.getElementById('reset-pass2').focus()">
+        <div class="pw-strength-bar" id="reset-pw-bar"></div>
+        <p style="font-size:11px;color:var(--g600);margin-top:6px;line-height:1.5">Must include 12+ chars, uppercase, lowercase, number, and symbol.</p>
+      </div>
+      <div class="form-group">
+        <label for="reset-pass2">Confirm new password</label>
+        <input type="password" id="reset-pass2" placeholder="••••••••••••" autocomplete="new-password" maxlength="128"
+          onkeydown="if(event.key==='Enter')App.completePasswordReset('${sanitize(token)}','${sanitize(uid)}','${sanitize(email)}')">
+      </div>
+      <button class="btn btn-primary btn-full" onclick="App.completePasswordReset('${sanitize(token)}','${sanitize(uid)}','${sanitize(email)}')">Set New Password</button>
+      <p style="font-size:11px;color:var(--g600);text-align:center;margin-top:12px">All sessions are monitored and audited per HIPAA 45 CFR §164.312.</p>`;
+    const logoEl = document.getElementById('reset-logo');
+    if (logoEl) logoEl.innerHTML = LOGO_SVG;
+    setTimeout(() => document.getElementById('reset-pass')?.focus(), 100);
+  },
+
+  _updateResetPwStrength() {
+    const pw = document.getElementById('reset-pass')?.value || '';
+    const bar = document.getElementById('reset-pw-bar');
+    if (bar) bar.className = 'pw-strength-bar ' + pwStrength(pw);
+  },
+
+  async completePasswordReset(token, uid, email) {
+    const pass  = document.getElementById('reset-pass')?.value || '';
+    const pass2 = document.getElementById('reset-pass2')?.value || '';
+    const errEl = document.getElementById('reset-error');
+    const showErr = m => { if (errEl) { errEl.textContent = m; errEl.style.display = 'block'; } };
+    if (pass.length < 12) { showErr('Password must be at least 12 characters.'); return; }
+    if (!/[A-Z]/.test(pass)) { showErr('Password must include an uppercase letter.'); return; }
+    if (!/[a-z]/.test(pass)) { showErr('Password must include a lowercase letter.'); return; }
+    if (!/[0-9]/.test(pass)) { showErr('Password must include a number.'); return; }
+    if (!/[^A-Za-z0-9]/.test(pass)) { showErr('Password must include a symbol.'); return; }
+    if (pass !== pass2) { showErr('Passwords do not match.'); return; }
+
+    const btn = document.querySelector('.login-card .btn-primary');
+    if (btn) { btn.disabled = true; btn.textContent = 'Resetting…'; }
+    try {
+      const r = await fetch('/api/auth/password-reset/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        body: JSON.stringify({ token, u: uid, password: pass }),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        showErr(data.error || 'Could not reset password.');
+        if (btn) { btn.disabled = false; btn.textContent = 'Set New Password'; }
+        return;
+      }
+      // Reset succeeded — return to login screen with email pre-filled.
+      // Account still requires TOTP if previously enrolled (preserved by server).
+      Audit.log('PWD_RESET_COMPLETED', `Password reset for ${sanitize(email)}`, null, 'medium');
+      this.showToast('Password reset! Sign in with your new password.', 'success');
+      window.location.href = '/';
+    } catch (e) {
+      showErr('Connection error. Please try again.');
+      if (btn) { btn.disabled = false; btn.textContent = 'Set New Password'; }
     }
   },
 

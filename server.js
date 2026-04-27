@@ -1369,6 +1369,127 @@ app.post('/api/invite/resend', requireAuth, requireAdmin, async (req, res) => {
   res.json({ ok: true, inviteLink: link });
 });
 
+// ── POST /api/auth/password-reset/request ─────────────────────────────────────
+// Body: { email }
+// Always returns 200 with same body to avoid account-enumeration.
+// Generates a 1-hour reset token, stores its bcrypt hash on the account, and
+// emails a magic link. TOTP enrollment is preserved across reset.
+app.post('/api/auth/password-reset/request', authLimiter, async (req, res) => {
+  const { email } = req.body || {};
+  const safeRes = { ok: true, message: 'If an account with that email exists, a reset link has been sent.' };
+  if (!email || typeof email !== 'string') return res.json(safeRes);
+  const emailNorm = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNorm) || emailNorm.length > 254) return res.json(safeRes);
+
+  const data = await loadData();
+  const acct = (data.accounts || []).find(a => (a.email || '').toLowerCase() === emailNorm);
+
+  // Constant-ish time: still hash a dummy if no account so timing is similar
+  if (!acct) {
+    await bcrypt.hash('dummy', 10).catch(()=>{});
+    auditLog('PWD_RESET_REQUESTED', null, { email: emailNorm, found: false });
+    return res.json(safeRes);
+  }
+  // Don't allow reset for demo accounts
+  if (acct.id === SEED_DEMO.id || acct.id === SEED_DEMO_NURSE.id) {
+    auditLog('PWD_RESET_BLOCKED_DEMO', acct);
+    return res.json(safeRes);
+  }
+
+  const rawToken = crypto.randomBytes(32).toString('hex');   // 64-char hex
+  const tokenHash = await bcrypt.hash(rawToken, 10);
+  acct.passwordResetTokenHash = tokenHash;
+  acct.passwordResetExpiry = Date.now() + 60 * 60 * 1000;     // 1 hour
+  markDirty();
+
+  const link = `${APP_URL}/?reset=${rawToken}&u=${encodeURIComponent(acct.id)}`;
+  const escName = escapeHtml(acct.name || acct.email);
+
+  if (ACS_CONNECTION_STRING) {
+    try {
+      const { EmailClient } = require('@azure/communication-email');
+      const ec = new EmailClient(ACS_CONNECTION_STRING);
+      const poller = await ec.beginSend({
+        senderAddress: ACS_FROM_EMAIL,
+        recipients: { to: [{ address: acct.email, displayName: acct.name }] },
+        content: {
+          subject: 'Reset your ManageMyStaffing password',
+          plainText: `Hi ${(acct.name || '').replace(/[\r\n]/g, ' ')},\n\nWe received a request to reset your ManageMyStaffing password.\n\nClick the link below to set a new password (expires in 1 hour):\n${link}\n\nIf you didn't request this, ignore this email — your password will not change.\n\n— ManageMyStaffing`,
+          html: `<div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#f9fafb">
+  <div style="background:#fff;border-radius:12px;padding:32px;border:1px solid #e5e7eb">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px">
+      <div style="width:36px;height:36px;background:#6B9E7A;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:16px">M</div>
+      <span style="font-size:17px;font-weight:700;color:#111827">ManageMyStaffing</span>
+    </div>
+    <h2 style="font-size:20px;font-weight:700;color:#111827;margin:0 0 8px">Reset your password</h2>
+    <p style="color:#6b7280;font-size:14px;margin:0 0 20px">Hi ${escName}, we received a request to reset your password.</p>
+    <a href="${link}" style="display:inline-block;background:#6B9E7A;color:#fff;font-weight:700;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px">Reset Password →</a>
+    <p style="color:#9ca3af;font-size:12px;margin:20px 0 0">This link expires in 1 hour. If you didn't request this, your password will not change — safely ignore this email.</p>
+  </div>
+</div>`,
+        },
+      });
+      await Promise.race([
+        poller.pollUntilDone(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 30000)),
+      ]);
+    } catch (e) {
+      logger.error('pwd_reset_email_failed', { err: e.message, acctId: acct.id });
+      // Don't reveal email failure to caller (would leak account existence)
+    }
+  }
+
+  auditLog('PWD_RESET_REQUESTED', acct);
+  return res.json(safeRes);
+});
+
+// ── GET /api/auth/password-reset/verify ───────────────────────────────────────
+// Validates a reset token without consuming it. Returns email/name to pre-fill.
+app.get('/api/auth/password-reset/verify', inviteVerifyLimiter, async (req, res) => {
+  const { token, u } = req.query;
+  if (!token || !u) return res.status(400).json({ error: 'token and u are required' });
+  const data = await loadData();
+  const acct = (data.accounts || []).find(a => a.id === u);
+  if (!acct?.passwordResetTokenHash) return res.status(404).json({ error: 'Invalid or expired reset link' });
+  if (Date.now() > (acct.passwordResetExpiry || 0)) {
+    return res.status(410).json({ error: 'This reset link has expired. Request a new one.' });
+  }
+  const ok = await bcrypt.compare(String(token), acct.passwordResetTokenHash);
+  if (!ok) return res.status(404).json({ error: 'Invalid or expired reset link' });
+  res.json({ ok: true, email: acct.email, name: acct.name });
+});
+
+// ── POST /api/auth/password-reset/complete ────────────────────────────────────
+// Body: { token, u, password }
+app.post('/api/auth/password-reset/complete', authLimiter, async (req, res) => {
+  const { token, u, password } = req.body || {};
+  if (!token || !u || !password) return res.status(400).json({ error: 'token, u, and password are required' });
+
+  const complexityErr = validatePasswordComplexity(password);
+  if (complexityErr) return res.status(400).json({ error: complexityErr });
+
+  const data = await loadData();
+  const acct = (data.accounts || []).find(a => a.id === u);
+  if (!acct?.passwordResetTokenHash) return res.status(404).json({ error: 'Invalid or expired reset link' });
+  if (Date.now() > (acct.passwordResetExpiry || 0)) {
+    return res.status(410).json({ error: 'This reset link has expired. Request a new one.' });
+  }
+  const ok = await bcrypt.compare(String(token), acct.passwordResetTokenHash);
+  if (!ok) return res.status(404).json({ error: 'Invalid or expired reset link' });
+
+  // Set new password + invalidate the reset token + clear lockout
+  acct.ph = await bcrypt.hash(password, 12);
+  acct.passwordResetTokenHash = null;
+  acct.passwordResetExpiry = null;
+  acct.failedAttempts = 0;
+  acct.lockedUntil = null;
+  markDirty();
+
+  auditLog('PWD_RESET_COMPLETED', acct);
+  // Don't auto-issue a token — force fresh login (which will trigger TOTP)
+  res.json({ ok: true, requiresLogin: true, email: acct.email });
+});
+
 // ── GET /api/invite/verify ────────────────────────────────────────────────────
 app.get('/api/invite/verify', inviteVerifyLimiter, async (req, res) => {
   const { token } = req.query;
