@@ -169,15 +169,20 @@ async function decrypt(obj) {
   return JSON.parse(dec.toString());
 }
 
-// ── IN-MEMORY CACHE + DEBOUNCED SAVE ─────────────────────────────────────────
+// ── DATA LAYER ────────────────────────────────────────────────────────────────
+// When PG_CONN is set, Postgres is the system of record. Otherwise fall back
+// to the encrypted file (single-instance dev mode).
+const dbRepo = require('./db/repo');
+
 let dataCache   = null;
 let dataDirty   = false;
 let saveTimeout = null;
+let _useDB      = false;
 
 function markDirty() {
   dataDirty = true;
   if (saveTimeout) clearTimeout(saveTimeout);
-  saveTimeout = setTimeout(persistCache, 2000);
+  saveTimeout = setTimeout(persistCache, _useDB ? 200 : 2000);
 }
 
 async function persistCache() {
@@ -185,48 +190,72 @@ async function persistCache() {
   dataDirty = false;
   clearTimeout(saveTimeout);
   try {
-    const payload   = { ...dataCache, _lastSaved: new Date().toISOString() };
-    const encrypted = await encrypt(payload);
-    const tmp       = DATA_FILE + '.tmp';
-    await fs.writeFile(tmp, JSON.stringify(encrypted, null, 2), 'utf8');
-    await fs.rename(tmp, DATA_FILE);
-    console.log('[mms] Data saved (encrypted)');
+    if (_useDB) {
+      await dbRepo.saveAll(dataCache);
+      logger.info('data_saved', { backend: 'postgres' });
+    } else {
+      const payload   = { ...dataCache, _lastSaved: new Date().toISOString() };
+      const encrypted = await encrypt(payload);
+      const tmp       = DATA_FILE + '.tmp';
+      await fs.writeFile(tmp, JSON.stringify(encrypted, null, 2), 'utf8');
+      await fs.rename(tmp, DATA_FILE);
+      logger.info('data_saved', { backend: 'file' });
+    }
   } catch (e) {
-    console.error('[mms] Save failed:', e.message);
+    logger.error('save_failed', { err: e.message });
   }
 }
 
 async function loadData() {
   if (dataCache) return dataCache;
-  try {
-    const raw    = await fs.readFile(DATA_FILE, 'utf8');
-    const parsed = JSON.parse(raw);
 
-    // Detect format: encrypted has { iv, data, authTag }; plain JSON does not
-    if (parsed.iv && parsed.data && parsed.authTag) {
-      dataCache = await decrypt(parsed);
-      console.log('[mms] Data loaded (encrypted)');
-    } else {
-      // Migrate from plain JSON to encrypted
-      dataCache = parsed;
-      dataDirty = true;
-      await persistCache();
-      console.log('[mms] Migrated data file to encrypted format');
+  // Initialize DB if connection string is present
+  if (process.env.PG_CONN) {
+    try {
+      dbRepo.init();
+      // Connectivity check
+      const ok = await dbRepo.ping();
+      if (ok) {
+        _useDB = true;
+        dataCache = await dbRepo.loadAll();
+        logger.info('data_loaded', { backend: 'postgres', accounts: (dataCache.accounts || []).length });
+      } else {
+        logger.warn('pg_ping_failed_fallback_to_file');
+      }
+    } catch (e) {
+      logger.error('pg_init_failed_fallback_to_file', { err: e.message });
     }
-  } catch (e) {
-    if (e.code === 'ENOENT') {
-      dataCache = {
-        accounts: [SEED_SA, SEED_DEMO],
-        buildings: [], employees: [], shifts: [], schedulePatterns: [],
-        hrEmployees: [], hrAccounts: [], hrTimeClock: [],
-        companies: [], jobPostings: [],
-      };
-      dataDirty = true;
-      await persistCache();
-      console.log('[mms] New encrypted data file created');
-    } else {
-      console.error('[mms] Data load failed:', e.message);
-      throw e;
+  }
+
+  // File-based fallback
+  if (!_useDB) {
+    try {
+      const raw    = await fs.readFile(DATA_FILE, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed.iv && parsed.data && parsed.authTag) {
+        dataCache = await decrypt(parsed);
+        logger.info('data_loaded', { backend: 'file' });
+      } else {
+        dataCache = parsed;
+        dataDirty = true;
+        await persistCache();
+        logger.info('data_migrated_to_encrypted_file');
+      }
+    } catch (e) {
+      if (e.code === 'ENOENT') {
+        dataCache = {
+          accounts: [SEED_SA, SEED_DEMO],
+          buildings: [], employees: [], shifts: [], schedulePatterns: [],
+          hrEmployees: [], hrAccounts: [], hrTimeClock: [],
+          companies: [], jobPostings: [],
+        };
+        dataDirty = true;
+        await persistCache();
+        logger.info('data_initialized_empty');
+      } else {
+        logger.error('data_load_failed', { err: e.message });
+        throw e;
+      }
     }
   }
 
@@ -822,9 +851,12 @@ app.get('/health', (_req, res) => {
 // Deep readiness probe — checks dependencies. Use for load-balancer health.
 app.get('/health/ready', async (_req, res) => {
   const checks = {
-    dataFile:     false,
+    dataBackend:  'unknown',
+    dataReady:    false,
     auditChain:   false,
     encryption:   'AES-256-GCM',
+    postgres:     null,
+    redis:        _redis ? 'connected' : 'not-configured',
     messaging: {
       acs:   !!ACS_CONNECTION_STRING,
       email: !!ACS_FROM_EMAIL,
@@ -833,7 +865,9 @@ app.get('/health/ready', async (_req, res) => {
   };
   try {
     await loadData();
-    checks.dataFile = true;
+    checks.dataReady = true;
+    checks.dataBackend = _useDB ? 'postgres' : 'file';
+    if (_useDB) checks.postgres = await dbRepo.ping();
   } catch (e) {
     return res.status(503).json({ ok: false, ...checks, error: 'data_unreachable' });
   }
@@ -1107,10 +1141,15 @@ app.post('/api/auth/logout', requireAuth, async (req, res) => {
 });
 
 // ── GET /api/data ─────────────────────────────────────────────────────────────
+// Returns ETag header so client can do optimistic concurrency on writes.
+let _dataVersion = Date.now().toString(36);
+function _bumpDataVersion() { _dataVersion = Date.now().toString(36) + '_' + crypto.randomBytes(3).toString('hex'); }
+
 app.get('/api/data', requireAuth, async (req, res) => {
   try {
     const data     = await loadData();
     const filtered = getDataForUser(req.user, data);
+    res.setHeader('ETag', `"${_dataVersion}"`);
     auditLog('DATA_ACCESS', req.user, { role: req.user.role });
     res.json(filtered);
   } catch (e) {
@@ -1125,6 +1164,18 @@ app.get('/api/data', requireAuth, async (req, res) => {
 app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   const payload = req.body;
   if (!payload || typeof payload !== 'object') return res.status(400).json({ error: 'Invalid payload' });
+
+  // Optimistic concurrency: if client sent If-Match, must match current version.
+  // Without this, two concurrent edits silently overwrite each other.
+  const ifMatch = (req.headers['if-match'] || '').replace(/"/g, '');
+  if (ifMatch && ifMatch !== _dataVersion) {
+    auditLog('DATA_UPDATE_CONFLICT', req.user, { provided: ifMatch, current: _dataVersion });
+    return res.status(412).json({
+      error: 'Data was modified by another user. Reload and try again.',
+      conflict: true,
+      currentVersion: _dataVersion,
+    });
+  }
 
   const data = await loadData();
   const isSA = req.user.role === 'superadmin';
@@ -1202,6 +1253,7 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   }
 
   dataCache = data;
+  _bumpDataVersion();
   markDirty();
   auditLog('DATA_UPDATE', req.user, {
     counts: {
@@ -1210,7 +1262,8 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
       shifts:    data.shifts?.length    || 0,
     },
   });
-  res.json({ ok: true });
+  res.setHeader('ETag', `"${_dataVersion}"`);
+  res.json({ ok: true, version: _dataVersion });
 });
 
 // ── POST /api/invite ──────────────────────────────────────────────────────────

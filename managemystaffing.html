@@ -3672,7 +3672,29 @@ const App = {
     this.persistData(); this.renderHRMain(); this.showToast('Open shift created');
   },
 
-  notifyHRShift(idx) { this.showToast('Notifications sent to eligible staff'); },
+  async notifyHRShift(idx) {
+    const shift = (this.S.shifts || [])[idx];
+    if (!shift) { this.showToast('Shift not found', 'warn'); return; }
+    // Find eligible staff (same group, in this building, with phone, not already on this shift)
+    const eligible = (this.S.employees || []).filter(e =>
+      e.group === (shift.role || shift.group) &&
+      e.buildingId === (shift.buildingId || this.S.user?.buildingId) &&
+      !e.inactive && e.phone && e.id !== shift.employeeId);
+    if (!eligible.length) { this.showToast('No eligible staff with phone numbers found', 'warn'); return; }
+    if (!confirm(`Send shift-coverage SMS to ${eligible.length} eligible staff?\n\nMessage: "An open shift is available. Sign in at ManageMyStaffing.com to view and claim."`)) return;
+    const msg = 'An open shift is available. Sign in at ManageMyStaffing.com to view and claim.';
+    let sent = 0; const failed = [];
+    for (const emp of eligible) {
+      const ok = await this._sendSMS(emp.phone, msg);
+      if (ok) sent++; else failed.push(emp.name);
+    }
+    this.logAudit('HR_SHIFT_NOTIFIED', `Notified ${sent} of ${eligible.length} eligible staff for ${shift.role||'open'} shift`);
+    if (failed.length) {
+      this.showToast(`Sent to ${sent}; failed for ${failed.slice(0,3).join(', ')}${failed.length>3?'…':''}`, 'warn');
+    } else {
+      this.showToast(`Notification sent to ${sent} eligible staff`);
+    }
+  },
   cancelHRShift(idx) {
     if (!confirm('Cancel this open shift?')) return;
     this.S.hrOpenShifts.splice(idx,1);
@@ -9516,12 +9538,28 @@ const App = {
       staffingSlots:this.S.staffingSlots,
       buildingShiftTypes:this.S.buildingShiftTypes,
     };
-    if (IS_SERVER_MODE && _authToken && !this.S.user?.demo) {
+    if (IS_SERVER_MODE && !this.S.user?.demo) {
       // HIPAA §164.312(a)(2)(iv) — never write PHI to client storage.
-      // Surface persistence failures to the user instead of silently dropping.
-      fetch('/api/data',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},body:JSON.stringify(payload)})
-        .then(r => {
-          if (!r.ok) this.showToast('Save failed — please retry your last change', 'warn');
+      // Optimistic concurrency via If-Match header — server rejects with 412 if
+      // another admin has saved since our last fetch.
+      const headers = { 'Content-Type': 'application/json' };
+      if (this.S._dataVersion) headers['If-Match'] = '"' + this.S._dataVersion + '"';
+      fetch('/api/data', { method: 'POST', headers, body: JSON.stringify(payload) })
+        .then(async r => {
+          if (r.status === 412) {
+            // Concurrent edit conflict
+            this.showToast('Another user updated this data. Reloading…', 'warn');
+            const dResp = await fetch('/api/data');
+            if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
+            return;
+          }
+          if (!r.ok) {
+            this.showToast('Save failed — please retry your last change', 'warn');
+            return;
+          }
+          // Update our version so the next save uses the freshest ETag
+          const etag = r.headers.get('ETag');
+          if (etag) this.S._dataVersion = etag.replace(/"/g, '');
         })
         .catch(() => this.showToast('Network error — your last change was not saved', 'warn'));
       return;
@@ -9542,7 +9580,9 @@ const App = {
     return false; // always force fresh fetch from /api/data
   },
 
-  applyServerData(data) {
+  applyServerData(data, etag) {
+    // Track the server's data version for optimistic concurrency on writes
+    if (etag) this.S._dataVersion = String(etag).replace(/"/g, '');
     // Always apply whatever the server sends — empty arrays are valid (fresh account = blank slate).
     // Never fall back to seed data for real users.
     if (!data) return;

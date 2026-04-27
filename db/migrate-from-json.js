@@ -63,24 +63,32 @@ function decrypt(blob, key) {
       );
     }
 
-    // Accounts
+    // Build set of valid building IDs for FK validation
+    const validBuildingIds = new Set((data.buildings || []).map(b => b.id));
+
+    // Accounts — drop buildingId references that don't exist (e.g. demo accounts
+    // pointing at b1 which was stripped by seed migration)
     for (const a of (data.accounts || [])) {
+      const bId = (a.buildingId && validBuildingIds.has(a.buildingId)) ? a.buildingId : null;
+      const bIds = (a.buildingIds || []).filter(id => validBuildingIds.has(id));
       await c.query(
         `INSERT INTO accounts
            (id, email, name, role, building_id, building_ids, "group",
             password_hash, totp_secret_encrypted, totp_enrolled_at,
             totp_recovery_codes_hashes, totp_recovery_codes_generated_at,
             failed_attempts, locked_until,
-            invite_token, invite_expiry, invited_by, invited_at, activated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+            invite_token, invite_expiry, invited_by, invited_at, activated_at,
+            password_reset_token_hash, password_reset_expiry)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
          ON CONFLICT (id) DO NOTHING`,
         [
-          a.id, a.email, a.name, a.role, a.buildingId || null, a.buildingIds || [], a.group || null,
+          a.id, a.email, a.name, a.role, bId, bIds, a.group || null,
           a.ph || null, a.totpSecret || null, a.totpEnrolledAt || null,
           a.totpRecoveryCodesHashes || null, a.totpRecoveryCodesGeneratedAt || null,
           a.failedAttempts || 0, a.lockedUntil ? new Date(a.lockedUntil) : null,
           a.inviteToken || null, a.inviteExpiry ? new Date(a.inviteExpiry) : null,
           a.invitedBy || null, a.invitedAt || null, a.activatedAt || null,
+          a.passwordResetTokenHash || null, a.passwordResetExpiry ? new Date(a.passwordResetExpiry) : null,
         ]
       );
     }

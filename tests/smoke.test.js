@@ -31,7 +31,8 @@ test('GET /health/ready validates audit chain + data + ACS', async () => {
   assert.equal(r.status, 200);
   const body = await r.json();
   assert.equal(body.auditChain, true, 'audit chain must verify');
-  assert.equal(body.dataFile, true, 'data file must be readable');
+  assert.equal(body.dataReady, true, 'data backend must be ready');
+  assert.ok(['file','postgres'].includes(body.dataBackend), 'dataBackend must be file or postgres');
 });
 
 test('POST without X-Requested-With is rejected (CSRF)', async () => {

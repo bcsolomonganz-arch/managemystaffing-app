@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS accounts (
   invited_by                      TEXT,
   invited_at                      TIMESTAMPTZ,
   activated_at                    TIMESTAMPTZ,
+  password_reset_token_hash       TEXT,
+  password_reset_expiry           TIMESTAMPTZ,
   created_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at                      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
