@@ -697,6 +697,15 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
           </select>
         </div>
       </div>
+      <div class="grid-2">
+        <div class="form-group"><label>Daily Rate ($)</label>
+          <input type="number" id="emp-daily-rate" placeholder="200" min="0" step="0.01" inputmode="decimal">
+          <div style="font-size:11px;color:var(--g500);margin-top:3px">Used by PPD cost calc · 1 shift = 8 hrs · OT &gt; 40 hrs/wk @ 1.5×</div>
+        </div>
+        <div class="form-group"><label>Hire Date</label>
+          <input type="date" id="emp-hire-date">
+        </div>
+      </div>
       <div class="section-label">Alert Timing &amp; Channels</div>
       <div class="notif-timing-group">
         <!-- Immediately -->
@@ -7837,6 +7846,103 @@ const App = {
     this.renderSidebar();
   },
 
+  // ── Cost helpers (used by PPD calculator) ───────────────────────────────
+  // dailyRate is the per-shift cost (1 shift = 8 hrs by default).
+  // hourlyRate is derived from dailyRate when not set, so OT math works
+  // even if the admin only entered a daily rate.
+  _empDailyRate(emp) {
+    if (!emp) return 0;
+    if (emp.dailyRate != null && emp.dailyRate !== '') return parseFloat(emp.dailyRate) || 0;
+    if (emp.hourlyRate != null && emp.hourlyRate !== '') return (parseFloat(emp.hourlyRate) || 0) * 8;
+    return 0;
+  },
+  _empHourlyRate(emp) {
+    if (!emp) return 0;
+    if (emp.hourlyRate != null && emp.hourlyRate !== '') return parseFloat(emp.hourlyRate) || 0;
+    if (emp.dailyRate != null && emp.dailyRate !== '') return (parseFloat(emp.dailyRate) || 0) / 8;
+    return 0;
+  },
+  // Hours of a single shift — defaults to 8 if start/end aren't set.
+  _shiftHours(s) {
+    if (!s) return 0;
+    if (s.start && s.end) {
+      const [sh, sm] = String(s.start).split(':').map(Number);
+      const [eh, em] = String(s.end).split(':').map(Number);
+      if (!isNaN(sh) && !isNaN(eh)) {
+        let mins = (eh*60 + (em||0)) - (sh*60 + (sm||0));
+        if (mins < 0) mins += 24*60;          // overnight
+        return mins / 60;
+      }
+    }
+    return 8;
+  },
+  // ISO week range (Mon → Sun) containing dateISO, in YYYY-MM-DD strings.
+  _weekRangeISO(dateISO) {
+    const d = new Date(dateISO + 'T00:00:00');
+    const day = d.getDay();                    // 0=Sun .. 6=Sat
+    const offset = day === 0 ? -6 : 1 - day;   // Monday-based week
+    const start = new Date(d); start.setDate(d.getDate() + offset);
+    const end   = new Date(start); end.setDate(start.getDate() + 6);
+    const fmt = x => x.toISOString().slice(0,10);
+    return { start: fmt(start), end: fmt(end) };
+  },
+  // Calendar month range containing dateISO.
+  _monthRangeISO(dateISO) {
+    const d = new Date(dateISO + 'T00:00:00');
+    const start = new Date(d.getFullYear(), d.getMonth(),     1);
+    const end   = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+    const fmt = x => x.toISOString().slice(0,10);
+    return { start: fmt(start), end: fmt(end) };
+  },
+  // Sum the OT premium (extra 0.5× pay above regular) over a date range,
+  // breaking each ISO week down so OT is correctly capped at >40 hrs/wk
+  // per employee. Returns dollars of OT premium.
+  _otPremiumOver(buildingId, fromISO, toISO) {
+    const empHourly = new Map();              // empId → hourlyRate
+    for (const e of this.S.employees) empHourly.set(e.id, this._empHourlyRate(e));
+    // Group all scheduled shifts that fall in [fromISO, toISO] by (empId, weekStart)
+    // and also count the hours that landed inside [fromISO, toISO] vs those that
+    // landed in the same week but outside the requested range, so we only
+    // attribute to the requested period the OT that actually occurred there.
+    const buckets = new Map();                // key = empId|weekStart  →  { weekHrs, inRangeHrs }
+    for (const s of this.S.shifts) {
+      if (s.buildingId !== buildingId) continue;
+      if (!s.employeeId || s.status !== 'scheduled') continue;
+      if (!empHourly.has(s.employeeId)) continue;
+      const wk = this._weekRangeISO(s.date);
+      const key = s.employeeId + '|' + wk.start;
+      const b = buckets.get(key) || { empId: s.employeeId, weekStart: wk.start, weekEnd: wk.end, weekHrs: 0, inRangeHrs: 0 };
+      const hrs = this._shiftHours(s);
+      b.weekHrs += hrs;
+      if (s.date >= fromISO && s.date <= toISO) b.inRangeHrs += hrs;
+      buckets.set(key, b);
+    }
+    let premium = 0;
+    for (const b of buckets.values()) {
+      if (b.weekHrs <= 40) continue;
+      const otHrsTotal     = b.weekHrs - 40;
+      const otHrsAttribute = b.weekHrs > 0 ? otHrsTotal * (b.inRangeHrs / b.weekHrs) : 0;
+      premium += otHrsAttribute * (empHourly.get(b.empId) || 0) * 0.5;
+    }
+    return premium;
+  },
+  // Daily base cost for a list of groups on a given date.
+  _dailyCostForGroups(buildingId, dateISO, groups) {
+    const empById = new Map(this.S.employees.map(e => [e.id, e]));
+    let cost = 0;
+    for (const s of this.S.shifts) {
+      if (s.buildingId !== buildingId || s.date !== dateISO || s.status !== 'scheduled') continue;
+      if (!s.employeeId) continue;
+      if (!groups.includes(s.group)) continue;
+      const emp = empById.get(s.employeeId);
+      if (!emp) continue;
+      // Pro-rate the daily rate by hours / 8 so non-8-hour shifts don't overcharge.
+      const hrs = this._shiftHours(s);
+      cost += this._empDailyRate(emp) * (hrs / 8);
+    }
+    return cost;
+  },
+
   recalcPPD() {
     const census = parseFloat(document.getElementById('ppd-census')?.value) || 0;
     const nmHrs  = parseFloat(document.getElementById('ppd-nm-hrs')?.value)  || 0;
@@ -7874,6 +7980,48 @@ const App = {
     if (totalEl) { totalEl.style.fontSize='22px'; totalEl.style.fontWeight='800'; }
     const nursingEl = document.getElementById('ppd-nursing-total');
     if (nursingEl) { nursingEl.style.fontSize='16px'; nursingEl.style.fontWeight='800'; }
+
+    // ── Daily staffing cost per position + OT panel ────────────────────────
+    const bId  = this.S.user?.buildingId || 'b1';
+    const date = this.S.ppdDate || TODAY;
+    const money = (n) => '$' + (Math.round(n * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const setCost = (id, n) => { const el = document.getElementById(id); if (el) el.textContent = money(n); };
+    const nmCost  = this._dailyCostForGroups(bId, date, ['Nurse Management']);
+    const rnCost  = this._dailyCostForGroups(bId, date, ['RN']);
+    const lpnCost = this._dailyCostForGroups(bId, date, ['Charge Nurse']);
+    const cnaCost = this._dailyCostForGroups(bId, date, ['CNA']);
+    const cmaCost = this._dailyCostForGroups(bId, date, ['CMA']);
+    const hkCost  = this._dailyCostForGroups(bId, date, ['Housekeeping']);
+    const ldCost  = this._dailyCostForGroups(bId, date, ['Laundry']);
+    const dtCost  = this._dailyCostForGroups(bId, date, ['Cook','Dietary Aid']);
+    setCost('ppd-nm-cost',  nmCost);
+    setCost('ppd-rn-cost',  rnCost);
+    setCost('ppd-lpn-cost', lpnCost);
+    setCost('ppd-cna-cost', cnaCost);
+    setCost('ppd-cma-cost', cmaCost);
+    setCost('ppd-hk-cost',  hkCost);
+    setCost('ppd-ld-cost',  ldCost);
+    setCost('ppd-dt-cost',  dtCost);
+    const nursingCost  = nmCost + rnCost + lpnCost + cnaCost + cmaCost;
+    const supportCost  = hkCost + ldCost + dtCost;
+    const totalDayCost = nursingCost + supportCost;
+    setCost('ppd-nursing-cost-total', nursingCost);
+    setCost('ppd-total-day-cost',     totalDayCost);
+
+    // OT premium (extra 0.5× over regular pay) over different windows.
+    const wk = this._weekRangeISO(date);
+    const mo = this._monthRangeISO(date);
+    const otDay   = this._otPremiumOver(bId, date, date);
+    const otWeek  = this._otPremiumOver(bId, wk.start, wk.end);
+    const otMonth = this._otPremiumOver(bId, mo.start, mo.end);
+    setCost('ppd-ot-day',   otDay);
+    setCost('ppd-ot-week',  otWeek);
+    setCost('ppd-ot-month', otMonth);
+    const otRangeEl = document.getElementById('ppd-ot-week-range');
+    if (otRangeEl) otRangeEl.textContent = `${wk.start} → ${wk.end}`;
+    const otMonthRangeEl = document.getElementById('ppd-ot-month-range');
+    if (otMonthRangeEl) otMonthRangeEl.textContent = `${mo.start.slice(0,7)}`;
+
     // Drive CMS star rating from current PPD values
     if (census > 0) {
       const rnPPD      = rnHrs      / census;
@@ -8222,6 +8370,7 @@ const App = {
             style="width:70px;padding:5px 8px;border:1.5px solid var(--g200);border-radius:6px;font-size:13px;font-weight:600;text-align:center;color:var(--g800)">
         </td>
         <td style="padding:11px 14px;text-align:center;font-size:15px;font-weight:700;color:var(--g600)" id="ppd-${id}-result">—</td>
+        <td style="padding:11px 14px;text-align:right;font-size:13px;font-weight:700;color:var(--g700);font-variant-numeric:tabular-nums" id="ppd-${id}-cost">$0.00</td>
         ${benchmark!==undefined ? `<td style="padding:11px 14px;text-align:center;font-size:11px;color:var(--g600)">≥ ${benchmark}</td>` : '<td></td>'}
       </tr>`;
 
@@ -8274,6 +8423,7 @@ const App = {
             <th style="padding:8px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Position</th>
             <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Hours / Day</th>
             <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">PPD</th>
+            <th style="padding:8px 14px;text-align:right;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Cost / Day</th>
             <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Min.</th>
           </tr></thead>
           <tbody style="divide-y:var(--g100)">
@@ -8288,6 +8438,7 @@ const App = {
               <td style="padding:13px 14px;font-size:13px;font-weight:800;color:var(--blue-d)">Total Nursing PPD</td>
               <td></td>
               <td style="padding:13px 14px;text-align:center;font-size:16px;font-weight:800;color:var(--blue-d)" id="ppd-nursing-total">—</td>
+              <td style="padding:13px 14px;text-align:right;font-size:14px;font-weight:800;color:var(--blue-d);font-variant-numeric:tabular-nums" id="ppd-nursing-cost-total">$0.00</td>
               <td style="padding:13px 14px;text-align:center;font-size:11px;color:var(--g500)">≥ 3.48</td>
             </tr>
           </tfoot>
@@ -8304,6 +8455,7 @@ const App = {
             <th style="padding:8px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Department</th>
             <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Hours / Day</th>
             <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">PPD</th>
+            <th style="padding:8px 14px;text-align:right;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Cost / Day</th>
             <th></th>
           </tr></thead>
           <tbody>
@@ -8315,12 +8467,43 @@ const App = {
       </div>
 
       <!-- COMBINED TOTAL -->
-      <div style="background:var(--blue-l);border:2px solid var(--blue-m);border-radius:12px;padding:20px;display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
-        <div>
+      <div style="background:var(--blue-l);border:2px solid var(--blue-m);border-radius:12px;padding:20px;display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:24px;flex-wrap:wrap">
+        <div style="flex:1;min-width:200px">
           <div style="font-size:13px;font-weight:700;color:var(--blue-d);text-transform:uppercase;letter-spacing:.06em">Total Combined Staffing PPD</div>
           <div style="font-size:12px;color:var(--g500);margin-top:3px">All nursing + all support departments</div>
         </div>
         <div id="ppd-combined-total" style="font-size:28px;font-weight:800;color:var(--blue-d)">—</div>
+        <div style="border-left:1.5px solid var(--blue-m);padding-left:24px;text-align:right">
+          <div style="font-size:11px;font-weight:700;color:var(--blue-d);text-transform:uppercase;letter-spacing:.06em">Total Daily Staffing Cost</div>
+          <div style="font-size:11px;color:var(--g500);margin-top:3px">Base pay · excludes OT premium</div>
+          <div id="ppd-total-day-cost" style="font-size:24px;font-weight:800;color:var(--blue-d);margin-top:6px;font-variant-numeric:tabular-nums">$0.00</div>
+        </div>
+      </div>
+
+      <!-- OVERTIME COSTS -->
+      <div style="background:#FFFBEB;border:1.5px solid #FCD34D;border-radius:12px;padding:18px 20px;margin-bottom:20px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#B45309" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>
+          <div style="font-size:13px;font-weight:800;color:#92400E;text-transform:uppercase;letter-spacing:.06em">Overtime Costs</div>
+          <div style="font-size:11px;color:var(--g600);margin-left:auto">Premium pay (0.5×) on hours &gt; 40/wk per employee</div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
+          <div style="background:#fff;border:1px solid #FDE68A;border-radius:10px;padding:14px">
+            <div style="font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">Daily</div>
+            <div style="font-size:11px;color:var(--g500);margin-top:2px">Today's OT premium</div>
+            <div id="ppd-ot-day" style="font-size:22px;font-weight:800;color:#92400E;margin-top:6px;font-variant-numeric:tabular-nums">$0.00</div>
+          </div>
+          <div style="background:#fff;border:1px solid #FDE68A;border-radius:10px;padding:14px">
+            <div style="font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">Weekly</div>
+            <div id="ppd-ot-week-range" style="font-size:11px;color:var(--g500);margin-top:2px">—</div>
+            <div id="ppd-ot-week" style="font-size:22px;font-weight:800;color:#92400E;margin-top:6px;font-variant-numeric:tabular-nums">$0.00</div>
+          </div>
+          <div style="background:#fff;border:1px solid #FDE68A;border-radius:10px;padding:14px">
+            <div style="font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">Monthly</div>
+            <div id="ppd-ot-month-range" style="font-size:11px;color:var(--g500);margin-top:2px">—</div>
+            <div id="ppd-ot-month" style="font-size:22px;font-weight:800;color:#92400E;margin-top:6px;font-variant-numeric:tabular-nums">$0.00</div>
+          </div>
+        </div>
       </div>
 
       <!-- CMS STAR RATING -->
@@ -9398,6 +9581,9 @@ const App = {
     const phone=sanitizeInput(document.getElementById('emp-phone').value.trim(), 20);
     const role=document.getElementById('emp-role').value;
     const employmentType=document.getElementById('emp-employment-type').value;
+    const dailyRateRaw = document.getElementById('emp-daily-rate')?.value;
+    const dailyRate = dailyRateRaw ? Math.max(0, parseFloat(dailyRateRaw) || 0) : null;
+    const hireDate = document.getElementById('emp-hire-date')?.value || null;
     if(!name||!pos||!email){this.showToast('Name, position, and email are required','warn');return;}
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){this.showToast('Invalid email address','warn');return;}
     if(!['Nurse Management','Charge Nurse','CNA','CMA','Housekeeping','Laundry','Cook','Dietary Aid'].includes(pos)){this.showToast('Invalid position','warn');return;}
@@ -9433,13 +9619,18 @@ const App = {
       this.S.accounts.push({id:`a${Date.now()}`,name,email,role:'admin',buildingId:bId});
     } else {
       const termLog = prior?.terminationLog || [];
-      this.S.employees.push({id:`e${Date.now()}`,name,group:pos,email,phone,buildingId:bId,notifEmail,notifSMS,notifPrefs:prefs,notifChannels,initials,terminationLog:termLog,inactive:false,employmentType});
+      this.S.employees.push({
+        id:`e${Date.now()}`,name,group:pos,email,phone,buildingId:bId,
+        notifEmail,notifSMS,notifPrefs:prefs,notifChannels,initials,
+        terminationLog:termLog,inactive:false,employmentType,
+        dailyRate, hireDate,
+      });
     }
     Audit.log('EMPLOYEE_ADDED', `Added ${sanitize(name)} (${sanitize(pos)})`, this.S.user?.id, 'medium');
     this.persistData();
     this.closeModal('modal-add-emp');
     this.showToast(`${sanitize(name)} added as ${role==='admin'?'Admin':sanitize(pos)}`);
-    ['emp-name','emp-email','emp-phone'].forEach(id=>document.getElementById(id).value='');
+    ['emp-name','emp-email','emp-phone','emp-daily-rate','emp-hire-date'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
     document.getElementById('emp-position').value='';
     this.render();
   },
