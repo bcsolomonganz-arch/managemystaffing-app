@@ -30,3 +30,8 @@ rotate-data-key.js
 # Deploy artifacts
 *.zip
 mms-deploy*.zip
+
+# Compliance documents (kept locally only)
+*.docx
+*.pdf
+ManageMyStaffing Hipaa/
