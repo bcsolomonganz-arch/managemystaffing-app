@@ -710,13 +710,17 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
         <div style="font-size:11px;color:var(--g500);margin-top:3px">Scheduler Access hides Cost/Day, Total Daily Staffing Cost, Overtime Costs, and employee hourly rates.</div>
       </div>
       <div class="grid-2">
-        <div class="form-group"><label>Hourly Rate ($)</label>
+        <div class="form-group"><label>Hourly Rate ($/hr)</label>
           <input type="number" id="emp-hourly-rate" placeholder="22" min="0" step="0.01" inputmode="decimal">
           <div style="font-size:11px;color:var(--g500);margin-top:3px">Used by PPD cost calc · OT &gt; 40 hrs/wk @ 1.5×</div>
         </div>
         <div class="form-group"><label>Hire Date</label>
           <input type="date" id="emp-hire-date">
         </div>
+      </div>
+      <div class="form-group"><label>Date of Birth</label>
+        <input type="date" id="emp-dob">
+        <div style="font-size:11px;color:var(--g500);margin-top:3px">Shown on Staff Events calendar as a birthday.</div>
       </div>
       <div class="section-label">Alert Timing &amp; Channels</div>
       <div class="notif-timing-group">
@@ -1549,6 +1553,16 @@ const App = {
     ppdCalMonth: null,        // 'YYYY-MM' currently displayed; lazy-init to current month
     ppdDailyCensus: {},       // { 'YYYY-MM-DD': number } — populated by Sync Month from PCC
     ppdCalLoading: false,
+    // Staff Events (custom events admins create — birthdays/anniversaries
+    // are derived from employee.dob / employee.hireDate, not stored here).
+    staffEvents: [],          // [{id,date:'YYYY-MM-DD',title,type,buildingId,createdBy,createdAt}]
+    eventsCalMonth: null,     // 'YYYY-MM' currently displayed
+    // Texts (alert log + replies)
+    alertLog: [],             // populated by /api/data; see server's data.alertLog
+    textsLastSeen: 0,         // ms timestamp of last time the user opened the Texts view
+    // View flags
+    eventsView: false,
+    textsView: false,
     // Time Clock
     tcSort: {col:'date', dir:-1},
     tcMissedPeriod: null,
@@ -1958,8 +1972,15 @@ const App = {
     }
   },
 
-  // ── 15-MIN IDLE TIMEOUT (HIPAA §164.312(a)(2)(iii)) ──────
+  // ── IDLE TIMEOUT (HIPAA §164.312(a)(2)(iii)) ─────────────
+  // Employees: never auto-logged out (clinical workflow, kiosk-style use).
+  // Admins / superadmins: 2 hours of inactivity → forced logout.
   _idleTimer: null,
+  _idleMs() {
+    const role = this.S?.user?.role;
+    if (role === 'admin' || role === 'superadmin' || role === 'regionaladmin') return 2 * 60 * 60 * 1000;
+    return null; // null = never auto-logout
+  },
   _idleStart() {
     this._idleReset();
     ['mousemove','mousedown','keydown','touchstart','scroll'].forEach(ev =>
@@ -1967,10 +1988,12 @@ const App = {
   },
   _idleReset() {
     if (this._idleTimer) clearTimeout(this._idleTimer);
-    this._idleTimer = setTimeout(() => this._idleLogout(), 15 * 60 * 1000);
+    const ms = this._idleMs();
+    if (ms == null) return; // employee → never time out
+    this._idleTimer = setTimeout(() => this._idleLogout(), ms);
   },
   async _idleLogout() {
-    Audit.log('IDLE_TIMEOUT', 'Auto-logout after 15 min idle', this.S.user?.id, 'medium');
+    Audit.log('IDLE_TIMEOUT', 'Auto-logout after 2h idle', this.S.user?.id, 'medium');
     try { await fetch('/api/auth/logout', { method: 'POST' }); } catch(e) {}
     location.reload();
   },
@@ -3302,6 +3325,19 @@ const App = {
         <div class="group-icon" style="background:#FFF7ED;color:#C2410C"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="1" width="14" height="14" rx="2"/><path d="M4 8h8M8 4v8"/></svg></div>
         PPD Calculator
       </div>
+      <div class="group-item${this.S.eventsView?' active':''}" onclick="App.openStaffEvents()" style="cursor:pointer">
+        <div class="group-icon" style="background:var(--green-l);color:#047857"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="13" rx="1.5"/><path d="M1 6h14M5 1v3M11 1v3"/><circle cx="8" cy="10" r="1.5" fill="currentColor"/></svg></div>
+        Staff Events
+      </div>
+      ${(() => {
+        const unread = this._textsUnreadCount();
+        const bg = unread > 0 ? 'background:#FDE68A' : '';
+        return `<div class="group-item${this.S.textsView?' active':''}" onclick="App.openTexts()" style="cursor:pointer;${bg}">
+          <div class="group-icon" style="background:${unread>0?'#F59E0B':'var(--g100)'};color:${unread>0?'#fff':'var(--g600)'}"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v9H6l-3 3V3z"/></svg></div>
+          Texts
+          ${unread > 0 ? `<span class="group-badge" style="background:#D97706;color:#fff;margin-left:auto">${unread}</span>` : ''}
+        </div>`;
+      })()}
       ${(() => {
         const pendingClaims = (this.S.shifts || []).filter(s => s.claimRequest && s.buildingId === effBuildingId);
         if (!pendingClaims.length) return '';
@@ -7742,8 +7778,11 @@ const App = {
   },
 
   openPPDCalc() {
-    this.S.ppdView = true;
-    this.S.panelOpen = false;
+    this.S.ppdView    = true;
+    this.S.eventsView = false;
+    this.S.textsView  = false;
+    this.S.rosterView = false;
+    this.S.panelOpen  = false;
     document.getElementById('right-panel').classList.remove('open');
     document.getElementById('main').classList.remove('panel-open');
     if (!this.S.ppdDate) this.S.ppdDate = TODAY;
@@ -7758,11 +7797,261 @@ const App = {
     this.renderMain();
   },
 
+  // ── STAFF EVENTS ────────────────────────────────────────────────────────
+  openStaffEvents() {
+    this.S.eventsView  = true;
+    this.S.ppdView     = false;
+    this.S.textsView   = false;
+    this.S.rosterView  = false;
+    this.S.panelOpen   = false;
+    document.getElementById('right-panel')?.classList.remove('open');
+    document.getElementById('main')?.classList.remove('panel-open');
+    if (!this.S.eventsCalMonth) this.S.eventsCalMonth = TODAY.slice(0,7);
+    this.render();
+  },
+
+  closeStaffEvents() {
+    this.S.eventsView = false;
+    this.render();
+  },
+
+  eventsCalNav(dir) {
+    const cur = this.S.eventsCalMonth || TODAY.slice(0,7);
+    const [y,m] = cur.split('-').map(Number);
+    const d = new Date(y, m-1+dir, 1);
+    this.S.eventsCalMonth = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    this.renderMain();
+  },
+
+  // Birthdays + anniversaries derive from employee.dob / employee.hireDate.
+  // We match month-day so the same person shows up every year.
+  _eventsForDay(buildingId, dateISO) {
+    const out = [];
+    const md = dateISO.slice(5);             // 'MM-DD'
+    const year = parseInt(dateISO.slice(0,4), 10);
+    const emps = (this.S.employees || []).filter(e => e.buildingId === buildingId && !e.inactive);
+    for (const e of emps) {
+      if (e.dob && e.dob.length >= 10 && e.dob.slice(5) === md) {
+        out.push({ kind:'birthday', label:`${e.name}'s birthday`, empId:e.id });
+      }
+      if (e.hireDate && e.hireDate.length >= 10 && e.hireDate.slice(5) === md) {
+        const startYear = parseInt(e.hireDate.slice(0,4), 10);
+        const yrs = year - startYear;
+        if (yrs >= 1) out.push({ kind:'anniversary', label:`${e.name} — ${yrs}-yr anniversary`, empId:e.id });
+      }
+    }
+    for (const ev of (this.S.staffEvents || [])) {
+      if (ev.date === dateISO && (!ev.buildingId || ev.buildingId === buildingId)) {
+        out.push({ kind: ev.type || 'custom', label: ev.title, id: ev.id, custom: true });
+      }
+    }
+    return out;
+  },
+
+  addStaffEvent(dateISO) {
+    const title = prompt(`Event title for ${dateISO}:`);
+    if (!title || !title.trim()) return;
+    const type = (prompt('Type — nursing / activity / appreciation / other:', 'activity') || 'activity').trim().toLowerCase();
+    const validTypes = ['nursing','activity','appreciation','other'];
+    const t = validTypes.includes(type) ? type : 'other';
+    if (!Array.isArray(this.S.staffEvents)) this.S.staffEvents = [];
+    this.S.staffEvents.push({
+      id: 'ev_' + Date.now(),
+      date: dateISO,
+      title: title.trim(),
+      type: t,
+      buildingId: this.S.user.buildingId || null,
+      createdBy: this.S.user.email,
+      createdAt: new Date().toISOString(),
+    });
+    this.persistData();
+    this.renderMain();
+  },
+
+  removeStaffEvent(id) {
+    if (!confirm('Remove this event?')) return;
+    this.S.staffEvents = (this.S.staffEvents || []).filter(e => e.id !== id);
+    this.persistData();
+    this.renderMain();
+  },
+
+  renderStaffEvents() {
+    const bId = this.S.user.buildingId || 'b1';
+    const monthKey = this.S.eventsCalMonth || (this.S.eventsCalMonth = TODAY.slice(0,7));
+    const [y,m]   = monthKey.split('-').map(Number);
+    const firstDow = new Date(y, m-1, 1).getDay();
+    const daysInMo = new Date(y, m, 0).getDate();
+    const monthLbl = new Date(y, m-1, 1).toLocaleString('default', { month:'long', year:'numeric' });
+    const building = this.S.buildings.find(b => b.id === bId);
+
+    const dows = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const dowHdr = dows.map(d =>
+      `<div style="padding:8px 4px;font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.06em;text-align:center;background:var(--g50);border-bottom:1px solid var(--g200)">${d}</div>`
+    ).join('');
+
+    const svg = (paths) => `<svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0">${paths}</svg>`;
+    const eventColor = (kind) => ({
+      // Cake (cylinder + candle)
+      birthday:    { bg:'#FEF3C7', col:'#92400E', icon: svg('<path d="M2 13V8h12v5z"/><path d="M2 11h12"/><path d="M8 5v3M5 5v3M11 5v3"/>') },
+      // Stars (anniversary)
+      anniversary: { bg:'var(--green-l)', col:'#047857', icon: svg('<path d="M8 2l1.5 3.5L13 6l-2.5 2.5L11 12 8 10.5 5 12l.5-3.5L3 6l3.5-.5z"/>') },
+      // Stethoscope (nursing)
+      nursing:     { bg:'var(--blue-l)', col:'var(--blue-d)', icon: svg('<path d="M5 2v5a3 3 0 0 0 6 0V2"/><circle cx="8" cy="12" r="2"/><path d="M5 2h1M10 2h1"/>') },
+      // Calendar tick (activity)
+      activity:    { bg:'#EDE9FE', col:'#6D28D9', icon: svg('<rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6h12M5 2v3M11 2v3"/>') },
+      // Heart outline (appreciation)
+      appreciation:{ bg:'#FCE7F3', col:'#BE185D', icon: svg('<path d="M8 13s-5-3.5-5-7a3 3 0 0 1 5-2 3 3 0 0 1 5 2c0 3.5-5 7-5 7z"/>') },
+      other:       { bg:'var(--g100)', col:'var(--g700)', icon: svg('<circle cx="8" cy="8" r="2.5"/>') },
+      custom:      { bg:'var(--g100)', col:'var(--g700)', icon: svg('<circle cx="8" cy="8" r="2.5"/>') },
+    }[kind] || { bg:'var(--g100)', col:'var(--g700)', icon: svg('<circle cx="8" cy="8" r="2.5"/>') });
+
+    const cells = [];
+    for (let i = 0; i < firstDow; i++) cells.push(`<div style="background:var(--g50);min-height:120px;border-right:1px solid var(--g100);border-bottom:1px solid var(--g100)"></div>`);
+    for (let d = 1; d <= daysInMo; d++) {
+      const dateISO = `${monthKey}-${String(d).padStart(2,'0')}`;
+      const isToday = dateISO === TODAY;
+      const events  = this._eventsForDay(bId, dateISO);
+      const evHtml  = events.map(ev => {
+        const c = eventColor(ev.kind);
+        const removable = ev.custom
+          ? `<button onclick="event.stopPropagation();App.removeStaffEvent('${ev.id}')" style="background:none;border:none;color:${c.col};opacity:.5;cursor:pointer;padding:0;margin-left:auto;font-size:11px" title="Remove">×</button>`
+          : '';
+        return `<div style="background:${c.bg};color:${c.col};padding:2px 5px;border-radius:4px;font-size:10px;font-weight:600;display:flex;align-items:center;gap:3px;line-height:1.3" title="${sanitize(ev.label)}">
+          <span style="flex-shrink:0">${c.icon}</span>
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">${sanitize(ev.label)}</span>
+          ${removable}
+        </div>`;
+      }).join('');
+      cells.push(`<div onclick="App.addStaffEvent('${dateISO}')" style="background:#fff;min-height:120px;padding:6px;border-right:1px solid var(--g100);border-bottom:1px solid var(--g100);${isToday?'box-shadow:inset 0 0 0 2px var(--green)':''};display:flex;flex-direction:column;gap:3px;cursor:pointer;transition:background .15s" onmouseover="this.style.background='var(--g50)'" onmouseout="this.style.background='#fff'">
+        <div style="font-size:11px;font-weight:${isToday?'800':'700'};color:${isToday?'#047857':'var(--g700)'}">${d}</div>
+        ${evHtml}
+      </div>`);
+    }
+    const tail = (7 - ((firstDow + daysInMo) % 7)) % 7;
+    for (let i = 0; i < tail; i++) cells.push(`<div style="background:var(--g50);min-height:120px;border-right:1px solid var(--g100);border-bottom:1px solid var(--g100)"></div>`);
+
+    return `<div style="padding:20px;max-width:1100px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px">
+        <div>
+          <div style="font-size:20px;font-weight:800;color:var(--g900)">Staff Events</div>
+          <div style="font-size:13px;color:var(--g500);margin-top:2px">${sanitize(building?.name||'')} · birthdays + anniversaries from staff cards · click any day to add a custom event</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button onclick="App.eventsCalNav(-1)" style="width:30px;height:30px;border-radius:6px;border:1px solid var(--g200);background:#fff;cursor:pointer;color:var(--g600)">◀</button>
+          <div style="font-size:14px;font-weight:800;color:var(--g900);min-width:160px;text-align:center">${monthLbl}</div>
+          <button onclick="App.eventsCalNav(1)" style="width:30px;height:30px;border-radius:6px;border:1px solid var(--g200);background:#fff;cursor:pointer;color:var(--g600)">▶</button>
+          <button onclick="App.S.eventsCalMonth=TODAY.slice(0,7);App.renderMain()" style="padding:5px 12px;border-radius:6px;border:1px solid var(--g200);background:#fff;cursor:pointer;font-size:12px;font-weight:600;color:var(--g700)">Today</button>
+        </div>
+      </div>
+
+      <div style="background:#fff;border:1.5px solid var(--g200);border-radius:12px;overflow:hidden">
+        <div style="display:grid;grid-template-columns:repeat(7,1fr);background:var(--g100)">${dowHdr}</div>
+        <div style="display:grid;grid-template-columns:repeat(7,1fr);background:var(--g100)">${cells.join('')}</div>
+      </div>
+
+      <div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:14px;font-size:11px;color:var(--g600)">
+        ${[
+          {kind:'birthday', label:'Birthday (from DOB)'},
+          {kind:'anniversary', label:'Work anniversary (from hire date)'},
+          {kind:'nursing', label:'Nursing event'},
+          {kind:'activity', label:'Facility activity'},
+          {kind:'appreciation', label:'Appreciation'},
+        ].map(({kind,label}) => {
+          const c = eventColor(kind);
+          return `<span style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;background:${c.bg};color:${c.col};border-radius:6px;font-weight:600">${c.icon}${label}</span>`;
+        }).join('')}
+      </div>
+    </div>`;
+  },
+
+  // ── TEXTS (alert log) ───────────────────────────────────────────────────
+  _textsUnreadCount() {
+    const seen = this.S.textsLastSeen || 0;
+    let count = 0;
+    for (const e of (this.S.alertLog || [])) {
+      for (const r of (e.replies || [])) {
+        const t = r.receivedAt ? new Date(r.receivedAt).getTime() : 0;
+        if (t > seen) count++;
+      }
+    }
+    return count;
+  },
+
+  openTexts() {
+    this.S.textsView   = true;
+    this.S.eventsView  = false;
+    this.S.ppdView     = false;
+    this.S.rosterView  = false;
+    this.S.panelOpen   = false;
+    document.getElementById('right-panel')?.classList.remove('open');
+    document.getElementById('main')?.classList.remove('panel-open');
+    this.S.textsLastSeen = Date.now();
+    this.persistData();
+    this.render();
+  },
+
+  closeTexts() {
+    this.S.textsView = false;
+    this.render();
+  },
+
+  renderTexts() {
+    const log = (this.S.alertLog || []).slice().sort((a,b) =>
+      new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime());
+    const fmtTime = iso => {
+      try {
+        const d = new Date(iso);
+        return d.toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+      } catch { return iso; }
+    };
+    const items = log.length ? log.map(e => {
+      const smsRecipients   = (e.recipients?.sms   || []);
+      const emailRecipients = (e.recipients?.email || []);
+      const replyHtml = (e.replies && e.replies.length)
+        ? e.replies.map(r => `<div style="background:var(--green-l);border-left:3px solid var(--green);padding:8px 10px;border-radius:4px;margin-top:6px">
+            <div style="font-size:11px;font-weight:700;color:#047857">${sanitize(r.from || 'Unknown')}<span style="font-weight:500;color:var(--g500);margin-left:6px">${fmtTime(r.receivedAt)}</span></div>
+            <div style="font-size:13px;color:var(--g800);margin-top:2px">${sanitize(r.body || '')}</div>
+          </div>`).join('')
+        : `<div style="font-size:11px;color:var(--g500);margin-top:6px;font-style:italic">No replies yet · point your inbound SMS webhook at /api/sms/inbound to capture replies here</div>`;
+      const channelChips = `${e.channels?.sms ? `<span style="background:var(--blue-l);color:var(--blue-d);padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700">SMS · ${smsRecipients.length}</span>` : ''}
+        ${e.channels?.email ? `<span style="background:var(--g100);color:var(--g700);padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700">EMAIL · ${emailRecipients.length}</span>` : ''}`;
+      return `<div style="background:#fff;border:1.5px solid var(--g200);border-radius:10px;padding:14px 16px;margin-bottom:10px">
+        <div style="display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:700;color:var(--g900)">${sanitize(e.subject || 'Alert')}</div>
+            <div style="font-size:11px;color:var(--g500);margin-top:2px">
+              <span>${fmtTime(e.sentAt)}</span> · <span>by ${sanitize(e.sentBy)}</span> · <span>${sanitize((e.groups||[]).join(', ') || '—')}</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">${channelChips}</div>
+        </div>
+        <div style="font-size:13px;color:var(--g800);background:var(--g50);padding:10px 12px;border-radius:6px;white-space:pre-wrap;word-break:break-word">${sanitize(e.message)}</div>
+        ${replyHtml}
+      </div>`;
+    }).join('') : `<div style="padding:60px;text-align:center;color:var(--g600)">
+      <svg viewBox="0 0 48 48" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" style="margin:0 auto 14px;display:block;opacity:.3"><path d="M6 9h36v27H18l-9 9V9z"/></svg>
+      <div style="font-weight:700;font-size:14px;color:var(--g600)">No alerts sent yet</div>
+      <div style="font-size:12px;margin-top:6px">When you click "Send Alert" in the header, the message and any replies will show here.</div>
+    </div>`;
+
+    return `<div style="padding:20px;max-width:760px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+        <div>
+          <div style="font-size:20px;font-weight:800;color:var(--g900)">Texts</div>
+          <div style="font-size:13px;color:var(--g500);margin-top:2px">All SMS / email alerts sent from this facility · replies inbound to your Twilio/ACS number land here</div>
+        </div>
+      </div>
+      ${items}
+    </div>`;
+  },
+
   // ── ROSTER ──────────────────────────────────────────────────
   openRoster() {
     this.S.rosterView = true;
-    this.S.ppdView = false;
-    this.S.panelOpen = false;
+    this.S.ppdView    = false;
+    this.S.eventsView = false;
+    this.S.textsView  = false;
+    this.S.panelOpen  = false;
     document.getElementById('right-panel').classList.remove('open');
     document.getElementById('main').classList.remove('panel-open');
     this.renderMain();
@@ -8611,6 +8900,18 @@ const App = {
     if (this.S.ppdView) {
       document.getElementById('main').innerHTML = this.renderPPDCalc();
       this.loadPPDDate();
+      return;
+    }
+
+    // ── STAFF EVENTS ─────────────────────────────────────────
+    if (this.S.eventsView) {
+      document.getElementById('main').innerHTML = this.renderStaffEvents();
+      return;
+    }
+
+    // ── TEXTS ────────────────────────────────────────────────
+    if (this.S.textsView) {
+      document.getElementById('main').innerHTML = this.renderTexts();
       return;
     }
 
@@ -9795,6 +10096,8 @@ const App = {
     this.S.calView = 'month';
     this.S.ppdView = false;
     this.S.rosterView = false;
+    this.S.eventsView = false;
+    this.S.textsView  = false;
     this.render();
   },
   setCalView(v) { this.S.calView=v; if(v==='day'&&!this.S.selectedDate) this.S.selectedDate=TODAY; this.renderMain(); },
@@ -9999,6 +10302,7 @@ const App = {
     const hourlyRateRaw = document.getElementById('emp-hourly-rate')?.value;
     const hourlyRate = hourlyRateRaw ? Math.max(0, parseFloat(hourlyRateRaw) || 0) : null;
     const hireDate = document.getElementById('emp-hire-date')?.value || null;
+    const dob      = document.getElementById('emp-dob')?.value || null;
     const adminAccess = document.getElementById('emp-admin-access')?.value || 'full';
     if(!name||!pos||!email){this.showToast('Name, position, and email are required','warn');return;}
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){this.showToast('Invalid email address','warn');return;}
@@ -10040,7 +10344,7 @@ const App = {
         id:`e${Date.now()}`,name,group:pos,email,phone,buildingId:bId,
         notifEmail,notifSMS,notifPrefs:prefs,notifChannels,initials,
         terminationLog:termLog,inactive:false,employmentType,
-        hourlyRate, hireDate,
+        hourlyRate, hireDate, dob,
       });
     }
     Audit.log('EMPLOYEE_ADDED', `Added ${sanitize(name)} (${sanitize(pos)})`, this.S.user?.id, 'medium');
@@ -10048,7 +10352,7 @@ const App = {
     this.closeModal('modal-add-emp');
     const accessLabel = role==='admin' ? (adminAccess==='scheduler' ? 'Admin (Scheduler Access)' : 'Admin') : sanitize(pos);
     this.showToast(`${sanitize(name)} added as ${accessLabel}`);
-    ['emp-name','emp-email','emp-phone','emp-hourly-rate','emp-hire-date'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+    ['emp-name','emp-email','emp-phone','emp-hourly-rate','emp-hire-date','emp-dob'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
     const accessSel = document.getElementById('emp-admin-access'); if (accessSel) accessSel.value='full';
     document.getElementById('emp-position').value='';
     this.render();
@@ -10239,6 +10543,7 @@ const App = {
       staffingSlots:this.S.staffingSlots,
       buildingShiftTypes:this.S.buildingShiftTypes,
       ppdDailyCensus:this.S.ppdDailyCensus,
+      staffEvents:this.S.staffEvents,
     };
     if (IS_SERVER_MODE && !this.S.user?.demo) {
       // HIPAA §164.312(a)(2)(iv) — never write PHI to client storage.
@@ -10315,6 +10620,8 @@ const App = {
     if (data.buildingShiftTypes && typeof data.buildingShiftTypes === 'object') this.S.buildingShiftTypes = data.buildingShiftTypes;
     if (data.ppdDailyCensus && typeof data.ppdDailyCensus === 'object') this.S.ppdDailyCensus = data.ppdDailyCensus;
     if (Array.isArray(data.hrTimeClock))      this.S.hrTimeClock      = data.hrTimeClock;
+    if (Array.isArray(data.staffEvents))      this.S.staffEvents      = data.staffEvents;
+    if (Array.isArray(data.alertLog))         this.S.alertLog         = data.alertLog;
     if (data.hrOnboarding && typeof data.hrOnboarding === 'object') {
       if (data.hrOnboarding.TX && !data.hrOnboarding.co_skyblue) {
         // migrate old flat format

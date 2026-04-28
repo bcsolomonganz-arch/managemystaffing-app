@@ -85,10 +85,10 @@ const APP_URL    = process.env.APP_URL || 'https://managemystaffing.com';
 //   - Employee (no PHI access): only see own schedule + claim shifts.
 //     §164.312 doesn't require TOTP / aggressive timeouts when the role
 //     can't access PHI, so we relax those for usability.
-const JWT_TTL_SECONDS              = 60 * 60;                  // 1h — admin/SA
-const IDLE_TIMEOUT_SECONDS         = 15 * 60;                  // 15 min idle — admin/SA
-const EMPLOYEE_JWT_TTL_SECONDS     = 60 * 60 * 24 * 30;        // 30d — employee
-const EMPLOYEE_IDLE_TIMEOUT_SECONDS = 60 * 60 * 24 * 30;       // effectively no idle — employee
+const JWT_TTL_SECONDS              = 60 * 60 * 2;              // 2h — admin/SA hard cap
+const IDLE_TIMEOUT_SECONDS         = 60 * 60 * 2;              // 2h idle — admin/SA
+const EMPLOYEE_JWT_TTL_SECONDS     = 60 * 60 * 24 * 365;       // 1y — employee, effectively no expiry
+const EMPLOYEE_IDLE_TIMEOUT_SECONDS = 60 * 60 * 24 * 365;      // never auto-logout employees
 const MAX_FAILED_ATTEMPTS  = 5;
 const LOCKOUT_MS           = 30 * 60 * 1000;     // 30 min
 const PASSWORD_MIN_LENGTH          = 12;          // admin/SA
@@ -801,6 +801,7 @@ function getDataForUser(user, fullData) {
       (scrubbed.employees || []).some(e => e.id === p.empId && bIds.has(e.buildingId))),
     accounts:         (scrubbed.accounts || []).filter(a =>
       a.id === user.id || (a.buildingId && bIds.has(a.buildingId)) || (a.buildingIds||[]).some(id => bIds.has(id))),
+    alertLog:         (scrubbed.alertLog || []).filter(e => !e.buildingId || bIds.has(e.buildingId)),
   };
   return _canAccessHR(user) ? filtered : _stripHR(filtered);
 }
@@ -1422,6 +1423,13 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   // facilities don't drop each other's days.
   if (payload.ppdDailyCensus && typeof payload.ppdDailyCensus === 'object') {
     data.ppdDailyCensus = { ...(data.ppdDailyCensus || {}), ...payload.ppdDailyCensus };
+  }
+
+  // Staff Events calendar (custom nursing/activity/appreciation events).
+  // Scoped per building so admins can't drop other facilities' events.
+  if (Array.isArray(payload.staffEvents)) {
+    const inScopeEvent = e => !e.buildingId || callerBIds.has(e.buildingId);
+    data.staffEvents = mergeScoped(data.staffEvents || [], payload.staffEvents, inScopeEvent);
   }
 
   dataCache = data;
@@ -2153,6 +2161,30 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
     queuedJobs.push({ kind: 'sms', count: smsList.length });
   }
 
+  // Persist a Texts-tab visible log of this dispatch (sender, recipients,
+  // subject, body, channels). Inbound replies (Twilio webhook → /api/sms/inbound,
+  // not yet wired) will append into the same log keyed by jobId / phone.
+  if (!Array.isArray(data.alertLog)) data.alertLog = [];
+  data.alertLog.push({
+    id: jobId,
+    sentAt: new Date().toISOString(),
+    sentBy: req.user.email,
+    sentById: req.user.id,
+    buildingId: scopedBId || null,
+    groups,
+    subject: subject || null,
+    message,
+    channels: { email: !!viaEmail, sms: !!viaSMS },
+    recipients: {
+      email: emailList.map(e => ({ id: e.id, name: e.name, email: e.email })),
+      sms:   smsList.map(e   => ({ id: e.id, name: e.name, phone: e.phone })),
+    },
+    replies: [], // inbound SMS responses appended here when webhook lands
+  });
+  // Cap to last 500 entries to bound memory.
+  if (data.alertLog.length > 500) data.alertLog = data.alertLog.slice(-500);
+  markDirty();
+
   auditLog('ALERT_QUEUED', req.user, { jobId, jobs: queuedJobs, groups });
   // Return 202 Accepted with jobId — actual delivery is async
   res.status(202).json({
@@ -2160,6 +2192,76 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
     queued: { email: emailList.length, sms: smsList.length },
     note: 'Alert dispatched to background queue. Delivery confirmation emails will follow.',
   });
+});
+
+// ── POST /api/sms/inbound ─────────────────────────────────────────────────────
+// Webhook for inbound SMS replies. Configure your messaging provider
+// (Twilio, Azure Communication Services, etc.) to POST here when the recipient
+// replies to an alert. The reply is attached to the most recent alert log
+// entry that included that phone number (within the last 7 days), so it
+// shows up under the conversation in the Texts sidebar.
+//
+// Security: shared-secret header check via SMS_WEBHOOK_SECRET env var.
+// Twilio: configure it as a custom HTTP header or as a query string and
+// validate the X-Twilio-Signature instead.
+app.post('/api/sms/inbound', async (req, res) => {
+  const expected = process.env.SMS_WEBHOOK_SECRET;
+  const provided = req.headers['x-webhook-secret'] || req.query.secret;
+  if (!expected || expected !== provided) {
+    auditLog('SMS_INBOUND_REJECTED', null, { reason: 'bad_secret' });
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  // Accept Twilio-style ({ From, Body }) or our own ({ from, body, jobId? }).
+  const from   = (req.body?.from || req.body?.From || '').toString().trim();
+  const body   = (req.body?.body || req.body?.Body || '').toString().slice(0, 1600);
+  const jobId  = (req.body?.jobId || '').toString();
+  if (!from || !body) return res.status(400).json({ error: 'from and body required' });
+  // Normalize phone for matching (strip non-digits, keep last 10).
+  const normPhone = p => String(p || '').replace(/\D/g, '').slice(-10);
+  const fromNorm = normPhone(from);
+
+  const data = await loadData();
+  if (!Array.isArray(data.alertLog)) data.alertLog = [];
+
+  // Match by jobId if given, otherwise the most recent alert (last 7 days)
+  // that texted this phone.
+  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  let match = null;
+  if (jobId) match = data.alertLog.find(e => e.id === jobId);
+  if (!match) {
+    for (let i = data.alertLog.length - 1; i >= 0; i--) {
+      const e = data.alertLog[i];
+      const sentMs = new Date(e.sentAt).getTime();
+      if (sentMs < cutoff) break;
+      const matched = (e.recipients?.sms || []).some(r => normPhone(r.phone) === fromNorm);
+      if (matched) { match = e; break; }
+    }
+  }
+  if (!match) {
+    // Park orphan replies in a synthetic entry so they aren't lost.
+    match = {
+      id: 'orphan_' + Date.now(),
+      sentAt: new Date().toISOString(),
+      sentBy: 'inbound',
+      buildingId: null,
+      groups: [],
+      subject: 'Inbound SMS (no matching alert)',
+      message: '',
+      channels: { sms: true, email: false },
+      recipients: { sms: [], email: [] },
+      replies: [],
+    };
+    data.alertLog.push(match);
+  }
+  if (!Array.isArray(match.replies)) match.replies = [];
+  match.replies.push({
+    from: from,
+    body,
+    receivedAt: new Date().toISOString(),
+  });
+  markDirty();
+  auditLog('SMS_INBOUND_RECEIVED', null, { jobId: match.id, fromMasked: fromNorm.slice(-4) });
+  res.json({ ok: true });
 });
 
 // ── POST /api/sms ─────────────────────────────────────────────────────────────
