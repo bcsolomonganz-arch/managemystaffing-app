@@ -1731,6 +1731,20 @@ const App = {
       else if (bar) bar.className = 'pw-strength-bar';
     });
 
+    // Prefill email after invite-accept redirect (sessionStorage hand-off
+    // from acceptInvite). Show a "ready to sign in" toast once.
+    try {
+      const justActivatedEmail = sessionStorage.getItem('mms_prefill_email');
+      if (justActivatedEmail) {
+        const emailEl = document.getElementById('login-email');
+        if (emailEl) emailEl.value = justActivatedEmail;
+        const passEl  = document.getElementById('login-pass');
+        if (passEl) passEl.focus();
+        sessionStorage.removeItem('mms_prefill_email');
+        setTimeout(() => this.showToast('Account activated. Sign in to set up two-factor authentication.', 'success'), 200);
+      }
+    } catch(e) {}
+
     // Restore saved accounts from localStorage
     let saved = [];
     try { saved = JSON.parse(localStorage.getItem('mms_saved_accounts') || '[]'); } catch(e) {}
@@ -6425,17 +6439,16 @@ const App = {
       });
       const data = await r.json();
       if (!r.ok) { showErr(data.error || 'Activation failed.'); if(btn){btn.disabled=false;btn.textContent='Set Password & Sign In';} return; }
-      // Per HIPAA: account requires TOTP enrollment before access. Send user back to login.
-      // Pre-fill the email field so they can immediately sign in (which triggers TOTP setup).
-      this.showToast('Account activated! Please sign in to set up two-factor authentication.', 'success');
-      // Show login page with email pre-filled
-      window.history.replaceState({}, '', '/');
-      document.getElementById('login-page').style.display = 'flex';
-      document.getElementById('app').style.display = 'none';
-      const emailInput = document.getElementById('login-email');
-      if (emailInput) emailInput.value = email || data.email || '';
-      const passInput = document.getElementById('login-pass');
-      if (passInput) { passInput.value = ''; passInput.focus(); }
+      // Account is activated. _showSetPasswordForm replaced the entire login
+      // card's innerHTML, so we can't just toggle visibility — the original
+      // login form is gone from the DOM. Save the email for prefill, swap the
+      // button to a clear "next step" CTA, then hard-redirect to '/' which
+      // re-renders a fresh login form.
+      try { sessionStorage.setItem('mms_prefill_email', email || data.email || ''); } catch(e) {}
+      if (btn) { btn.disabled = false; btn.textContent = 'Continue to Sign In'; btn.onclick = () => location.replace('/'); }
+      this.showToast('Account activated! Redirecting to sign in…', 'success');
+      // Wait briefly so the user sees the toast, then redirect.
+      setTimeout(() => location.replace('/'), 1200);
     } catch(e) {
       showErr('Connection error. Please try again.');
       if(btn){btn.disabled=false;btn.textContent='Set Password & Sign In';}
