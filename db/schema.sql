@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   password_reset_token_hash       TEXT,
   password_reset_expiry           TIMESTAMPTZ,
   scheduler_only                  BOOLEAN NOT NULL DEFAULT false,  -- true = admin sees schedule only, no $ data
+  device_trust_epoch              BIGINT  NOT NULL DEFAULT 0,      -- bumped on TOTP reset; invalidates trust cookies
   created_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at                      TIMESTAMPTZ NOT NULL DEFAULT now()
 );

@@ -879,6 +879,43 @@ function clearAuthCookie(res) {
   res.clearCookie(COOKIE_NAME, { httpOnly: true, secure: IS_PROD, sameSite: 'strict', path: '/' });
 }
 
+// ── DEVICE-TRUST COOKIE (HIPAA-aware 2FA UX) ─────────────────────────────────
+// After a successful TOTP, we drop a 30-day signed cookie identifying THIS device
+// for THIS account. On subsequent logins from the same device within 30 days, we
+// skip the TOTP prompt. New device → TOTP required. Cookie expired → TOTP required.
+// The cookie is account-bound: a stolen cookie won't work for a different account.
+const DEVICE_TRUST_COOKIE = 'mms_device_trust';
+const DEVICE_TRUST_TTL_SEC = 30 * 24 * 60 * 60;        // 30 days
+const DEVICE_TRUST_TTL_MS  = DEVICE_TRUST_TTL_SEC * 1000;
+
+function signDeviceTrust(acct) {
+  // JWT carrying { acctId, did, epoch }. The epoch ties this cookie to the
+  // account's current trust generation; bumping deviceTrustEpoch on TOTP reset
+  // invalidates every previously-issued trust cookie immediately.
+  const did   = crypto.randomBytes(12).toString('hex');
+  const epoch = acct.deviceTrustEpoch || 0;
+  return jwt.sign({ acctId: acct.id, did, epoch, kind: 'device_trust' }, JWT_SECRET, { expiresIn: DEVICE_TRUST_TTL_SEC });
+}
+function verifyDeviceTrust(token, acct) {
+  if (!token || !acct) return false;
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (decoded.kind !== 'device_trust') return false;
+    if (decoded.acctId !== acct.id)      return false;
+    if ((decoded.epoch || 0) !== (acct.deviceTrustEpoch || 0)) return false;
+    return true;
+  } catch { return false; }
+}
+function setDeviceTrustCookie(res, acct) {
+  res.cookie(DEVICE_TRUST_COOKIE, signDeviceTrust(acct), {
+    httpOnly: true, secure: IS_PROD, sameSite: 'strict',
+    maxAge: DEVICE_TRUST_TTL_MS, path: '/', signed: false,
+  });
+}
+function clearDeviceTrustCookie(res) {
+  res.clearCookie(DEVICE_TRUST_COOKIE, { httpOnly: true, secure: IS_PROD, sameSite: 'strict', path: '/' });
+}
+
 // ── CSRF DEFENSE ──────────────────────────────────────────────────────────────
 // SameSite=Strict cookie + custom header check provides defense-in-depth.
 // All state-changing endpoints require X-Requested-With: XMLHttpRequest header,
@@ -994,6 +1031,8 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     if (viaRecovery) {
       auditLog('TOTP_RECOVERY_CODE_USED', acct, { codesRemaining: (acct.totpRecoveryCodesHashes || []).length });
     }
+    // Trust this device for the next 30 days — TOTP won't be re-prompted on this browser.
+    setDeviceTrustCookie(res, acct);
     return _issueToken(req, res, acct, data);
   }
 
@@ -1063,6 +1102,15 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       auditLog('TOTP_ENROLL_STARTED', acct);
       return res.json({ needsTotpSetup: true, sessionId: sid, totpSecret: secret, qrDataUrl, issuer: TOTP_ISSUER });
     }
+    // ── Trusted-device shortcut ────────────────────────────────────────────
+    // If the browser presents a valid device-trust cookie issued for THIS
+    // account within the last 30 days, skip the TOTP prompt entirely.
+    // New device or expired cookie → fall through to require TOTP.
+    const trustCookie = req.cookies?.[DEVICE_TRUST_COOKIE];
+    if (verifyDeviceTrust(trustCookie, acct)) {
+      auditLog('TOTP_SKIPPED_TRUSTED_DEVICE', acct);
+      return _issueToken(req, res, acct, data);
+    }
     // Existing TOTP — require code
     const sid = crypto.randomBytes(16).toString('hex');
     _totpPending.set(sid, { acctId: acct.id, expiresAt: Date.now() + 5 * 60 * 1000, mode: 'verify' });
@@ -1124,6 +1172,8 @@ app.post('/api/auth/totp/enroll', async (req, res) => {
   const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_TTL_SECONDS });
   lastActivity.set(sid, Date.now());
   setAuthCookie(res, token);
+  // Trust this device for 30 days — first enrollment counts as a verified device.
+  setDeviceTrustCookie(res, acct);
   auditLog('LOGIN_SUCCESS', acct, { sid, via: 'totp_enrollment' });
   return res.json({ user: payload, authVia: 'cookie', recoveryCodes: codes });
 });
@@ -1158,6 +1208,9 @@ app.post('/api/auth/totp/reset', requireAuth, requireSuperAdmin, async (req, res
   acct.totpEnrolledAt = null;
   acct.totpRecoveryCodesHashes = null;
   acct.totpRecoveryCodesGeneratedAt = null;
+  // Bump device-trust epoch so every previously-trusted device must re-verify.
+  acct.deviceTrustEpoch = Date.now();
+  await persistAccountNow(acct);
   markDirty();
   auditLog('TOTP_RESET_BY_ADMIN', req.user, { targetAccountId: accountId, targetEmail: acct.email });
   res.json({ ok: true, message: `TOTP reset for ${acct.email}. They will re-enroll on next login.` });

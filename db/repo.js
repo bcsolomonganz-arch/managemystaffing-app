@@ -45,6 +45,7 @@ async function close() {
 async function ensureSchema() {
   if (!_pool) return;
   await _pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS scheduler_only BOOLEAN NOT NULL DEFAULT false`);
+  await _pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS device_trust_epoch BIGINT NOT NULL DEFAULT 0`);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -132,6 +133,7 @@ function rowAccount(r) {
     passwordResetTokenHash: r.password_reset_token_hash,
     passwordResetExpiry:    r.password_reset_expiry ? new Date(r.password_reset_expiry).getTime() : null,
     schedulerOnly: !!r.scheduler_only,
+    deviceTrustEpoch: r.device_trust_epoch ? Number(r.device_trust_epoch) : 0,
   };
   // Strip nulls/undefined to match file-based shape closer
   Object.keys(o).forEach(k => o[k] == null && delete o[k]);
@@ -198,8 +200,8 @@ async function upsertAccount(a) {
       totp_recovery_codes_hashes, totp_recovery_codes_generated_at,
       failed_attempts, locked_until,
       invite_token, invite_expiry, invited_by, invited_at, activated_at,
-      password_reset_token_hash, password_reset_expiry, scheduler_only)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+      password_reset_token_hash, password_reset_expiry, scheduler_only, device_trust_epoch)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
     ON CONFLICT (id) DO UPDATE SET
       email = EXCLUDED.email, name = EXCLUDED.name, role = EXCLUDED.role,
       building_id = EXCLUDED.building_id, building_ids = EXCLUDED.building_ids,
@@ -217,6 +219,7 @@ async function upsertAccount(a) {
       password_reset_token_hash = EXCLUDED.password_reset_token_hash,
       password_reset_expiry = EXCLUDED.password_reset_expiry,
       scheduler_only = EXCLUDED.scheduler_only,
+      device_trust_epoch = GREATEST(EXCLUDED.device_trust_epoch, accounts.device_trust_epoch),
       updated_at = now()
   `, [
     a.id, a.email.toLowerCase(), a.name, a.role,
@@ -228,6 +231,7 @@ async function upsertAccount(a) {
     a.invitedBy || null, a.invitedAt || null, a.activatedAt || null,
     a.passwordResetTokenHash || null, _toMs(a.passwordResetExpiry),
     !!a.schedulerOnly,
+    a.deviceTrustEpoch || 0,
   ]);
 }
 
@@ -330,8 +334,8 @@ async function _upsertAccountInTx(c, a) {
       totp_recovery_codes_hashes, totp_recovery_codes_generated_at,
       failed_attempts, locked_until,
       invite_token, invite_expiry, invited_by, invited_at, activated_at,
-      password_reset_token_hash, password_reset_expiry, scheduler_only)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+      password_reset_token_hash, password_reset_expiry, scheduler_only, device_trust_epoch)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
     ON CONFLICT (id) DO UPDATE SET
       email = EXCLUDED.email, name = EXCLUDED.name, role = EXCLUDED.role,
       building_id = EXCLUDED.building_id, building_ids = EXCLUDED.building_ids,
@@ -349,6 +353,7 @@ async function _upsertAccountInTx(c, a) {
       password_reset_token_hash = EXCLUDED.password_reset_token_hash,
       password_reset_expiry = EXCLUDED.password_reset_expiry,
       scheduler_only = EXCLUDED.scheduler_only,
+      device_trust_epoch = GREATEST(EXCLUDED.device_trust_epoch, accounts.device_trust_epoch),
       updated_at = now()
   `, [
     a.id, (a.email || '').toLowerCase(), a.name, a.role,
@@ -360,6 +365,7 @@ async function _upsertAccountInTx(c, a) {
     a.invitedBy || null, a.invitedAt || null, a.activatedAt || null,
     a.passwordResetTokenHash || null, _toMs(a.passwordResetExpiry),
     !!a.schedulerOnly,
+    a.deviceTrustEpoch || 0,
   ]);
 }
 
