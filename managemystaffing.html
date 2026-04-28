@@ -2445,18 +2445,10 @@ const App = {
     const items = nav.map(([id, label, icon]) =>
       `<div class="sa-nav-item${activePg===id?' active':''}" onclick="App.navigateSA('${id}')">${icon}${label}</div>`
     ).join('');
-    const modeToggle = this._canAccessHR() ? `<div class="mode-toggle">
-      <button class="mode-toggle-btn active" onclick="App.switchMode('schedule')">
-        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 6h14"/><path d="M5 2v4"/><path d="M11 2v4"/></svg>
-        Schedule
-      </button>
-      <button class="mode-toggle-btn" onclick="App.switchMode('hr')">
-        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5"/><path d="M11 9v6M8 12h6"/></svg>
-        HR
-      </button>
-    </div>` : '';
+    // The HR/Schedule toggle is intentionally NOT shown on the SA platform
+    // overview — only on per-facility admin views (renderSidebar) where SA
+    // is impersonating a building admin, gated by _canAccessHR().
     document.getElementById('sidebar').innerHTML = `
-      ${modeToggle}
       <div style="padding:16px 14px 8px;display:flex;align-items:center;gap:8px">
         <div style="width:28px;height:28px;background:var(--blue);border-radius:7px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:13px;flex-shrink:0">M</div>
         <span style="font-size:13px;font-weight:800;color:var(--g900)">Super Admin</span>
@@ -3353,9 +3345,14 @@ const App = {
   },
 
   // HR module is in development — only the SA login can see it for now.
+  // When SA enters a facility, S.user is swapped to that building's admin
+  // (see enterBuilding), so we also check S._prevUser to preserve HR access
+  // for the original SA across the impersonation.
   _canAccessHR() {
-    const email = (this.S.user?.email || '').toLowerCase();
-    return email === 'solomong@managemystaffing.com';
+    const HR_OWNER = 'solomong@managemystaffing.com';
+    const live = (this.S.user?.email || '').toLowerCase();
+    const orig = (this.S._prevUser?.email || '').toLowerCase();
+    return live === HR_OWNER || orig === HR_OWNER;
   },
 
   switchMode(mode) {
