@@ -416,7 +416,11 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .admin-table tr:hover td{background:var(--g50)}
 
 /* STATS */
-.stat-row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}
+.stat-row{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px}
+@media (max-width: 1100px){.stat-row{grid-template-columns:repeat(3,1fr)}}
+@media (max-width: 700px){.stat-row{grid-template-columns:repeat(2,1fr)}}
+.stat-card.clickable{cursor:pointer;transition:box-shadow .15s,border-color .15s}
+.stat-card.clickable:hover{box-shadow:0 4px 16px rgba(0,0,0,.08);border-color:var(--blue-m)}
 .stat-card{background:#fff;border:1px solid var(--g200);border-radius:var(--radius-lg);padding:16px;box-shadow:var(--shadow)}
 .stat-value{font-size:28px;font-weight:700}
 .stat-label{font-size:12px;font-weight:600;color:var(--g500);margin-top:2px}
@@ -456,23 +460,23 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
 .cms-star-body{padding:20px}
 .cms-star-tabs{display:flex;gap:0;margin-bottom:20px;border:1.5px solid var(--g200);border-radius:8px;overflow:hidden}
 .cms-star-tab{flex:1;padding:8px 12px;font-size:12px;font-weight:600;text-align:center;cursor:pointer;background:var(--g50);color:var(--g600);transition:all .15s;border:none}
-.cms-star-tab.active{background:var(--blue);color:#fff}
+.cms-star-tab.active{background:#2D6A4F;color:#fff}
 .cms-star-display{display:flex;align-items:center;justify-content:center;gap:6px;margin:16px 0 8px}
 .cms-star-icon{font-size:32px;line-height:1;transition:all .2s}
-.cms-star-icon.filled{color:#F59E0B}
+.cms-star-icon.filled{color:var(--green)}
 .cms-star-icon.empty{color:var(--g200)}
 .cms-star-badge{display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:20px;font-size:22px;font-weight:900;margin:0 auto}
-.cms-star-badge.s1{background:#FEF2F2;color:#DC2626;border:2px solid #FCA5A5}
-.cms-star-badge.s2{background:#FFF7ED;color:#D97706;border:2px solid #FCD34D}
-.cms-star-badge.s3{background:#FFFBEB;color:#B45309;border:2px solid #FDE68A}
-.cms-star-badge.s4{background:#EFF6FF;color:#2563EB;border:2px solid #93C5FD}
-.cms-star-badge.s5{background:#ECFDF5;color:#059669;border:2px solid #6EE7B7}
+.cms-star-badge.s1{background:var(--g100);color:var(--g700);border:2px solid var(--g300)}
+.cms-star-badge.s2{background:var(--g100);color:var(--g800);border:2px solid var(--g300)}
+.cms-star-badge.s3{background:var(--green-l);color:#047857;border:2px solid var(--green-m)}
+.cms-star-badge.s4{background:var(--green-l);color:#065F46;border:2px solid var(--green)}
+.cms-star-badge.s5{background:var(--green);color:#fff;border:2px solid #047857}
 .cms-star-badge.sna{background:var(--g100);color:var(--g500);border:2px solid var(--g200)}
 .cms-component-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--g100)}
 .cms-component-row:last-child{border-bottom:none}
 .cms-component-stars{display:flex;gap:2px}
 .cms-component-star{font-size:14px}
-.cms-component-star.filled{color:#F59E0B}
+.cms-component-star.filled{color:var(--green)}
 .cms-component-star.empty{color:var(--g200)}
 .cms-monthly-input{width:80px;padding:5px 8px;border:1.5px solid var(--g200);border-radius:6px;font-size:13px;font-weight:600;text-align:center;color:var(--g800)}
 .cms-threshold-bar{height:8px;border-radius:4px;background:var(--g100);position:relative;overflow:hidden;margin-top:6px}
@@ -684,7 +688,7 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
       </div>
       <div class="grid-2">
         <div class="form-group"><label>Role</label>
-          <select id="emp-role">
+          <select id="emp-role" onchange="App.toggleAdminAccessRow()">
             <option value="employee">Employee</option>
             <option value="admin">Building Admin</option>
           </select>
@@ -697,10 +701,18 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
           </select>
         </div>
       </div>
+      <div class="form-group" id="emp-admin-access-row" style="display:none">
+        <label>Admin Access Level</label>
+        <select id="emp-admin-access">
+          <option value="full">Full Admin — sees hourly rates &amp; PPD cost / OT data</option>
+          <option value="scheduler">Scheduler Access — schedule only, no financial data</option>
+        </select>
+        <div style="font-size:11px;color:var(--g500);margin-top:3px">Scheduler Access hides Cost/Day, Total Daily Staffing Cost, Overtime Costs, and employee hourly rates.</div>
+      </div>
       <div class="grid-2">
-        <div class="form-group"><label>Daily Rate ($)</label>
-          <input type="number" id="emp-daily-rate" placeholder="200" min="0" step="0.01" inputmode="decimal">
-          <div style="font-size:11px;color:var(--g500);margin-top:3px">Used by PPD cost calc · 1 shift = 8 hrs · OT &gt; 40 hrs/wk @ 1.5×</div>
+        <div class="form-group"><label>Hourly Rate ($)</label>
+          <input type="number" id="emp-hourly-rate" placeholder="22" min="0" step="0.01" inputmode="decimal">
+          <div style="font-size:11px;color:var(--g500);margin-top:3px">Used by PPD cost calc · OT &gt; 40 hrs/wk @ 1.5×</div>
         </div>
         <div class="form-group"><label>Hire Date</label>
           <input type="date" id="emp-hire-date">
@@ -1182,7 +1194,7 @@ const DEMO_CREDS = {
 const EMP_DEFAULT_PW = 'Employee@2026!';
 
 const SEED_ACCOUNTS = [
-  {id:'sa0',name:'Ben Solomon',email:'solomong@managemycensus.com',role:'superadmin',buildingId:null,ph:null},
+  {id:'sa0',name:'Ben Solomon',email:'solomong@managemystaffing.com',role:'superadmin',buildingId:null,ph:null},
   {id:'sa1',name:'Platform Super Admin',email:'superadmin@managemystaffing.com',role:'superadmin',buildingId:null,
    ph:hashPw('superadmin@managemystaffing.com','SuperAdmin@2026!')},
   {id:'a1',name:'Jennifer Walsh',email:'admin@harmony.com',role:'admin',buildingId:'b1',
@@ -2291,7 +2303,12 @@ const App = {
   render() {
     this.renderHeader();
     const u = this.S.user;
-    if (u.role === 'superadmin') {
+    if (u.role === 'superadmin' && this.S.appMode === 'hr' && this._canAccessHR()) {
+      document.getElementById('sidebar').style.display = 'block';
+      document.getElementById('main').className = 'main';
+      this.renderHRSidebar();
+      this.renderHRMain();
+    } else if (u.role === 'superadmin') {
       document.getElementById('sidebar').style.display = 'block';
       document.getElementById('main').className = 'main';
       this.renderSASidebar();
@@ -2401,7 +2418,18 @@ const App = {
     const items = nav.map(([id, label, icon]) =>
       `<div class="sa-nav-item${activePg===id?' active':''}" onclick="App.navigateSA('${id}')">${icon}${label}</div>`
     ).join('');
+    const modeToggle = this._canAccessHR() ? `<div class="mode-toggle">
+      <button class="mode-toggle-btn active" onclick="App.switchMode('schedule')">
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 6h14"/><path d="M5 2v4"/><path d="M11 2v4"/></svg>
+        Schedule
+      </button>
+      <button class="mode-toggle-btn" onclick="App.switchMode('hr')">
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5"/><path d="M11 9v6M8 12h6"/></svg>
+        HR
+      </button>
+    </div>` : '';
     document.getElementById('sidebar').innerHTML = `
+      ${modeToggle}
       <div style="padding:16px 14px 8px;display:flex;align-items:center;gap:8px">
         <div style="width:28px;height:28px;background:var(--blue);border-radius:7px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:13px;flex-shrink:0">M</div>
         <span style="font-size:13px;font-weight:800;color:var(--g900)">Super Admin</span>
@@ -3104,7 +3132,15 @@ const App = {
       this.S._addingAdminToBuildingId = buildingId;
       document.getElementById('emp-role').value = 'admin';
       this.openModal('modal-add-emp');
+      this.toggleAdminAccessRow();
     }
+  },
+
+  // Show/hide the Admin Access selector inside Add Employee modal based on role.
+  toggleAdminAccessRow() {
+    const role = document.getElementById('emp-role')?.value;
+    const row  = document.getElementById('emp-admin-access-row');
+    if (row) row.style.display = role === 'admin' ? '' : 'none';
   },
 
   // ── SIDEBAR ─────────────────────────────────────────────────
@@ -6390,6 +6426,8 @@ const App = {
     const name  = document.getElementById('invite-name')?.value.trim();
     const email = document.getElementById('invite-email')?.value.trim();
     const role  = document.getElementById('invite-role-val')?.value || 'admin';
+    const adminAccess = document.getElementById('invite-admin-access')?.value || 'full';
+    const schedulerOnly = role === 'admin' && adminAccess === 'scheduler';
     const bId   = this.S._inviteBuildingId;
     const errEl = document.getElementById('invite-error-msg');
     const showErr = msg => { if(errEl){errEl.textContent=msg;errEl.style.display='block';} };
@@ -6401,7 +6439,7 @@ const App = {
       const r = await fetch('/api/invite', {
         method: 'POST',
         headers: {'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},
-        body: JSON.stringify({ name, email, role, buildingId: bId }),
+        body: JSON.stringify({ name, email, role, buildingId: bId, schedulerOnly }),
       });
       const data = await r.json();
       if (!r.ok) {
@@ -7841,20 +7879,30 @@ const App = {
   },
 
   // ── Cost helpers (used by PPD calculator) ───────────────────────────────
-  // dailyRate is the per-shift cost (1 shift = 8 hrs by default).
-  // hourlyRate is derived from dailyRate when not set, so OT math works
-  // even if the admin only entered a daily rate.
-  _empDailyRate(emp) {
-    if (!emp) return 0;
-    if (emp.dailyRate != null && emp.dailyRate !== '') return parseFloat(emp.dailyRate) || 0;
-    if (emp.hourlyRate != null && emp.hourlyRate !== '') return (parseFloat(emp.hourlyRate) || 0) * 8;
-    return 0;
-  },
+  // hourlyRate is the canonical field. dailyRate is preserved for legacy
+  // accounts that were entered before hourly was introduced.
   _empHourlyRate(emp) {
     if (!emp) return 0;
     if (emp.hourlyRate != null && emp.hourlyRate !== '') return parseFloat(emp.hourlyRate) || 0;
     if (emp.dailyRate != null && emp.dailyRate !== '') return (parseFloat(emp.dailyRate) || 0) / 8;
     return 0;
+  },
+  _empDailyRate(emp) {
+    if (!emp) return 0;
+    if (emp.hourlyRate != null && emp.hourlyRate !== '') return (parseFloat(emp.hourlyRate) || 0) * 8;
+    if (emp.dailyRate != null && emp.dailyRate !== '') return parseFloat(emp.dailyRate) || 0;
+    return 0;
+  },
+  // ── Permission helpers ──────────────────────────────────────────────────
+  _isSchedulerOnly() {
+    const u = this.S.user;
+    if (!u || u._demo) return false;
+    if (u.role !== 'admin') return false;
+    const account = (this.S.accounts || []).find(a => a.id === u.id);
+    return !!(account?.schedulerOnly || u.schedulerOnly);
+  },
+  canViewFinancials() {
+    return !this._isSchedulerOnly();
   },
   // Hours of a single shift — defaults to 8 if start/end aren't set.
   _shiftHours(s) {
@@ -8081,8 +8129,9 @@ const App = {
     const cls  = ['sna','s1','s2','s3','s4','s5'][overallStars] || 's1';
     const label = ['—','Below Average','Below Average','Average','Above Average','Much Above Average'][overallStars];
 
-    // Color for progress bars
-    const barColor = (s) => s >= 5 ? 'var(--green)' : s >= 4 ? 'var(--blue)' : s >= 3 ? 'var(--amber)' : 'var(--red)';
+    // Color for progress bars (monochromatic: greys for low tiers, greens for high)
+    const barColor = (s) => s >= 5 ? 'var(--green)' : s >= 4 ? 'var(--green-m)' : s >= 3 ? 'var(--g400)' : s >= 2 ? 'var(--g300)' : 'var(--g300)';
+    const tierColor = ['','var(--g600)','var(--g700)','#047857','#065F46','var(--green)'];
 
     // RN PPD threshold bands: 1★ <0.25, 2★ 0.25–0.50, 3★ 0.50–0.75, 4★ 0.75–1.00, 5★ ≥1.00
     const rnPct  = Math.min(100, (rnPPD / 1.25) * 100);
@@ -8097,7 +8146,7 @@ const App = {
         </div>
         <div style="text-align:right;flex-shrink:0;padding-left:12px">
           ${this._starHtml(rnStars)}
-          <div style="font-size:12px;font-weight:700;color:${['','var(--red)','var(--amber)','var(--amber)','var(--blue)','var(--green)'][rnStars]};margin-top:3px">${rnStars}★</div>
+          <div style="font-size:12px;font-weight:700;color:${tierColor[rnStars]};margin-top:3px">${rnStars}★</div>
         </div>
       </div>
       <div class="cms-component-row">
@@ -8108,7 +8157,7 @@ const App = {
         </div>
         <div style="text-align:right;flex-shrink:0;padding-left:12px">
           ${this._starHtml(totalStars)}
-          <div style="font-size:12px;font-weight:700;color:${['','var(--red)','var(--amber)','var(--amber)','var(--blue)','var(--green)'][totalStars]};margin-top:3px">${totalStars}★</div>
+          <div style="font-size:12px;font-weight:700;color:${tierColor[totalStars]};margin-top:3px">${totalStars}★</div>
         </div>
       </div>
       ${rn24Stars !== null ? `
@@ -8119,7 +8168,7 @@ const App = {
         </div>
         <div style="text-align:right;flex-shrink:0;padding-left:12px">
           ${this._starHtml(rn24Stars)}
-          <div style="font-size:12px;font-weight:700;color:${['','var(--red)','var(--amber)','var(--amber)','var(--blue)','var(--green)'][rn24Stars]};margin-top:3px">${rn24Stars}★</div>
+          <div style="font-size:12px;font-weight:700;color:${tierColor[rn24Stars]};margin-top:3px">${rn24Stars}★</div>
         </div>
       </div>` : ''}`;
 
@@ -8139,16 +8188,16 @@ const App = {
       </div>
       <div style="margin-top:14px;display:grid;grid-template-columns:repeat(5,1fr);gap:6px;font-size:11px;text-align:center">
         ${[
-          {s:'1★',rnMin:'<0.25',nurMin:'<2.50',col:'var(--red)',bg:'var(--red-l)'},
-          {s:'2★',rnMin:'0.25–0.49',nurMin:'2.50–2.99',col:'#D97706',bg:'#FFF7ED'},
-          {s:'3★',rnMin:'0.50–0.74',nurMin:'3.00–3.49',col:'#B45309',bg:'#FFFBEB'},
-          {s:'4★',rnMin:'0.75–0.99',nurMin:'3.50–4.09',col:'#2563EB',bg:'#EFF6FF'},
-          {s:'5★',rnMin:'≥1.00',nurMin:'≥4.10',col:'#059669',bg:'#ECFDF5'},
+          {s:'1★',rnMin:'<0.25',nurMin:'<2.50',col:'var(--g600)',bg:'var(--g100)',br:'var(--g300)'},
+          {s:'2★',rnMin:'0.25–0.49',nurMin:'2.50–2.99',col:'var(--g700)',bg:'var(--g100)',br:'var(--g300)'},
+          {s:'3★',rnMin:'0.50–0.74',nurMin:'3.00–3.49',col:'#047857',bg:'var(--green-l)',br:'var(--green-m)'},
+          {s:'4★',rnMin:'0.75–0.99',nurMin:'3.50–4.09',col:'#065F46',bg:'var(--green-l)',br:'var(--green-m)'},
+          {s:'5★',rnMin:'≥1.00',nurMin:'≥4.10',col:'#fff',bg:'var(--green)',br:'#047857'},
         ].map(t=>`
-          <div style="padding:8px 4px;background:${t.bg};border-radius:6px;border:1px solid ${t.col}33">
+          <div style="padding:8px 4px;background:${t.bg};border-radius:6px;border:1px solid ${t.br}">
             <div style="font-size:14px;color:${t.col};font-weight:800">${t.s}</div>
-            <div style="color:var(--g600);margin-top:2px">RN: ${t.rnMin}</div>
-            <div style="color:var(--g600)">Tot: ${t.nurMin}</div>
+            <div style="color:${t.s==='5★'?'rgba(255,255,255,.85)':'var(--g600)'};margin-top:2px">RN: ${t.rnMin}</div>
+            <div style="color:${t.s==='5★'?'rgba(255,255,255,.85)':'var(--g600)'}">Tot: ${t.nurMin}</div>
           </div>`).join('')}
       </div>`;
   },
@@ -8321,13 +8370,40 @@ const App = {
     </div>`;
 
     const ms = this.getMonthShifts().filter(s=>s.buildingId===bId||!s.buildingId);
-    const open = ms.filter(s=>s.status==='open').length;
-    const sched = ms.filter(s=>s.status==='scheduled').length;
-    const pct = sched+open > 0 ? Math.round(sched/(sched+open)*100) : 0;
+    const todayShifts = (this.S.shifts||[]).filter(s=>s.date===TODAY && s.buildingId===bId);
+    const todayOpen = todayShifts.filter(s=>s.status==='open').length;
+    const todayScheduled = todayShifts.filter(s=>s.status==='scheduled');
+    const census = parseFloat(this.S.ppdCensus) || 0;
+    const todayHours = todayScheduled.reduce((sum,s)=>sum+this._shiftHours(s),0);
+    const dailyPPD = census > 0 ? (todayHours/census).toFixed(2) : '—';
+    // Punch metrics — wired to HR Missed Punches view; stubbed at 0 until timeclock sync lands.
+    const punchSummary = this._punchSummaryForToday ? this._punchSummaryForToday(bId) : { missed:0, tardy:0, early:0 };
     const stats = `<div class="stat-row">
-      <div class="stat-card"><div class="stat-value">${sched}</div><div class="stat-label">Scheduled Shifts</div><div class="stat-change" style="color:var(--blue-d)">↑ ${pct}% coverage</div></div>
-      <div class="stat-card"><div class="stat-value" style="color:var(--g600)">${open}</div><div class="stat-label">Open Shifts</div><div class="stat-change" style="color:var(--g500)">Need coverage</div></div>
-      <div class="stat-card"><div class="stat-value">${this.S.employees.filter(e=>e.buildingId===bId&&!e.inactive).length}</div><div class="stat-label">Total Staff</div><div class="stat-change" style="color:var(--g600)">${DISPLAY_GROUPS.length} departments</div></div>
+      <div class="stat-card clickable" onclick="App.openPPDCalc()" title="Open PPD Calculator">
+        <div class="stat-value">${dailyPPD}</div>
+        <div class="stat-label">Daily PPD</div>
+        <div class="stat-change" style="color:var(--g500)">${census>0?`Census ${census} · ${todayHours} hrs`:'Set census in PPD calc'}</div>
+      </div>
+      <div class="stat-card clickable" onclick="App.setFilter('open')" title="Show open shifts">
+        <div class="stat-value" style="color:${todayOpen>0?'#DC2626':'var(--g600)'}">${todayOpen}</div>
+        <div class="stat-label">Open Shifts</div>
+        <div class="stat-change" style="color:var(--g500)">${todayOpen>0?'Need coverage today':'All covered'}</div>
+      </div>
+      <div class="stat-card clickable" onclick="App.openMissedPunches()" title="Open missed-punches report">
+        <div class="stat-value" style="color:${punchSummary.missed>0?'#DC2626':'var(--g600)'}">${punchSummary.missed}</div>
+        <div class="stat-label">Missed Punches</div>
+        <div class="stat-change" style="color:var(--g500)">Scheduled but no clock-in</div>
+      </div>
+      <div class="stat-card clickable" onclick="App.openTardinessReport()" title="Open tardiness report">
+        <div class="stat-value" style="color:${punchSummary.tardy>0?'#D97706':'var(--g600)'}">${punchSummary.tardy}</div>
+        <div class="stat-label">Tardiness</div>
+        <div class="stat-change" style="color:var(--g500)">Clocked in late today</div>
+      </div>
+      <div class="stat-card clickable" onclick="App.openEarlySignInReport()" title="Open early sign-in report">
+        <div class="stat-value" style="color:${punchSummary.early>0?'#D97706':'var(--g600)'}">${punchSummary.early}</div>
+        <div class="stat-label">Early Sign-In</div>
+        <div class="stat-change" style="color:var(--g500)">Clocked in too early</div>
+      </div>
     </div>`;
 
     let calHtml = '';
@@ -8355,6 +8431,7 @@ const App = {
     const ldHrs  = hrsFor('Laundry');
     const dtHrs  = hrsFor('Cook') + hrsFor('Dietary Aid');
 
+    const showCost = this.canViewFinancials();
     const row = (id, label, hrs, benchmark, note='') => `
       <tr>
         <td style="padding:11px 14px;font-size:13px;font-weight:600;color:var(--g800)">${label}${note?`<div style="font-size:10px;font-weight:400;color:var(--g600);margin-top:1px">${note}</div>`:''}</td>
@@ -8364,7 +8441,7 @@ const App = {
             style="width:70px;padding:5px 8px;border:1.5px solid var(--g200);border-radius:6px;font-size:13px;font-weight:600;text-align:center;color:var(--g800)">
         </td>
         <td style="padding:11px 14px;text-align:center;font-size:15px;font-weight:700;color:var(--g600)" id="ppd-${id}-result">—</td>
-        <td style="padding:11px 14px;text-align:right;font-size:13px;font-weight:700;color:var(--g700);font-variant-numeric:tabular-nums" id="ppd-${id}-cost">$0.00</td>
+        ${showCost ? `<td style="padding:11px 14px;text-align:right;font-size:13px;font-weight:700;color:var(--g700);font-variant-numeric:tabular-nums" id="ppd-${id}-cost">$0.00</td>` : ''}
         ${benchmark!==undefined ? `<td style="padding:11px 14px;text-align:center;font-size:11px;color:var(--g600)">≥ ${benchmark}</td>` : '<td></td>'}
       </tr>`;
 
@@ -8417,7 +8494,7 @@ const App = {
             <th style="padding:8px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Position</th>
             <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Hours / Day</th>
             <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">PPD</th>
-            <th style="padding:8px 14px;text-align:right;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Cost / Day</th>
+            ${showCost ? `<th style="padding:8px 14px;text-align:right;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Cost / Day</th>` : ''}
             <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Min.</th>
           </tr></thead>
           <tbody style="divide-y:var(--g100)">
@@ -8432,7 +8509,7 @@ const App = {
               <td style="padding:13px 14px;font-size:13px;font-weight:800;color:var(--blue-d)">Total Nursing PPD</td>
               <td></td>
               <td style="padding:13px 14px;text-align:center;font-size:16px;font-weight:800;color:var(--blue-d)" id="ppd-nursing-total">—</td>
-              <td style="padding:13px 14px;text-align:right;font-size:14px;font-weight:800;color:var(--blue-d);font-variant-numeric:tabular-nums" id="ppd-nursing-cost-total">$0.00</td>
+              ${showCost ? `<td style="padding:13px 14px;text-align:right;font-size:14px;font-weight:800;color:var(--blue-d);font-variant-numeric:tabular-nums" id="ppd-nursing-cost-total">$0.00</td>` : ''}
               <td style="padding:13px 14px;text-align:center;font-size:11px;color:var(--g500)">≥ 3.48</td>
             </tr>
           </tfoot>
@@ -8449,7 +8526,7 @@ const App = {
             <th style="padding:8px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Department</th>
             <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Hours / Day</th>
             <th style="padding:8px 14px;text-align:center;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">PPD</th>
-            <th style="padding:8px 14px;text-align:right;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Cost / Day</th>
+            ${showCost ? `<th style="padding:8px 14px;text-align:right;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Cost / Day</th>` : ''}
             <th></th>
           </tr></thead>
           <tbody>
@@ -8467,15 +8544,15 @@ const App = {
           <div style="font-size:12px;color:var(--g500);margin-top:3px">All nursing + all support departments</div>
         </div>
         <div id="ppd-combined-total" style="font-size:28px;font-weight:800;color:var(--blue-d)">—</div>
-        <div style="border-left:1.5px solid var(--blue-m);padding-left:24px;text-align:right">
+        ${showCost ? `<div style="border-left:1.5px solid var(--blue-m);padding-left:24px;text-align:right">
           <div style="font-size:11px;font-weight:700;color:var(--blue-d);text-transform:uppercase;letter-spacing:.06em">Total Daily Staffing Cost</div>
           <div style="font-size:11px;color:var(--g500);margin-top:3px">Base pay · excludes OT premium</div>
           <div id="ppd-total-day-cost" style="font-size:24px;font-weight:800;color:var(--blue-d);margin-top:6px;font-variant-numeric:tabular-nums">$0.00</div>
-        </div>
+        </div>` : ''}
       </div>
 
       <!-- OVERTIME COSTS -->
-      <div style="background:#FFFBEB;border:1.5px solid #FCD34D;border-radius:12px;padding:18px 20px;margin-bottom:20px">
+      ${showCost ? `<div style="background:#FFFBEB;border:1.5px solid #FCD34D;border-radius:12px;padding:18px 20px;margin-bottom:20px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#B45309" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>
           <div style="font-size:13px;font-weight:800;color:#92400E;text-transform:uppercase;letter-spacing:.06em">Overtime Costs</div>
@@ -8498,13 +8575,13 @@ const App = {
             <div id="ppd-ot-month" style="font-size:22px;font-weight:800;color:#92400E;margin-top:6px;font-variant-numeric:tabular-nums">$0.00</div>
           </div>
         </div>
-      </div>
+      </div>` : ''}
 
       <!-- CMS STAR RATING -->
       <div class="cms-star-section">
         <div class="cms-star-header">
           <div class="cms-star-header-title">
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="#F59E0B" stroke="#F59E0B" stroke-width="1"><polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/></svg>
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="#fff" stroke="#fff" stroke-width="1"><polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/></svg>
             CMS Five-Star Staffing Rating
           </div>
           <div style="font-size:11px;color:rgba(255,255,255,.7)">Based on CMS Care Compare methodology</div>
@@ -8517,8 +8594,8 @@ const App = {
 
           <!-- Daily view (driven by PPD table above) -->
           <div id="cms-daily-view">
-            <div style="font-size:12px;color:var(--g500);margin-bottom:16px;padding:10px 12px;background:var(--amber-l);border:1px solid var(--amber-m);border-radius:8px;display:flex;gap:8px;align-items:flex-start">
-              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="var(--amber)" stroke-width="1.8" stroke-linecap="round" style="flex-shrink:0;margin-top:1px"><path d="M8 1L2 14h12z"/><path d="M8 6v4M8 11v1"/></svg>
+            <div style="font-size:12px;color:var(--g600);margin-bottom:16px;padding:10px 12px;background:var(--g50);border:1px solid var(--g200);border-radius:8px;display:flex;gap:8px;align-items:flex-start">
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="var(--g500)" stroke-width="1.8" stroke-linecap="round" style="flex-shrink:0;margin-top:1px"><path d="M8 1L2 14h12z"/><path d="M8 6v4M8 11v1"/></svg>
               <span>CMS ratings are based on case-mix adjusted quarterly PBJ averages. This daily estimate uses your entered hours and unadjusted thresholds — use as a directional guide.</span>
             </div>
             <div id="cms-daily-result"></div>
@@ -8561,7 +8638,7 @@ const App = {
 
           <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--g100);font-size:11px;color:var(--g600)">
             Thresholds based on CMS Five-Star Staffing methodology (2024). Actual rating uses PBJ data submitted to CMS and is case-mix adjusted.
-            <a href="https://www.cms.gov/medicare/provider-enrollment-and-certification/certificationandcomplianc/downloads/usersguide.pdf" target="_blank" rel="noopener" style="color:var(--blue-d);text-decoration:none;margin-left:4px">CMS methodology ↗</a>
+            <a href="https://www.cms.gov/medicare/provider-enrollment-and-certification/certificationandcomplianc/downloads/usersguide.pdf" target="_blank" rel="noopener" style="color:#047857;text-decoration:none;margin-left:4px">CMS methodology ↗</a>
           </div>
         </div>
       </div>
@@ -9341,8 +9418,13 @@ const App = {
           <div><div style="font-weight:600">${sanitize(a.name)}</div></div>
         </div></td>
         <td style="color:var(--g600)">${sanitize(a.email)}</td>
-        <td><span class="tag tag-blue">Admin</span></td>
-        <td>${a.id!==u.id?`<button class="btn btn-ghost btn-sm" onclick="App.removeAdmin('${a.id}')" style="color:var(--red)">Remove</button>`:''}</td>
+        <td>${a.schedulerOnly
+          ? '<span class="tag" style="background:var(--g100);color:var(--g700);border:1px solid var(--g300)">Scheduler</span>'
+          : '<span class="tag tag-blue">Full Admin</span>'}</td>
+        <td>
+          ${a.id!==u.id?`<button class="btn btn-ghost btn-sm" onclick="App.toggleAdminScheduler('${a.id}')" style="color:var(--g600);margin-right:4px" title="Toggle access level">↔ ${a.schedulerOnly?'Grant Full':'Limit to Scheduler'}</button>`:''}
+          ${a.id!==u.id?`<button class="btn btn-ghost btn-sm" onclick="App.removeAdmin('${a.id}')" style="color:var(--red)">Remove</button>`:''}
+        </td>
       </tr>`).join('');
 
     const div = document.createElement('div');
@@ -9365,6 +9447,65 @@ const App = {
     this.persistData();
     document.getElementById('modal-manage-admins')?.remove();
     this.showToast('Admin removed');
+    this.openManageAdmins();
+  },
+
+  // ── Dashboard punch metrics (sourced from HR Time Clock data) ───────────
+  // Uses the same S.hrTimeClock array that the HR Time Clock page populates.
+  // Until a timeclock sync is wired up, these counts will be 0.
+  _punchSummaryForToday(buildingId) {
+    const recs = Array.isArray(this.S.hrTimeClock) ? this.S.hrTimeClock : [];
+    const empBuilding = new Map((this.S.employees||[]).map(e => [e.id, e.buildingId]));
+    const todays = recs.filter(r => r.date === TODAY && (!buildingId || empBuilding.get(r.empId) === buildingId));
+    const missed = todays.filter(r => r.status === 'missed' || r.status === 'no-out').length;
+    const tardy  = todays.filter(r => r.status === 'late').length;
+    // Early: compare actual punch-in time to scheduled shift start; > 15 min early counts.
+    const shiftsToday = (this.S.shifts || []).filter(s => s.date === TODAY && s.buildingId === buildingId);
+    const shiftByEmp = new Map(shiftsToday.map(s => [s.employeeId, s]));
+    const toMin = t => { if(!t) return null; const [h,m] = String(t).split(':').map(Number); return h*60 + (m||0); };
+    let early = 0;
+    for (const r of todays) {
+      if (!r.in) continue;
+      const sh = shiftByEmp.get(r.empId);
+      const sched = toMin(sh?.start);
+      const actual = toMin(r.in);
+      if (sched != null && actual != null && (sched - actual) > 15) early++;
+    }
+    return { missed, tardy, early };
+  },
+
+  openMissedPunches() {
+    if (!this._canAccessHR()) { this.showToast('Punch reports require HR module access','warn'); return; }
+    this.switchMode('hr');
+    this.navigateHR('timeclock');
+    this.S.tcMissedPeriod = 'day';
+    this.renderHRMain();
+  },
+
+  openTardinessReport() {
+    if (!this._canAccessHR()) { this.showToast('Punch reports require HR module access','warn'); return; }
+    this.switchMode('hr');
+    this.navigateHR('timeclock');
+    this.S.tcSort = { col:'status', dir:1 };
+    this.S.tcMissedPeriod = 'day';
+    this.renderHRMain();
+  },
+
+  openEarlySignInReport() {
+    if (!this._canAccessHR()) { this.showToast('Punch reports require HR module access','warn'); return; }
+    this.switchMode('hr');
+    this.navigateHR('timeclock');
+    this.S.tcSort = { col:'date', dir:-1 };
+    this.renderHRMain();
+  },
+
+  toggleAdminScheduler(id) {
+    const a = this.S.accounts.find(x => x.id === id);
+    if (!a) return;
+    a.schedulerOnly = !a.schedulerOnly;
+    this.persistData();
+    document.getElementById('modal-manage-admins')?.remove();
+    this.showToast(`${sanitize(a.name)} → ${a.schedulerOnly ? 'Scheduler Access' : 'Full Admin'}`);
     this.openManageAdmins();
   },
 
@@ -9575,9 +9716,10 @@ const App = {
     const phone=sanitizeInput(document.getElementById('emp-phone').value.trim(), 20);
     const role=document.getElementById('emp-role').value;
     const employmentType=document.getElementById('emp-employment-type').value;
-    const dailyRateRaw = document.getElementById('emp-daily-rate')?.value;
-    const dailyRate = dailyRateRaw ? Math.max(0, parseFloat(dailyRateRaw) || 0) : null;
+    const hourlyRateRaw = document.getElementById('emp-hourly-rate')?.value;
+    const hourlyRate = hourlyRateRaw ? Math.max(0, parseFloat(hourlyRateRaw) || 0) : null;
     const hireDate = document.getElementById('emp-hire-date')?.value || null;
+    const adminAccess = document.getElementById('emp-admin-access')?.value || 'full';
     if(!name||!pos||!email){this.showToast('Name, position, and email are required','warn');return;}
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){this.showToast('Invalid email address','warn');return;}
     if(!['Nurse Management','Charge Nurse','CNA','CMA','Housekeeping','Laundry','Cook','Dietary Aid'].includes(pos)){this.showToast('Invalid position','warn');return;}
@@ -9610,21 +9752,24 @@ const App = {
     }
 
     if(role==='admin') {
-      this.S.accounts.push({id:`a${Date.now()}`,name,email,role:'admin',buildingId:bId});
+      const schedulerOnly = adminAccess === 'scheduler';
+      this.S.accounts.push({id:`a${Date.now()}`,name,email,role:'admin',buildingId:bId,schedulerOnly});
     } else {
       const termLog = prior?.terminationLog || [];
       this.S.employees.push({
         id:`e${Date.now()}`,name,group:pos,email,phone,buildingId:bId,
         notifEmail,notifSMS,notifPrefs:prefs,notifChannels,initials,
         terminationLog:termLog,inactive:false,employmentType,
-        dailyRate, hireDate,
+        hourlyRate, hireDate,
       });
     }
     Audit.log('EMPLOYEE_ADDED', `Added ${sanitize(name)} (${sanitize(pos)})`, this.S.user?.id, 'medium');
     this.persistData();
     this.closeModal('modal-add-emp');
-    this.showToast(`${sanitize(name)} added as ${role==='admin'?'Admin':sanitize(pos)}`);
-    ['emp-name','emp-email','emp-phone','emp-daily-rate','emp-hire-date'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+    const accessLabel = role==='admin' ? (adminAccess==='scheduler' ? 'Admin (Scheduler Access)' : 'Admin') : sanitize(pos);
+    this.showToast(`${sanitize(name)} added as ${accessLabel}`);
+    ['emp-name','emp-email','emp-phone','emp-hourly-rate','emp-hire-date'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+    const accessSel = document.getElementById('emp-admin-access'); if (accessSel) accessSel.value='full';
     document.getElementById('emp-position').value='';
     this.render();
   },
@@ -10056,6 +10201,13 @@ App.init().catch(e => {
       <div id="invite-error-msg" class="login-error-msg"></div>
       <div class="form-group"><label>Full Name *</label><input type="text" id="invite-name" placeholder="Jane Smith" maxlength="100"></div>
       <div class="form-group"><label>Email Address *</label><input type="email" id="invite-email" placeholder="jane@example.com" maxlength="254" onkeydown="if(event.key==='Enter')App.sendInvite()"></div>
+      <div class="form-group"><label>Admin Access Level *</label>
+        <select id="invite-admin-access">
+          <option value="full">Full Admin — sees hourly rates &amp; PPD cost / OT data</option>
+          <option value="scheduler">Scheduler Access — schedule only, no financial data</option>
+        </select>
+        <div style="font-size:11px;color:var(--g500);margin-top:3px">Scheduler Access hides Cost/Day, Total Daily Staffing Cost, Overtime Costs, and employee hourly rates.</div>
+      </div>
       <p style="font-size:12px;color:var(--g500);margin-top:4px">They'll receive an email with a link to set their password and access their building dashboard.</p>
     </div>
     <div class="modal-footer">
