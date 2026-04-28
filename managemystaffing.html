@@ -561,7 +561,14 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
     <div class="form-group"><label>Email</label><input type="email" id="login-email" placeholder="you@example.com" autocomplete="username" maxlength="254"></div>
     <div class="form-group">
       <label>Password</label>
-      <input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password" maxlength="128" onkeydown="if(event.key==='Enter')App.loginForm()">
+      <div style="position:relative">
+        <input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password" maxlength="128" onkeydown="if(event.key==='Enter')App.loginForm()" style="padding-right:38px">
+        <button type="button" onclick="App.togglePasswordVisibility('login-pass', this)" aria-label="Show or hide password" tabindex="-1"
+          style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:transparent;border:none;cursor:pointer;padding:4px;color:var(--g500);display:flex;align-items:center;justify-content:center"
+          title="Show password">
+          <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M1 10s3.6-6 9-6 9 6 9 6-3.6 6-9 6-9-6-9-6z"/><circle cx="10" cy="10" r="2.5"/></svg>
+        </button>
+      </div>
       <div class="pw-strength-bar" id="pw-strength-bar"></div>
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
@@ -1969,6 +1976,21 @@ const App = {
     } catch (e) {
       showErr('Connection error. Try again.');
       if (btn) { btn.disabled = false; btn.textContent = 'Verify'; }
+    }
+  },
+
+  // Toggle a password input's visibility. Wired to the eye-icon button next
+  // to password fields. Updates the icon between open-eye and slashed-eye.
+  togglePasswordVisibility(inputId, btn) {
+    const inp = document.getElementById(inputId);
+    if (!inp) return;
+    const showing = inp.type === 'text';
+    inp.type = showing ? 'password' : 'text';
+    if (btn) {
+      btn.title = showing ? 'Show password' : 'Hide password';
+      btn.innerHTML = showing
+        ? '<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M1 10s3.6-6 9-6 9 6 9 6-3.6 6-9 6-9-6-9-6z"/><circle cx="10" cy="10" r="2.5"/></svg>'
+        : '<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l14 14"/><path d="M9.6 4.1A8.5 8.5 0 0 1 10 4c5.4 0 9 6 9 6a17 17 0 0 1-3 3.5"/><path d="M14 14a8.5 8.5 0 0 1-4 1c-5.4 0-9-6-9-6a17 17 0 0 1 4-4.1"/><path d="M8 8a2.5 2.5 0 0 0 4 4"/></svg>';
     }
   },
 

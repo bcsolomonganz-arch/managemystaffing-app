@@ -206,7 +206,9 @@ async function upsertAccount(a) {
       email = EXCLUDED.email, name = EXCLUDED.name, role = EXCLUDED.role,
       building_id = EXCLUDED.building_id, building_ids = EXCLUDED.building_ids,
       "group" = EXCLUDED."group",
-      password_hash = EXCLUDED.password_hash,
+      -- COALESCE so a null incoming hash never silently wipes the existing one.
+      -- Use clearAccountPassword() if you actually need to null the hash.
+      password_hash = COALESCE(EXCLUDED.password_hash, accounts.password_hash),
       totp_secret_encrypted        = COALESCE(EXCLUDED.totp_secret_encrypted,        accounts.totp_secret_encrypted),
       totp_enrolled_at             = COALESCE(EXCLUDED.totp_enrolled_at,             accounts.totp_enrolled_at),
       totp_recovery_codes_hashes   = COALESCE(EXCLUDED.totp_recovery_codes_hashes,   accounts.totp_recovery_codes_hashes),
@@ -340,7 +342,9 @@ async function _upsertAccountInTx(c, a) {
       email = EXCLUDED.email, name = EXCLUDED.name, role = EXCLUDED.role,
       building_id = EXCLUDED.building_id, building_ids = EXCLUDED.building_ids,
       "group" = EXCLUDED."group",
-      password_hash = EXCLUDED.password_hash,
+      -- COALESCE so a null incoming hash never silently wipes the existing one.
+      -- Use clearAccountPassword() if you actually need to null the hash.
+      password_hash = COALESCE(EXCLUDED.password_hash, accounts.password_hash),
       totp_secret_encrypted        = COALESCE(EXCLUDED.totp_secret_encrypted,        accounts.totp_secret_encrypted),
       totp_enrolled_at             = COALESCE(EXCLUDED.totp_enrolled_at,             accounts.totp_enrolled_at),
       totp_recovery_codes_hashes   = COALESCE(EXCLUDED.totp_recovery_codes_hashes,   accounts.totp_recovery_codes_hashes),

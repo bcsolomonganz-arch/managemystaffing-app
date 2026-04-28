@@ -1402,11 +1402,26 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
       logger.warn('blocked_self_role_escalation', { userId: req.user.id, attempted: me.role });
       me.role = req.user.role;
     }
-    // Prevent caller from removing TOTP from any account
+    // CRITICAL: GET /api/data scrubs every account's secret fields (ph,
+    // totpSecret, totpRecoveryCodesHashes, inviteToken) before sending to the
+    // client. When the client persists, those fields come back undefined.
+    // Without these guards, every save would null the password hash, TOTP
+    // secret, recovery codes, and invite tokens for EVERY account in scope —
+    // silently locking users out. Restore each stripped secret from the
+    // existing DB row whenever the incoming object doesn't carry it.
     for (const a of accountsScoped) {
       const orig = (data.accounts || []).find(x => x.id === a.id);
-      if (orig?.totpSecret && !a.totpSecret) a.totpSecret = orig.totpSecret;
-      if (orig?.totpEnrolledAt && !a.totpEnrolledAt) a.totpEnrolledAt = orig.totpEnrolledAt;
+      if (!orig) continue;
+      if (orig.ph                      && !a.ph)                      a.ph                      = orig.ph;
+      if (orig.totpSecret              && !a.totpSecret)              a.totpSecret              = orig.totpSecret;
+      if (orig.totpEnrolledAt          && !a.totpEnrolledAt)          a.totpEnrolledAt          = orig.totpEnrolledAt;
+      if (orig.totpRecoveryCodesHashes && !a.totpRecoveryCodesHashes) a.totpRecoveryCodesHashes = orig.totpRecoveryCodesHashes;
+      if (orig.totpRecoveryCodesGeneratedAt && !a.totpRecoveryCodesGeneratedAt) a.totpRecoveryCodesGeneratedAt = orig.totpRecoveryCodesGeneratedAt;
+      if (orig.inviteToken             && !a.inviteToken)             a.inviteToken             = orig.inviteToken;
+      if (orig.inviteExpiry            && !a.inviteExpiry)            a.inviteExpiry            = orig.inviteExpiry;
+      if (orig.passwordResetTokenHash  && !a.passwordResetTokenHash)  a.passwordResetTokenHash  = orig.passwordResetTokenHash;
+      if (orig.passwordResetExpiry     && !a.passwordResetExpiry)     a.passwordResetExpiry     = orig.passwordResetExpiry;
+      if (orig.deviceTrustEpoch        && !a.deviceTrustEpoch)        a.deviceTrustEpoch        = orig.deviceTrustEpoch;
     }
     data.accounts = accountsScoped;
   }
