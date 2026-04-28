@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   activated_at                    TIMESTAMPTZ,
   password_reset_token_hash       TEXT,
   password_reset_expiry           TIMESTAMPTZ,
+  scheduler_only                  BOOLEAN NOT NULL DEFAULT false,  -- true = admin sees schedule only, no $ data
   created_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at                      TIMESTAMPTZ NOT NULL DEFAULT now()
 );

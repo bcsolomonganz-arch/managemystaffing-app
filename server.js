@@ -254,6 +254,7 @@ async function loadData() {
       const ok = await dbRepo.ping();
       if (ok) {
         _useDB = true;
+        await dbRepo.ensureSchema();
         dataCache = await dbRepo.loadAll();
         logger.info('data_loaded', { backend: 'postgres', accounts: (dataCache.accounts || []).length });
       } else {
@@ -1173,6 +1174,7 @@ async function _issueToken(req, res, acct, data) {
     buildingId: acct.buildingId || null,
     buildingIds: acct.buildingIds || [],
     group:      acct.group || undefined,
+    schedulerOnly: acct.role === 'admin' && !!acct.schedulerOnly ? true : undefined,
     demo:       isDemo || undefined,
     sid,
   };
@@ -1378,7 +1380,7 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
 
 // ── POST /api/invite ──────────────────────────────────────────────────────────
 app.post('/api/invite', requireAuth, requireAdmin, async (req, res) => {
-  const { name, email, role, buildingId } = req.body || {};
+  const { name, email, role, buildingId, schedulerOnly } = req.body || {};
   if (!name || !email) return res.status(400).json({ error: 'name and email are required' });
   const emailNorm = email.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNorm)) return res.status(400).json({ error: 'Invalid email address' });
@@ -1403,6 +1405,7 @@ app.post('/api/invite', requireAuth, requireAdmin, async (req, res) => {
     role:         acctRole,
     buildingId:   targetBuilding || null,
     ph:           null,
+    schedulerOnly: acctRole === 'admin' ? !!schedulerOnly : false,
     inviteToken,
     inviteExpiry: Date.now() + 7 * 24 * 60 * 60 * 1000,
     invitedBy:    req.user.email,
