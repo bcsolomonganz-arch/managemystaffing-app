@@ -1417,6 +1417,13 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
     if (Array.isArray(payload.hrAccounts))  data.hrAccounts  = payload.hrAccounts;
   }
 
+  // Per-day census map ({ 'YYYY-MM-DD': number }) — populated by PPD calendar
+  // Sync Month from PCC, or by manual entry. Merged so concurrent edits across
+  // facilities don't drop each other's days.
+  if (payload.ppdDailyCensus && typeof payload.ppdDailyCensus === 'object') {
+    data.ppdDailyCensus = { ...(data.ppdDailyCensus || {}), ...payload.ppdDailyCensus };
+  }
+
   dataCache = data;
   _bumpDataVersion();
   markDirty();
@@ -1792,6 +1799,47 @@ app.get('/api/pcc/census', requireAuth, requireAdmin, async (req, res) => {
     });
   } catch (e) {
     console.error('[mms] PCC census error:', e.message);
+    res.status(502).json({ error: `PCC request failed: ${e.message}` });
+  }
+});
+
+// ── GET /api/pcc/census/range ─────────────────────────────────────────────────
+// Returns census for every day in [start, end] inclusive. Used by the PPD
+// calendar view. PCC has no batch endpoint — we serialize per-day requests.
+app.get('/api/pcc/census/range', requireAuth, requireAdmin, async (req, res) => {
+  if (!PCC_CLIENT_ID || !PCC_CLIENT_SECRET || !PCC_FACILITY_ID) {
+    return res.status(503).json({ error: 'PCC not configured.' });
+  }
+  const start = String(req.query.start || '').replace(/[^0-9-]/g, '');
+  const end   = String(req.query.end   || '').replace(/[^0-9-]/g, '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    return res.status(400).json({ error: 'start and end must be YYYY-MM-DD' });
+  }
+  // Cap the range to avoid abusive queries.
+  const startMs = new Date(start + 'T00:00:00Z').getTime();
+  const endMs   = new Date(end   + 'T00:00:00Z').getTime();
+  if (endMs < startMs) return res.status(400).json({ error: 'end before start' });
+  const days = Math.round((endMs - startMs) / 86400000) + 1;
+  if (days > 62) return res.status(400).json({ error: 'Range too large (max 62 days)' });
+  try {
+    const token   = await getPCCToken();
+    const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' };
+    if (PCC_ORG_UUID) headers['x-pcc-appkey'] = PCC_ORG_UUID;
+    const out = {};
+    for (let i = 0; i < days; i++) {
+      const d   = new Date(startMs + i * 86400000).toISOString().slice(0, 10);
+      const url = `${PCC_BASE}/partner/v1/facilities/${PCC_FACILITY_ID}/census?censusDate=${d}`;
+      try {
+        const r = await fetch(url, { headers });
+        if (!r.ok) { out[d] = null; continue; }
+        const body = await r.json();
+        const x    = body.data || body;
+        out[d] = x.totalCensus ?? x.occupiedBeds ?? x.census ?? null;
+      } catch { out[d] = null; }
+    }
+    res.json({ ok: true, start, end, census: out });
+  } catch (e) {
+    console.error('[mms] PCC census range error:', e.message);
     res.status(502).json({ error: `PCC request failed: ${e.message}` });
   }
 });

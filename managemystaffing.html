@@ -1545,6 +1545,10 @@ const App = {
     pccLastSync: null,   // ISO timestamp of last census sync
     pccLastCensus: null, // number — most recent synced census count
     pccSyncing: false,
+    // PPD Calendar
+    ppdCalMonth: null,        // 'YYYY-MM' currently displayed; lazy-init to current month
+    ppdDailyCensus: {},       // { 'YYYY-MM-DD': number } — populated by Sync Month from PCC
+    ppdCalLoading: false,
     // Time Clock
     tcSort: {col:'date', dir:-1},
     tcMissedPeriod: null,
@@ -7996,6 +8000,13 @@ const App = {
     const ldHrs  = parseFloat(document.getElementById('ppd-ld-hrs')?.value)  || 0;
     const dtHrs  = parseFloat(document.getElementById('ppd-dt-hrs')?.value)  || 0;
     this.S.ppdCensus = census;
+    // Mirror today's (or selected day's) census into the per-day map so the
+    // PPD calendar grid reflects manual entries from the daily form.
+    if (census > 0) {
+      const ppdDay = this.S.ppdDate || TODAY;
+      if (!this.S.ppdDailyCensus) this.S.ppdDailyCensus = {};
+      this.S.ppdDailyCensus[ppdDay] = census;
+    }
     const fmt = (h) => census > 0 ? (h/census).toFixed(2) : '—';
     const nursingTotal = nmHrs + rnHrs + lpnHrs + cnaHrs + cmaHrs;
     const combinedTotal = nursingTotal + hkHrs + ldHrs + dtHrs;
@@ -8247,6 +8258,180 @@ const App = {
     this.recalcPPD();
   },
 
+  // ── PPD CALENDAR ────────────────────────────────────────────────────────
+  // Per-day metrics for the PPD calendar grid.
+  // - census comes from S.ppdDailyCensus (populated by ppdSyncMonthFromPCC)
+  // - hours from scheduled shifts that day
+  // - direct-care PPD = (RN+LPN+CNA+CMA+NM hours) / census  (CMS "total nursing")
+  // - daily cost = sum(hourlyRate × hours) for shifts on that day
+  _ppdMetricsForDay(buildingId, dateISO) {
+    const shifts = (this.S.shifts || []).filter(s =>
+      s.date === dateISO && s.buildingId === buildingId && s.status === 'scheduled');
+    const empById = new Map((this.S.employees || []).map(e => [e.id, e]));
+    const directGroups = new Set(['Nurse Management','Charge Nurse','CNA','CMA','RN','LPN']);
+    let directHours = 0, totalHours = 0, dailyCost = 0;
+    for (const s of shifts) {
+      const hrs = this._shiftHours(s);
+      totalHours += hrs;
+      if (directGroups.has(s.group)) directHours += hrs;
+      const emp = empById.get(s.employeeId);
+      if (emp) dailyCost += this._empHourlyRate(emp) * hrs;
+    }
+    const census = parseFloat(this.S.ppdDailyCensus?.[dateISO]) || 0;
+    return {
+      census,
+      totalHours, directHours,
+      totalPPD:  census > 0 ? totalHours  / census : null,
+      directPPD: census > 0 ? directHours / census : null,
+      dailyCost,
+      shiftCount: shifts.length,
+    };
+  },
+
+  ppdCalNav(dir) {
+    const cur = this.S.ppdCalMonth || TODAY.slice(0,7);
+    const [y,m] = cur.split('-').map(Number);
+    const d = new Date(y, m-1+dir, 1);
+    this.S.ppdCalMonth = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    this.render();
+  },
+
+  ppdCalToday() {
+    this.S.ppdCalMonth = TODAY.slice(0,7);
+    this.render();
+  },
+
+  async ppdSyncMonthFromPCC() {
+    if (!IS_SERVER_MODE) { this.showToast('PCC sync requires server mode','warn'); return; }
+    const monthKey = this.S.ppdCalMonth || TODAY.slice(0,7);
+    const [y,m] = monthKey.split('-').map(Number);
+    const start = `${monthKey}-01`;
+    const lastDay = new Date(y, m, 0).getDate();
+    const end = `${monthKey}-${String(lastDay).padStart(2,'0')}`;
+    this.S.ppdCalLoading = true;
+    this.render();
+    try {
+      const r = await fetch(`/api/pcc/census/range?start=${start}&end=${end}`, {
+        headers: { 'Authorization': `Bearer ${_authToken}` }
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        this.showToast(data.error || 'PCC sync failed','warn');
+      } else {
+        const data = await r.json();
+        Object.assign(this.S.ppdDailyCensus, data.census || {});
+        this.persistData();
+        const filledDays = Object.values(data.census || {}).filter(v => v != null).length;
+        this.showToast(`Synced ${filledDays} day${filledDays===1?'':'s'} of census from PCC`);
+      }
+    } catch(e) {
+      this.showToast('Connection error syncing PCC','warn');
+    } finally {
+      this.S.ppdCalLoading = false;
+      this.render();
+    }
+  },
+
+  setDailyCensus(dateISO, val) {
+    const n = parseFloat(val);
+    if (!Number.isFinite(n) || n < 0) {
+      delete this.S.ppdDailyCensus[dateISO];
+    } else {
+      this.S.ppdDailyCensus[dateISO] = n;
+    }
+    this.persistData();
+    this.render();
+  },
+
+  renderPPDCalendar(buildingId) {
+    const showCost = this.canViewFinancials();
+    const monthKey = this.S.ppdCalMonth || (this.S.ppdCalMonth = TODAY.slice(0,7));
+    const [y,m]    = monthKey.split('-').map(Number);
+    const firstDow = new Date(y, m-1, 1).getDay();   // 0=Sun
+    const daysInMo = new Date(y, m, 0).getDate();
+    const monthLbl = new Date(y, m-1, 1).toLocaleString('default', { month:'long', year:'numeric' });
+    const money    = (n) => '$' + (Math.round(n)).toLocaleString('en-US');
+    // Aggregate month totals for the header summary
+    let monthHours = 0, monthDirect = 0, monthCost = 0, censusDays = 0, ppdSum = 0;
+    for (let d = 1; d <= daysInMo; d++) {
+      const dateISO = `${monthKey}-${String(d).padStart(2,'0')}`;
+      const mx = this._ppdMetricsForDay(buildingId, dateISO);
+      monthHours  += mx.totalHours;
+      monthDirect += mx.directHours;
+      monthCost   += mx.dailyCost;
+      if (mx.totalPPD != null) { ppdSum += mx.totalPPD; censusDays++; }
+    }
+    const avgPPD = censusDays > 0 ? (ppdSum / censusDays).toFixed(2) : '—';
+
+    // Build the day cells
+    const dows = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const dowHdr = dows.map(d =>
+      `<div style="padding:6px 4px;font-size:10px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.06em;text-align:center;background:var(--g50);border-bottom:1px solid var(--g200)">${d}</div>`
+    ).join('');
+    const cells = [];
+    for (let i = 0; i < firstDow; i++) cells.push(`<div style="background:var(--g50);min-height:96px;border-right:1px solid var(--g100);border-bottom:1px solid var(--g100)"></div>`);
+    for (let d = 1; d <= daysInMo; d++) {
+      const dateISO = `${monthKey}-${String(d).padStart(2,'0')}`;
+      const isToday = dateISO === TODAY;
+      const mx = this._ppdMetricsForDay(buildingId, dateISO);
+      const censusInput = `<input type="number" min="0" max="500" value="${mx.census || ''}" placeholder="—"
+        onchange="App.setDailyCensus('${dateISO}', this.value)"
+        onclick="event.stopPropagation()"
+        style="width:42px;padding:1px 4px;border:1px solid var(--g200);border-radius:4px;font-size:11px;font-weight:700;text-align:center;color:var(--g800);background:#fff">`;
+      const ppdLine = mx.totalPPD != null
+        ? `<div style="font-size:11px;color:var(--g700);font-weight:700;font-variant-numeric:tabular-nums">${mx.totalPPD.toFixed(2)} <span style="font-size:9px;font-weight:600;color:var(--g500)">PPD</span></div>`
+        : `<div style="font-size:10px;color:var(--g400)">no census</div>`;
+      const directLine = mx.directPPD != null
+        ? `<div style="font-size:10px;color:#047857;font-weight:600;font-variant-numeric:tabular-nums">${mx.directPPD.toFixed(2)} direct</div>`
+        : '';
+      const costLine = showCost && mx.dailyCost > 0
+        ? `<div style="font-size:10px;color:var(--g600);font-variant-numeric:tabular-nums;margin-top:2px">${money(mx.dailyCost)}</div>`
+        : '';
+      cells.push(`<div style="background:#fff;min-height:96px;padding:5px 6px;border-right:1px solid var(--g100);border-bottom:1px solid var(--g100);${isToday?'box-shadow:inset 0 0 0 2px var(--green)':''};display:flex;flex-direction:column;gap:2px">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <span style="font-size:11px;font-weight:${isToday?'800':'700'};color:${isToday?'#047857':'var(--g700)'}">${d}</span>
+          ${censusInput}
+        </div>
+        ${ppdLine}
+        ${directLine}
+        ${costLine}
+        ${mx.shiftCount > 0 ? `<div style="font-size:9px;color:var(--g400);margin-top:auto">${mx.shiftCount} shift${mx.shiftCount===1?'':'s'}</div>` : ''}
+      </div>`);
+    }
+    const tail = (7 - ((firstDow + daysInMo) % 7)) % 7;
+    for (let i = 0; i < tail; i++) cells.push(`<div style="background:var(--g50);min-height:96px;border-right:1px solid var(--g100);border-bottom:1px solid var(--g100)"></div>`);
+
+    const summary = `<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--g600)">
+      <span>Month avg PPD: <strong style="color:var(--g900)">${avgPPD}</strong></span>
+      <span>Total hours: <strong style="color:var(--g900)">${monthHours.toFixed(1)}</strong></span>
+      <span>Direct-care hours: <strong style="color:#047857">${monthDirect.toFixed(1)}</strong></span>
+      ${showCost ? `<span>Month cost: <strong style="color:var(--g900)">${money(monthCost)}</strong></span>` : ''}
+    </div>`;
+
+    return `<div style="background:#fff;border:1.5px solid var(--g200);border-radius:12px;overflow:hidden;margin-bottom:16px">
+      <div style="padding:12px 16px;background:var(--g50);border-bottom:1px solid var(--g200);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <button onclick="App.ppdCalNav(-1)" style="width:26px;height:26px;border-radius:6px;border:1px solid var(--g200);background:#fff;cursor:pointer;color:var(--g600)" title="Previous month">◀</button>
+          <div style="font-size:14px;font-weight:800;color:var(--g900);min-width:140px;text-align:center">${monthLbl}</div>
+          <button onclick="App.ppdCalNav(1)" style="width:26px;height:26px;border-radius:6px;border:1px solid var(--g200);background:#fff;cursor:pointer;color:var(--g600)" title="Next month">▶</button>
+          <button onclick="App.ppdCalToday()" style="padding:4px 10px;border-radius:6px;border:1px solid var(--g200);background:#fff;cursor:pointer;font-size:11px;font-weight:600;color:var(--g700)">Today</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          ${summary}
+          <button class="pcc-sync-btn" onclick="App.ppdSyncMonthFromPCC()" ${!IS_SERVER_MODE || this.S.ppdCalLoading ? 'disabled' : ''} title="${!IS_SERVER_MODE?'PCC sync requires server mode':'Pull census for every day this month from PCC'}">
+            ${this.S.ppdCalLoading ? '⏳ Syncing…' : (typeof SYNC_ICON !== 'undefined' ? SYNC_ICON : '↻') + ' Sync Month from PCC'}
+          </button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);background:var(--g100)">${dowHdr}</div>
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);background:var(--g100)">${cells.join('')}</div>
+      <div style="padding:8px 14px;font-size:11px;color:var(--g500);background:var(--g50);border-top:1px solid var(--g100)">
+        Edit any cell's census directly to recalc that day. Click <strong>Sync Month from PCC</strong> to pull every day at once.
+        Direct-care PPD = NM + RN + LPN + CNA + CMA hours ÷ census.
+      </div>
+    </div>`;
+  },
+
   // ── REGIONAL ADMIN ──────────────────────────────────────────
   enterRegionalBuilding(bId) {
     this.S.activeBuildingId = bId;
@@ -8482,6 +8667,9 @@ const App = {
         </div>
         <div style="font-size:12px;color:var(--g600);padding-bottom:10px;margin-left:auto">Hours auto-filled from<br>scheduled shifts · editable</div>
       </div>
+
+      <!-- MONTH CALENDAR (per-day census, PPD, direct-care PPD, daily cost) -->
+      ${this.renderPPDCalendar(bId)}
 
       <!-- NURSING -->
       <div style="background:#fff;border:1.5px solid var(--g200);border-radius:12px;overflow:hidden;margin-bottom:16px">
@@ -9957,6 +10145,7 @@ const App = {
       shiftTemplates:this.S.shiftTemplates,
       staffingSlots:this.S.staffingSlots,
       buildingShiftTypes:this.S.buildingShiftTypes,
+      ppdDailyCensus:this.S.ppdDailyCensus,
     };
     if (IS_SERVER_MODE && !this.S.user?.demo) {
       // HIPAA §164.312(a)(2)(iv) — never write PHI to client storage.
@@ -10031,6 +10220,7 @@ const App = {
     if (Array.isArray(data.shiftTemplates))   this.S.shiftTemplates   = data.shiftTemplates;
     if (data.staffingSlots && typeof data.staffingSlots === 'object') this.S.staffingSlots = data.staffingSlots;
     if (data.buildingShiftTypes && typeof data.buildingShiftTypes === 'object') this.S.buildingShiftTypes = data.buildingShiftTypes;
+    if (data.ppdDailyCensus && typeof data.ppdDailyCensus === 'object') this.S.ppdDailyCensus = data.ppdDailyCensus;
     if (data.hrOnboarding && typeof data.hrOnboarding === 'object') {
       if (data.hrOnboarding.TX && !data.hrOnboarding.co_skyblue) {
         // migrate old flat format
