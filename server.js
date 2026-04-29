@@ -988,22 +988,37 @@ function _wrapCdata(s) {
   // CDATA can't contain "]]>" — split + reassemble defensively.
   return '<![CDATA[' + String(s == null ? '' : s).replace(/]]>/g, ']]]]><![CDATA[>') + ']]>';
 }
-app.get('/jobs.xml', async (req, res) => {
+// Shared builder for the active jobs list — used by every platform feed.
+async function _buildActiveJobsForFeed() {
+  const data = await loadData();
+  const jobs = (data.jobPostings || []).filter(j => j.status === 'active');
+  const buildings = data.buildings || [];
+  const baseUrl = (process.env.APP_URL || 'https://www.managemystaffing.com').replace(/\/$/, '');
+  const lastBuild = new Date().toUTCString();
+  return { jobs, buildings, baseUrl, lastBuild };
+}
+
+// Map our jobType to a normalized lowercased token. All three platforms
+// accept the same vocabulary in their `<jobtype>` field.
+function _normalizeJobType(t) {
+  return ({
+    'Full-time':'fulltime','Part-time':'parttime','PRN / Per Diem':'perdiem',
+    'Contract':'contract','Temporary':'temporary',
+  })[t] || 'fulltime';
+}
+
+// ── Indeed XML feed ───────────────────────────────────────────────────────
+// Indeed-spec format. ZipRecruiter accepts the same shape — they share an
+// almost identical schema — but we expose a separate URL below to keep
+// crawler tracking clean and let us tune fields if Indeed and ZipRecruiter
+// ever diverge.
+app.get('/jobs.xml', async (_req, res) => {
   try {
-    const data = await loadData();
-    const jobs = (data.jobPostings || []).filter(j => j.status === 'active');
-    const buildings = data.buildings || [];
-    const baseUrl = (process.env.APP_URL || 'https://www.managemystaffing.com').replace(/\/$/, '');
-    const lastBuild = new Date().toUTCString();
+    const { jobs, buildings, baseUrl, lastBuild } = await _buildActiveJobsForFeed();
     const items = jobs.map(j => {
       const b = buildings.find(x => x.id === j.buildingId);
       const company = b?.name || 'ManageMyStaffing Facility';
       const dateStr = j.createdAt ? new Date(j.createdAt).toUTCString() : lastBuild;
-      // Map our jobType into Indeed's expected values.
-      const jt = ({
-        'Full-time':'fulltime','Part-time':'parttime','PRN / Per Diem':'perdiem',
-        'Contract':'contract','Temporary':'temporary',
-      })[j.jobType] || 'fulltime';
       return `  <job>
     <title>${_wrapCdata(j.title)}</title>
     <date>${_wrapCdata(dateStr)}</date>
@@ -1016,7 +1031,7 @@ app.get('/jobs.xml', async (req, res) => {
     <postalcode>${_wrapCdata(j.zip || '')}</postalcode>
     <description>${_wrapCdata((j.description || '') + (j.requirements ? '\n\nRequirements:\n' + j.requirements : ''))}</description>
     <salary>${_wrapCdata(j.salary || '')}</salary>
-    <jobtype>${_wrapCdata(jt)}</jobtype>
+    <jobtype>${_wrapCdata(_normalizeJobType(j.jobType))}</jobtype>
     <category>${_wrapCdata(j.department || '')}</category>
   </job>`;
     }).join('\n');
@@ -1028,10 +1043,111 @@ app.get('/jobs.xml', async (req, res) => {
 ${items}
 </source>`;
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-    res.setHeader('Cache-Control', 'public, max-age=300'); // 5 min — Indeed crawls hourly
+    res.setHeader('Cache-Control', 'public, max-age=300');
     res.send(xml);
   } catch (e) {
     logger.error('jobs_xml_failed', { err: e.message });
+    res.status(500).type('text').send('Feed temporarily unavailable');
+  }
+});
+
+// ── ZipRecruiter XML feed ─────────────────────────────────────────────────
+// ZR accepts the standard Indeed-style schema. The differences:
+// * Their crawler tags `<source>` instead of `<jobs>` (we already use source).
+// * `<expiration_date>` is honored (we omit by default — postings are evergreen
+//   until the user clicks Take Down).
+// * No `<category>` — ZR uses keywords from title + description.
+// Submit this URL in your ZipRecruiter Job Feed Setup.
+app.get('/jobs/ziprecruiter.xml', async (_req, res) => {
+  try {
+    const { jobs, buildings, baseUrl, lastBuild } = await _buildActiveJobsForFeed();
+    const items = jobs.map(j => {
+      const b = buildings.find(x => x.id === j.buildingId);
+      const company = b?.name || 'ManageMyStaffing Facility';
+      const dateStr = j.createdAt ? new Date(j.createdAt).toUTCString() : lastBuild;
+      return `  <job>
+    <title>${_wrapCdata(j.title)}</title>
+    <date>${_wrapCdata(dateStr)}</date>
+    <referencenumber>${_wrapCdata(j.id)}</referencenumber>
+    <url>${_wrapCdata(`${baseUrl}/apply/${j.id}`)}</url>
+    <company>${_wrapCdata(company)}</company>
+    <city>${_wrapCdata(j.city || '')}</city>
+    <state>${_wrapCdata(j.state || '')}</state>
+    <country>${_wrapCdata('US')}</country>
+    <postalcode>${_wrapCdata(j.zip || '')}</postalcode>
+    <description>${_wrapCdata((j.description || '') + (j.requirements ? '\n\nRequirements:\n' + j.requirements : ''))}</description>
+    <salary>${_wrapCdata(j.salary || '')}</salary>
+    <jobtype>${_wrapCdata(_normalizeJobType(j.jobType))}</jobtype>
+  </job>`;
+    }).join('\n');
+    const xml = `<?xml version="1.0" encoding="utf-8"?>
+<source>
+  <publisher>${_wrapCdata('ManageMyStaffing')}</publisher>
+  <publisherurl>${_wrapCdata(baseUrl)}</publisherurl>
+  <lastBuildDate>${_wrapCdata(lastBuild)}</lastBuildDate>
+${items}
+</source>`;
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.send(xml);
+  } catch (e) {
+    logger.error('zr_xml_failed', { err: e.message });
+    res.status(500).type('text').send('Feed temporarily unavailable');
+  }
+});
+
+// ── LinkedIn XML feed (Limited Listings format) ───────────────────────────
+// LinkedIn's open job feed uses a different schema:
+// * Top-level <source> wraps a list of <job> entries (same as Indeed).
+// * Required: <partnerJobId> (their dedup key), <title>, <company>,
+//   <description>, <jobtype>, <applyUrl>.
+// * Recommended: <location>, <city>, <state>, <country>, <postalcode>,
+//   <industryCodes>, <workplaceTypes>, <expirationDate>.
+// LinkedIn's "Limited Listings" requires whitelisting per-tenant; if you
+// haven't been onboarded by LinkedIn, this URL still emits a valid feed
+// they'll accept once your account is approved. Submit via
+// https://business.linkedin.com/talent-solutions/post-jobs.
+app.get('/jobs/linkedin.xml', async (_req, res) => {
+  try {
+    const { jobs, buildings, baseUrl, lastBuild } = await _buildActiveJobsForFeed();
+    const items = jobs.map(j => {
+      const b = buildings.find(x => x.id === j.buildingId);
+      const company = b?.name || 'ManageMyStaffing Facility';
+      const dateStr = j.createdAt ? new Date(j.createdAt).toUTCString() : lastBuild;
+      const loc = [j.city, j.state].filter(Boolean).join(', ');
+      // Healthcare-relevant industry codes per LinkedIn taxonomy.
+      // 14 = Hospital & Health Care, 12 = Hospital, 124 = Long-Term Care.
+      const industryCodes = '14';
+      return `  <job>
+    <partnerJobId>${_wrapCdata(j.id)}</partnerJobId>
+    <title>${_wrapCdata(j.title)}</title>
+    <company>${_wrapCdata(company)}</company>
+    <description>${_wrapCdata((j.description || '') + (j.requirements ? '\n\nRequirements:\n' + j.requirements : ''))}</description>
+    <jobtype>${_wrapCdata(_normalizeJobType(j.jobType))}</jobtype>
+    <applyUrl>${_wrapCdata(`${baseUrl}/apply/${j.id}`)}</applyUrl>
+    <location>${_wrapCdata(loc)}</location>
+    <city>${_wrapCdata(j.city || '')}</city>
+    <state>${_wrapCdata(j.state || '')}</state>
+    <country>${_wrapCdata('US')}</country>
+    <postalcode>${_wrapCdata(j.zip || '')}</postalcode>
+    <industryCodes>${_wrapCdata(industryCodes)}</industryCodes>
+    <workplaceTypes>${_wrapCdata('on-site')}</workplaceTypes>
+    <salary>${_wrapCdata(j.salary || '')}</salary>
+    <postingDate>${_wrapCdata(dateStr)}</postingDate>
+  </job>`;
+    }).join('\n');
+    const xml = `<?xml version="1.0" encoding="utf-8"?>
+<source>
+  <publisher>${_wrapCdata('ManageMyStaffing')}</publisher>
+  <publisherurl>${_wrapCdata(baseUrl)}</publisherurl>
+  <lastBuildDate>${_wrapCdata(lastBuild)}</lastBuildDate>
+${items}
+</source>`;
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.send(xml);
+  } catch (e) {
+    logger.error('linkedin_xml_failed', { err: e.message });
     res.status(500).type('text').send('Feed temporarily unavailable');
   }
 });

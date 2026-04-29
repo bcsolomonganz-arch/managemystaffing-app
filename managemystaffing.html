@@ -7450,11 +7450,28 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         </div>`).join('')}
       </div>
 
-      <div style="background:#fff;border:1px solid var(--blue-m);border-radius:10px;padding:12px 16px;display:flex;align-items:center;gap:10px;margin-bottom:20px;font-size:12px;color:var(--g700)">
-        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="var(--blue)" stroke-width="1.8" stroke-linecap="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 7v5M8 5.5v.5"/></svg>
-        <span><strong>Indeed XML Feed:</strong> Submit <code style="font-size:11px;background:var(--g100);padding:1px 6px;border-radius:4px">${feedUrl}</code> in your Indeed Employer Dashboard to auto-sync all active jobs.</span>
-        <button class="btn btn-ghost btn-sm" onclick="App._copyText('${feedUrl}')" style="flex-shrink:0">Copy</button>
-      </div>
+      ${(() => {
+        const origin = (IS_SERVER_MODE ? window.location.origin : 'https://managemystaffing.com');
+        const feeds = [
+          { name: 'Indeed',       url: origin + '/jobs.xml',                  setupUrl: 'https://employers.indeed.com', note: 'Bulk Posting → XML Feed' },
+          { name: 'ZipRecruiter', url: origin + '/jobs/ziprecruiter.xml',     setupUrl: 'https://www.ziprecruiter.com/employers',     note: 'Job Feed Setup → Add a Feed' },
+          { name: 'LinkedIn',     url: origin + '/jobs/linkedin.xml',         setupUrl: 'https://business.linkedin.com/talent-solutions/post-jobs', note: 'Limited Listings (whitelisting required)' },
+        ];
+        const row = (f) => `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--g100);font-size:12px">
+          <div style="width:90px;font-weight:700;color:var(--g800);flex-shrink:0">${f.name}</div>
+          <code style="flex:1;min-width:0;font-size:11px;background:var(--g50);padding:4px 8px;border-radius:4px;border:1px solid var(--g200);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${sanitize(f.url)}</code>
+          <button class="btn btn-ghost btn-sm" onclick="App._copyText('${f.url}')" style="flex-shrink:0">Copy</button>
+          <a href="${f.setupUrl}" target="_blank" rel="noopener" style="font-size:11px;color:var(--blue-d);text-decoration:none;flex-shrink:0;white-space:nowrap" title="${f.note}">Setup ↗</a>
+        </div>`;
+        return `<div style="background:#fff;border:1px solid var(--blue-m);border-radius:10px;padding:14px 18px;margin-bottom:20px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="var(--blue)" stroke-width="1.8" stroke-linecap="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 7v5M8 5.5v.5"/></svg>
+            <span style="font-size:13px;font-weight:700;color:var(--g900)">Job Feeds — submit each URL once in the platform's employer portal</span>
+          </div>
+          <div>${feeds.map(row).join('').replace(/border-bottom:1px solid var\(--g100\);"(?=[^"]*$)/, '"')}</div>
+          <div style="font-size:11px;color:var(--g500);margin-top:8px">All three feeds emit only active postings. Use the Take Down / Repost buttons on each job to control visibility — the platforms re-crawl your feed on their own schedule (usually within an hour).</div>
+        </div>`;
+      })()}
 
       ${filterTabs}
 
