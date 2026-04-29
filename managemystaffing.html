@@ -1567,6 +1567,9 @@ const App = {
     // Texts (alert log + replies)
     alertLog: [],             // populated by /api/data; see server's data.alertLog
     textsLastSeen: 0,         // ms timestamp of last time the user opened the Texts view
+    // Recruiting — prospects from job applications
+    prospects: [],            // [{id, jobId, jobTitle, name, email, phone, source, status, appliedAt, notes}]
+    recruitFilter: 'all',     // 'all' | 'nursing' | 'support' | 'admin' | 'other'
     // View flags
     eventsView: false,
     textsView: false,
@@ -6813,6 +6816,242 @@ const App = {
     } catch(e) { /* silent */ }
   },
 
+  // ── Recruiting category bucketing + starter ads ─────────────────────────
+  // Map any department string to one of four filter buckets.
+  _jobCategory(department) {
+    const d = String(department || '').toLowerCase();
+    if (/(rn|lpn|charge|cna|cma|nurse|nursing|med tech|medication aide)/.test(d)) return 'nursing';
+    if (/(housekeep|laundry|maintenance|janit)/.test(d))                          return 'support';
+    if (/(admin|office|accounting|hr|management|director|payroll|finance)/.test(d)) return 'admin';
+    return 'other';
+  },
+  _categoryLabel(cat) {
+    return ({
+      all:      'All',
+      nursing:  'Nursing',
+      support:  'Housekeeping & Laundry',
+      admin:    'Administration',
+      other:    'Other',
+    })[cat] || cat;
+  },
+  setRecruitFilter(cat) {
+    this.S.recruitFilter = cat;
+    this.renderHRMain();
+  },
+
+  // Short, punchy, slightly humorous starter ads per category.
+  // Editable as soon as it's dropped in — these are templates, not final copy.
+  _starterAd(category, jobTitle = '') {
+    const role = jobTitle || 'this role';
+    const TEMPLATES = {
+      nursing: {
+        title: jobTitle || 'CNA — Day Shift',
+        description:
+`We're hiring caring humans (the patient kind, not the impatient kind) to join our nursing team.
+
+What you'll do:
+• Provide hands-on care that actually makes someone's day better
+• Document the right things at the right times — yes, we know charting isn't glamorous
+• Work with a team that has each other's backs (and your back, when you need help lifting)
+
+What you bring:
+• Active certification in your state
+• A real interest in the people you'll care for, not just the schedule
+• Reliability — we'll be honest, that's worth more than a five-page resume
+
+What we offer:
+• Competitive hourly pay (yes, we put a number in the listing — see "Salary" above)
+• Predictable scheduling without the surprise mandatory overtime
+• A management team that actually knows your name`,
+        requirements:
+`• State certification active and in good standing
+• Comfortable with EHR documentation
+• Able to lift up to 50 lbs with assistance
+• Two professional references`,
+      },
+      support: {
+        title: jobTitle || 'Housekeeping Associate',
+        description:
+`Clean spaces. Calm minds. Genuinely happy residents.
+
+If you take pride in a freshly mopped floor and you'd rather catch a problem early than be blamed for it later, you'll fit right in.
+
+What you'll do:
+• Keep resident rooms and common areas spotless
+• Restock linens and supplies before anyone has to ask
+• Spot maintenance issues and flag them before they become a story
+
+What we offer:
+• Steady hours, no surprise mandatory shifts
+• A team that says "thanks" out loud
+• Pay that respects your time (see "Salary" above)`,
+        requirements:
+`• Reliable transportation
+• Able to stand and walk for an 8-hour shift
+• Attention to detail (you notice the corners, not just the middle)`,
+      },
+      admin: {
+        title: jobTitle || 'Office Coordinator',
+        description:
+`We need someone who can keep a busy facility office calm, organized, and (mostly) on schedule.
+
+What you'll do:
+• Greet families and visitors like the front-of-house pro you are
+• Keep paperwork moving without it piling up on your desk
+• Be the person everyone trusts when something needs to actually get done
+
+What you bring:
+• Strong organization skills (sticky notes welcome but not required)
+• Comfort with email, scheduling tools, and the occasional last-minute fire drill
+• Discretion — you'll see HIPAA-protected information daily`,
+        requirements:
+`• 2+ years in an office or admin role
+• Strong written and verbal communication
+• Familiar with Microsoft 365 / Google Workspace`,
+      },
+      other: {
+        title: jobTitle || 'Team Member',
+        description:
+`We're growing and looking for someone reliable who's good at what they do — and willing to learn the rest.
+
+What we offer:
+• A team that backs each other up
+• Clear expectations and honest feedback
+• Pay that respects your skill (see "Salary" above)
+
+If you bring a strong work ethic and a sense of humor, you're already halfway there.`,
+        requirements:
+`• Reliable attendance
+• A willingness to learn our specific workflows
+• Two professional references`,
+      },
+    };
+    return TEMPLATES[category] || TEMPLATES.other;
+  },
+
+  applyStarterAd() {
+    if (!this.S.jobModal) return;
+    const j = this.S.jobModal.job;
+    const cat = this._jobCategory(j.department);
+    const t   = this._starterAd(cat, j.title);
+    if (!confirm(`Drop in a starter ${this._categoryLabel(cat).toLowerCase()} template?\n\nThis replaces the title (if blank), description, and requirements — keep editing from there.`)) return;
+    const titleEl = document.getElementById('jm-title');
+    const descEl  = document.getElementById('jm-desc');
+    const reqsEl  = document.getElementById('jm-reqs');
+    if (titleEl && !titleEl.value.trim()) titleEl.value = t.title;
+    if (descEl) descEl.value = t.description;
+    if (reqsEl) reqsEl.value = t.requirements;
+    this._runLiveLint();
+  },
+
+  // ── Indeed compliance linter ────────────────────────────────────────────
+  // Flags common policy + style violations BEFORE the job goes live. Indeed
+  // rejects ads with:
+  // - Discriminatory language (age/gender/religion/national origin/race/etc.)
+  // - All-caps / excessive punctuation in title
+  // - Salary listed per-week (must be hourly or annual)
+  // - Vague titles like "rock star ninja"
+  // - Requests for fees, SSN, DOB, photos
+  // - "Recent graduate" (age discrimination proxy)
+  // We surface ERRORS (must fix before posting) and WARNINGS (review).
+  _lintJobPosting(job) {
+    const issues = [];
+    const t = (job.title || '').trim();
+    const d = (job.description || '').trim() + '\n' + (job.requirements || '').trim();
+    const tl = t.toLowerCase();
+    const dl = d.toLowerCase();
+
+    // ── Title checks ──────────────────────────────────────
+    if (!t)            issues.push({ field:'title', sev:'error', msg:'Title is required.' });
+    if (t.length > 100) issues.push({ field:'title', sev:'error', msg:`Title is ${t.length} chars. Indeed truncates after 100.` });
+    if (/[!]{1,}/.test(t)) issues.push({ field:'title', sev:'warn', msg:'Indeed style guide: avoid exclamation marks in titles.' });
+    if (t.length > 4 && t === t.toUpperCase() && /[A-Z]/.test(t)) issues.push({ field:'title', sev:'warn', msg:'Title is ALL CAPS. Use Title Case.' });
+    if (/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(t)) issues.push({ field:'title', sev:'error', msg:'Remove emoji from the title.' });
+    if (/\b(rock\s*star|ninja|guru|wizard|rockstar|jedi|superhero)\b/i.test(t)) issues.push({ field:'title', sev:'warn', msg:'Avoid vague titles ("rock star", "ninja", "guru"). Use a clear job role.' });
+    if (/\$|wage|salary|hourly|hour/i.test(t)) issues.push({ field:'title', sev:'warn', msg:'Move pay info out of the title and into the Salary field.' });
+
+    // ── Discrimination flags (title + body) ───────────────
+    const DISCRIM = [
+      [/\b(recent grad(uate)?|new grad(uate)?|fresh grad(uate)?|young|energetic young|youthful)\b/i, 'age', 'Avoid "recent graduate" / "young" — interpreted as age discrimination.'],
+      [/\b(he\/she|his\/her|men only|women only|female only|male only|salesman|saleswoman|waitress|waiter|cleaning lady|housewife)\b/i, 'gender', 'Use gender-neutral wording (e.g., "salesperson", "server", "housekeeper").'],
+      [/\b(christian|catholic|jewish|muslim|hindu|buddhist|atheist) (only|preferred|required)\b/i, 'religion', 'Religious requirements are not allowed unless this is a bona-fide religious org.'],
+      [/\b(native (english )?speaker|english (as )?(your |a )?(first|native) language|americans? only|us citizen(s)?( only| required| preferred)?)\b/i, 'origin', 'Citizenship/native-speaker requirements are restricted under Title VII / IRCA.'],
+      [/\b(able-bodied|no disabilities|must be physically healthy|in (perfect|excellent|good) health)\b/i, 'disability', 'Disability-related phrasing — describe specific physical demands instead.'],
+      [/\b(under \d+ years old|over \d+ years old|maximum age|minimum age \d{2}\+|aged? \d+\s*[-–]\s*\d+)\b/i, 'age', 'Age range or limit — not allowed (ADEA).'],
+    ];
+    for (const [re, kind, msg] of DISCRIM) {
+      if (re.test(t)) issues.push({ field:'title', sev:'error', msg:`(${kind}) ${msg}` });
+      else if (re.test(d)) issues.push({ field:'description', sev:'error', msg:`(${kind}) ${msg}` });
+    }
+
+    // ── Body checks ───────────────────────────────────────
+    if (!d.trim())  issues.push({ field:'description', sev:'error', msg:'Description is required.' });
+    if (d.length < 80) issues.push({ field:'description', sev:'warn', msg:'Description is very short — Indeed deprioritizes thin listings.' });
+    if (/\b(application fee|processing fee|background check fee|registration fee|training fee|equipment deposit|kit fee)\b/i.test(d)) issues.push({ field:'description', sev:'error', msg:'Cannot charge candidates fees. Remove fee mention.' });
+    if (/\b(must (provide|submit|include) (your |a )?(ssn|social security|date of birth|dob|photo|headshot|passport))\b/i.test(d)) issues.push({ field:'description', sev:'error', msg:'Don\'t request SSN, DOB, or photo in the listing — collect post-offer.' });
+    if (/\b\$\d+\s*(\/|per)\s*week\b/i.test(d)) issues.push({ field:'description', sev:'warn', msg:'Indeed prefers hourly or annual pay (not weekly). Update the Salary field.' });
+    if (/\b(commission only|100% commission|unpaid|no salary)\b/i.test(d)) issues.push({ field:'description', sev:'warn', msg:'Commission-only / unpaid — Indeed limits visibility for these.' });
+    if (/\b(mlm|multi[-\s]level marketing|pyramid|recruit (others|members|your friends))\b/i.test(d)) issues.push({ field:'description', sev:'error', msg:'MLM / recruit-others language — not allowed.' });
+    if (/\b(crypto(currency)?|nft|forex|day[-\s]trad(e|ing)|bitcoin)\b/i.test(d)) issues.push({ field:'description', sev:'warn', msg:'Crypto/NFT/forex — heavily restricted by Indeed.' });
+    if (/contact us at \+?\d|whatsapp|telegram|signal app/i.test(d)) issues.push({ field:'description', sev:'warn', msg:'Don\'t direct applicants to off-platform contact — use the Apply button.' });
+
+    // Salary disclosure (CA / CO / NY / WA / IL etc. — not exhaustive)
+    if (!job.salary && ['CA','CO','NY','WA','IL','MD','NJ','NV','RI','HI','VT','CT'].includes(job.state)) {
+      issues.push({ field:'salary', sev:'warn', msg:`${job.state} requires pay disclosure on listings. Add a salary range.` });
+    }
+
+    return issues;
+  },
+
+  _renderLintPanel(issues) {
+    if (!issues.length) {
+      return `<div style="background:var(--green-l);border:1px solid var(--green-m);border-radius:8px;padding:10px 12px;font-size:12px;color:#047857;display:flex;align-items:center;gap:8px;margin-top:14px">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3,8 7,12 13,4"/></svg>
+        Indeed compliance check passed. No issues detected.
+      </div>`;
+    }
+    const errors = issues.filter(i => i.sev === 'error');
+    const warns  = issues.filter(i => i.sev === 'warn');
+    return `<div style="background:${errors.length?'#FEF2F2':'#FFFBEB'};border:1px solid ${errors.length?'#FCA5A5':'#FCD34D'};border-radius:8px;padding:12px;margin-top:14px">
+      <div style="font-size:12px;font-weight:700;color:${errors.length?'#991B1B':'#92400E'};margin-bottom:6px">
+        ${errors.length ? errors.length+' error'+(errors.length===1?'':'s')+' to fix' : ''}
+        ${errors.length && warns.length ? ' · ' : ''}
+        ${warns.length ? warns.length+' warning'+(warns.length===1?'':'s')+' to review' : ''}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        ${[...errors, ...warns].map(i => `<div style="font-size:12px;color:${i.sev==='error'?'#991B1B':'#92400E'};display:flex;align-items:flex-start;gap:6px">
+          <span style="background:${i.sev==='error'?'#DC2626':'#D97706'};color:#fff;font-size:9px;font-weight:800;padding:1px 5px;border-radius:3px;flex-shrink:0;margin-top:1px">${i.sev==='error'?'ERR':'WARN'}</span>
+          <span><strong style="text-transform:uppercase;font-size:10px;color:var(--g500);margin-right:4px">${i.field}</strong>${sanitize(i.msg)}</span>
+        </div>`).join('')}
+      </div>
+    </div>`;
+  },
+
+  _runLiveLint() {
+    if (!this.S.jobModal) return;
+    const j = {
+      title: document.getElementById('jm-title')?.value || '',
+      description: document.getElementById('jm-desc')?.value || '',
+      requirements: document.getElementById('jm-reqs')?.value || '',
+      salary: document.getElementById('jm-salary')?.value || '',
+      state: document.getElementById('jm-state')?.value || '',
+    };
+    const issues = this._lintJobPosting(j);
+    const el = document.getElementById('jm-lint');
+    if (el) el.innerHTML = this._renderLintPanel(issues);
+  },
+
+  // Repost (active) / take down (closed) / pause — quick status toggle.
+  setJobStatus(id, status) {
+    const j = (this.S.jobPostings || []).find(x => x.id === id);
+    if (!j) return;
+    j.status = status;
+    j.updatedAt = new Date().toISOString();
+    this.persistData();
+    this.showToast(`"${sanitize(j.title)}" → ${status}`);
+    this.renderHRMain();
+  },
+
   openJobModal(id = null) {
     const job = id ? this.S.jobPostings.find(j => j.id === id) : null;
     this.S.jobModal = {
@@ -6842,7 +7081,7 @@ const App = {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
         <div style="grid-column:span 2">
           <label class="form-lbl">Job Title *</label>
-          <input id="jm-title" class="form-inp" placeholder="e.g. CNA – Day Shift" value="${sanitize(job.title)}">
+          <input id="jm-title" class="form-inp" placeholder="e.g. CNA – Day Shift" value="${sanitize(job.title)}" oninput="App._runLiveLint()">
         </div>
         <div>
           <label class="form-lbl">Department</label>
@@ -6881,14 +7120,24 @@ const App = {
         </div>
         <div style="grid-column:span 2">
           <label class="form-lbl">Job Description *</label>
-          <textarea id="jm-desc" class="form-inp" rows="5" placeholder="Describe responsibilities, work environment, team…">${sanitize(job.description)}</textarea>
+          <textarea id="jm-desc" class="form-inp" rows="5" placeholder="Describe responsibilities, work environment, team…" oninput="App._runLiveLint()">${sanitize(job.description)}</textarea>
         </div>
         <div style="grid-column:span 2">
           <label class="form-lbl">Requirements</label>
-          <textarea id="jm-reqs" class="form-inp" rows="4" placeholder="Required certifications, experience, skills…">${sanitize(job.requirements)}</textarea>
+          <textarea id="jm-reqs" class="form-inp" rows="4" placeholder="Required certifications, experience, skills…" oninput="App._runLiveLint()">${sanitize(job.requirements)}</textarea>
         </div>
-      </div>`;
+      </div>
+      <div style="display:flex;gap:8px;margin-top:14px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-secondary btn-sm" onclick="App.applyStarterAd()" type="button" title="Drop in a starter ad sized to the selected department — short, punchy, edit from there">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><path d="M8 1l1.7 4.5L14 7l-3.5 3 1 4.5L8 12l-3.5 2.5 1-4.5L2 7l4.3-1.5z"/></svg>
+          Suggest a starter ad
+        </button>
+        <span style="font-size:11px;color:var(--g500)">A short, slightly tongue-in-cheek template tailored to the department.</span>
+      </div>
+      <div id="jm-lint"></div>`;
     document.getElementById('modal-job-title').textContent = mode === 'create' ? 'Post New Job' : 'Edit Job Posting';
+    // Initial lint pass on open.
+    this._runLiveLint();
   },
 
   saveJobPosting() {
@@ -6911,6 +7160,22 @@ const App = {
       status:       document.getElementById('jm-status')?.value || 'active',
       updatedAt:    new Date().toISOString(),
     };
+    // Indeed compliance: block on errors, ask for confirmation on warnings.
+    const issues = this._lintJobPosting(updated);
+    const errors = issues.filter(i => i.sev === 'error');
+    const warns  = issues.filter(i => i.sev === 'warn');
+    if (errors.length) {
+      this.showToast(`Fix ${errors.length} blocking issue${errors.length===1?'':'s'} before posting (see panel below)`, 'warn');
+      return;
+    }
+    if (warns.length && updated.status === 'active') {
+      const ok = confirm(
+        `${warns.length} warning${warns.length===1?'':'s'} on this listing:\n\n` +
+        warns.map((w,i) => `${i+1}. [${w.field}] ${w.msg}`).join('\n') +
+        `\n\nIndeed may deprioritize or reject the listing. Post anyway?`
+      );
+      if (!ok) return;
+    }
     if (mode === 'create') {
       this.S.jobPostings.push(updated);
     } else {
@@ -7029,7 +7294,9 @@ const App = {
 
   // ── RENDER: RECRUITING PAGE ─────────────────────────────────
   renderHRRecruiting() {
-    const jobs = this.S.jobPostings || [];
+    const allJobs = this.S.jobPostings || [];
+    const filter  = this.S.recruitFilter || 'all';
+    const jobs    = filter === 'all' ? allJobs : allJobs.filter(j => this._jobCategory(j.department) === filter);
     const active  = jobs.filter(j => j.status === 'active').length;
     const draft   = jobs.filter(j => j.status === 'draft').length;
     const closed  = jobs.filter(j => j.status === 'closed').length;
@@ -7037,6 +7304,21 @@ const App = {
     const feedUrl = (IS_SERVER_MODE ? window.location.origin : 'https://managemystaffing.com') + '/jobs.xml';
 
     const statusPill = s => `<span class="job-status-${s}">${s.charAt(0).toUpperCase()+s.slice(1)}</span>`;
+
+    // Per-category counts (across all jobs, not the filtered set, so the
+    // numbers in the tabs reflect the underlying data).
+    const catCount = (cat) => cat === 'all' ? allJobs.length : allJobs.filter(j => this._jobCategory(j.department) === cat).length;
+    const filterTabs = `<div style="display:flex;gap:6px;margin-bottom:18px;flex-wrap:wrap">
+      ${['all','nursing','support','admin','other'].map(cat => {
+        const isActive = filter === cat;
+        const n = catCount(cat);
+        return `<button onclick="App.setRecruitFilter('${cat}')"
+          style="padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:1.5px solid ${isActive?'var(--blue-d)':'var(--g200)'};background:${isActive?'var(--blue-d)':'#fff'};color:${isActive?'#fff':'var(--g700)'};display:flex;align-items:center;gap:6px;transition:all .15s">
+          ${this._categoryLabel(cat)}
+          <span style="background:${isActive?'rgba(255,255,255,.25)':'var(--g100)'};color:${isActive?'#fff':'var(--g500)'};padding:0 7px;border-radius:99px;font-size:11px;font-weight:700">${n}</span>
+        </button>`;
+      }).join('')}
+    </div>`;
 
     const cards = jobs.length === 0
       ? `<div style="text-align:center;padding:60px 20px;color:var(--g600)">
@@ -7049,21 +7331,27 @@ const App = {
           const loc = [j.city, j.state].filter(Boolean).join(', ');
           const posted = Object.keys(j.platforms || {}).length;
           const d = j.createdAt ? new Date(j.createdAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
+          const applicantCount = (this.S.prospects || []).filter(p => p.jobId === j.id).length;
           return `<div class="job-card">
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
               <div style="flex:1">
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
                   <div style="font-weight:700;font-size:15px;color:var(--g900)">${sanitize(j.title)}</div>
                   ${statusPill(j.status)}
+                  ${applicantCount > 0 ? `<span style="background:var(--blue-l);color:var(--blue-d);font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px">${applicantCount} applicant${applicantCount===1?'':'s'}</span>` : ''}
                 </div>
                 <div style="font-size:12px;color:var(--g500);margin-bottom:8px">
                   ${sanitize(j.department)} · ${sanitize(j.jobType)}${loc ? ' · ' + sanitize(loc) : ''}${j.salary ? ' · ' + sanitize(j.salary) : ''}
                 </div>
                 <div style="font-size:11px;color:var(--g600)">
                   Posted ${d} · <span style="color:${posted>0?'var(--green)':'var(--g400)'}">✓ ${posted} platform${posted!==1?'s':''}</span>
+                  ${j.status === 'active' ? ` · <a href="${(IS_SERVER_MODE ? window.location.origin : 'https://managemystaffing.com')}/apply/${j.id}" target="_blank" style="color:var(--blue-d);text-decoration:none">View public apply page ↗</a>` : ''}
                 </div>
               </div>
               <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
+                ${j.status === 'active'
+                  ? `<button class="btn btn-secondary btn-sm" onclick="App.setJobStatus('${j.id}','closed')" title="Take down — removes from Indeed feed">Take Down</button>`
+                  : `<button class="btn btn-secondary btn-sm" onclick="App.setJobStatus('${j.id}','active')" title="Repost — appears in next Indeed crawl">Repost</button>`}
                 <button class="btn btn-secondary btn-sm" onclick="App.openJobModal('${j.id}')">Edit</button>
                 <button class="btn btn-primary btn-sm" onclick="App.openDistributeModal('${j.id}')">
                   <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 2h4v4"/><path d="M14 2L6 10"/><path d="M7 4H3a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-4"/></svg>
@@ -7106,7 +7394,141 @@ const App = {
         <button class="btn btn-ghost btn-sm" onclick="App._copyText('${feedUrl}')" style="flex-shrink:0">Copy</button>
       </div>
 
-      ${cards}`;
+      ${filterTabs}
+
+      ${cards}
+
+      ${this._renderProspectsPanel()}`;
+  },
+
+  _renderProspectsPanel() {
+    const prospects = (this.S.prospects || []).slice().sort((a,b) =>
+      new Date(b.appliedAt).getTime() - new Date(a.appliedAt).getTime());
+    const fmtTime = iso => {
+      try {
+        const d = new Date(iso);
+        const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+        if (days === 0) return d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
+        if (days === 1) return 'Yesterday';
+        if (days < 7)   return days + 'd ago';
+        return d.toLocaleDateString([],{month:'short',day:'numeric'});
+      } catch { return iso; }
+    };
+    const statusPillStyles = {
+      new:        { bg:'var(--blue-l)', col:'var(--blue-d)', label:'New' },
+      contacted:  { bg:'#FEF3C7', col:'#92400E', label:'Contacted' },
+      reviewing:  { bg:'#EDE9FE', col:'#6D28D9', label:'Reviewing' },
+      onboarding: { bg:'var(--green-l)', col:'#047857', label:'Onboarding' },
+      hired:      { bg:'var(--green)', col:'#fff', label:'Hired' },
+      rejected:   { bg:'var(--g100)', col:'var(--g500)', label:'Rejected' },
+    };
+    const rows = prospects.length ? prospects.map(p => {
+      const s = statusPillStyles[p.status] || statusPillStyles.new;
+      return `<tr style="border-bottom:1px solid var(--g100)">
+        <td style="padding:10px 12px">
+          <div style="font-size:13px;font-weight:700;color:var(--g900)">${sanitize(p.name || '—')}</div>
+          <div style="font-size:11px;color:var(--g500);margin-top:2px">${sanitize(p.email || '—')}${p.phone?' · '+sanitize(p.phone):''}</div>
+        </td>
+        <td style="padding:10px 12px;font-size:12px;color:var(--g700)">${sanitize(p.jobTitle || '—')}</td>
+        <td style="padding:10px 12px;font-size:11px;color:var(--g500)">${fmtTime(p.appliedAt)}</td>
+        <td style="padding:10px 12px"><span style="background:${s.bg};color:${s.col};padding:2px 8px;border-radius:99px;font-size:11px;font-weight:700">${s.label}</span></td>
+        <td style="padding:10px 12px;text-align:right">
+          <button class="btn btn-ghost btn-sm" onclick="App.messageProspect('${p.id}')" title="Send SMS">Message</button>
+          <button class="btn btn-ghost btn-sm" onclick="App.startProspectOnboarding('${p.id}')" title="Send onboarding docs by email">Onboard</button>
+          <button class="btn btn-ghost btn-sm" style="color:var(--g500)" onclick="App.setProspectStatus('${p.id}','rejected')" title="Reject">✕</button>
+        </td>
+      </tr>`;
+    }).join('') : `<tr><td colspan="5" style="padding:40px;text-align:center;color:var(--g600);font-size:13px">
+      No applicants yet. Share the public apply pages from job cards above (or wait for Indeed traffic).
+    </td></tr>`;
+
+    return `<div style="margin-top:24px;background:#fff;border:1.5px solid var(--g200);border-radius:12px;overflow:hidden">
+      <div style="padding:14px 16px;background:var(--g50);border-bottom:1px solid var(--g200);display:flex;align-items:center;justify-content:space-between">
+        <div style="font-size:14px;font-weight:800;color:var(--g900)">Applicants / Prospects</div>
+        <div style="font-size:11px;color:var(--g600)">${prospects.length} total</div>
+      </div>
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="border-bottom:1px solid var(--g200);background:var(--g50)">
+          <th style="padding:8px 12px;text-align:left;font-size:10px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">Applicant</th>
+          <th style="padding:8px 12px;text-align:left;font-size:10px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">Applied For</th>
+          <th style="padding:8px 12px;text-align:left;font-size:10px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">When</th>
+          <th style="padding:8px 12px;text-align:left;font-size:10px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">Status</th>
+          <th style="padding:8px 12px;text-align:right;font-size:10px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">Actions</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  },
+
+  setProspectStatus(id, status) {
+    const p = (this.S.prospects || []).find(x => x.id === id);
+    if (!p) return;
+    p.status = status;
+    p.updatedAt = new Date().toISOString();
+    this.persistData();
+    this.showToast(`${sanitize(p.name)} → ${status}`);
+    this.renderHRMain();
+  },
+
+  // Send a one-off SMS to a prospect using their captured phone number.
+  // Reuses the same /api/sms endpoint as the normal alert flow.
+  async messageProspect(id) {
+    const p = (this.S.prospects || []).find(x => x.id === id);
+    if (!p) return;
+    if (!p.phone) { this.showToast('No phone number on file for this prospect','warn'); return; }
+    const defaultBody = `Hi ${p.name?.split(' ')[0] || ''}, this is ${this.S.user?.name || ''} regarding your application for ${p.jobTitle || 'a position with us'}. When are you available for a quick call?`;
+    const body = prompt(`Message to ${p.name} (${p.phone}):`, defaultBody);
+    if (!body || !body.trim()) return;
+    try {
+      const r = await fetch('/api/sms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_authToken}` },
+        body: JSON.stringify({ to: p.phone, message: body.trim() }),
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        this.showToast(data.error || 'SMS failed','warn');
+        return;
+      }
+      this.showToast(`Message sent to ${p.name}`);
+      // Mark as contacted if we sent the first message.
+      if (p.status === 'new') p.status = 'contacted';
+      if (!Array.isArray(p.notes)) p.notes = [];
+      p.notes.push({ at: new Date().toISOString(), kind:'sms_out', text: body.trim() });
+      this.persistData();
+      this.renderHRMain();
+    } catch (e) {
+      this.showToast('Connection error','warn');
+    }
+  },
+
+  // Send the onboarding-docs email to the prospect's saved email address.
+  // (Wires to the existing onboarding flow — admins can also drag the
+  // prospect into HR > Employees > Pending after this step.)
+  async startProspectOnboarding(id) {
+    const p = (this.S.prospects || []).find(x => x.id === id);
+    if (!p) return;
+    if (!p.email) { this.showToast('No email on file for this prospect','warn'); return; }
+    if (!confirm(`Send onboarding docs to ${p.email}?\n\nThey will receive a link to fill out new-hire paperwork.`)) return;
+    try {
+      const r = await fetch('/api/recruiting/onboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_authToken}` },
+        body: JSON.stringify({ prospectId: p.id }),
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        this.showToast(data.error || 'Onboarding send failed','warn');
+        return;
+      }
+      p.status = 'onboarding';
+      p.updatedAt = new Date().toISOString();
+      this.persistData();
+      this.showToast(`Onboarding email sent to ${p.email}`);
+      this.renderHRMain();
+    } catch (e) {
+      this.showToast('Connection error','warn');
+    }
   },
 
   renderHRIntegrations() {
@@ -10576,6 +10998,7 @@ const App = {
       buildingShiftTypes:this.S.buildingShiftTypes,
       ppdDailyCensus:this.S.ppdDailyCensus,
       staffEvents:this.S.staffEvents,
+      prospects:this.S.prospects,
     };
     if (IS_SERVER_MODE && !this.S.user?.demo) {
       // HIPAA §164.312(a)(2)(iv) — never write PHI to client storage.
@@ -10654,6 +11077,7 @@ const App = {
     if (Array.isArray(data.hrTimeClock))      this.S.hrTimeClock      = data.hrTimeClock;
     if (Array.isArray(data.staffEvents))      this.S.staffEvents      = data.staffEvents;
     if (Array.isArray(data.alertLog))         this.S.alertLog         = data.alertLog;
+    if (Array.isArray(data.prospects))        this.S.prospects        = data.prospects;
     if (data.hrOnboarding && typeof data.hrOnboarding === 'object') {
       if (data.hrOnboarding.TX && !data.hrOnboarding.co_skyblue) {
         // migrate old flat format

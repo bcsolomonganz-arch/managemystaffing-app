@@ -802,6 +802,7 @@ function getDataForUser(user, fullData) {
     accounts:         (scrubbed.accounts || []).filter(a =>
       a.id === user.id || (a.buildingId && bIds.has(a.buildingId)) || (a.buildingIds||[]).some(id => bIds.has(id))),
     alertLog:         (scrubbed.alertLog || []).filter(e => !e.buildingId || bIds.has(e.buildingId)),
+    prospects:        (scrubbed.prospects || []).filter(p => !p.buildingId || bIds.has(p.buildingId)),
   };
   return _canAccessHR(user) ? filtered : _stripHR(filtered);
 }
@@ -970,6 +971,284 @@ app.get('/health/ready', async (_req, res) => {
 app.get('/', (_req, res) => {
   res.setHeader('Cache-Control', 'no-cache, must-revalidate');
   res.sendFile(HTML_FILE);
+});
+
+// ── RECRUITING ────────────────────────────────────────────────────────────────
+// Public Indeed XML feed. Submit https://www.managemystaffing.com/jobs.xml in
+// your Indeed Employer Dashboard. Indeed crawls this URL periodically and
+// indexes every <job> entry. Only postings with status === 'active' are
+// included; "Take Down" flips status to 'closed' and the job drops from the
+// next crawl.
+function _xmlEscape(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+function _wrapCdata(s) {
+  // CDATA can't contain "]]>" — split + reassemble defensively.
+  return '<![CDATA[' + String(s == null ? '' : s).replace(/]]>/g, ']]]]><![CDATA[>') + ']]>';
+}
+app.get('/jobs.xml', async (req, res) => {
+  try {
+    const data = await loadData();
+    const jobs = (data.jobPostings || []).filter(j => j.status === 'active');
+    const buildings = data.buildings || [];
+    const baseUrl = (process.env.APP_URL || 'https://www.managemystaffing.com').replace(/\/$/, '');
+    const lastBuild = new Date().toUTCString();
+    const items = jobs.map(j => {
+      const b = buildings.find(x => x.id === j.buildingId);
+      const company = b?.name || 'ManageMyStaffing Facility';
+      const dateStr = j.createdAt ? new Date(j.createdAt).toUTCString() : lastBuild;
+      // Map our jobType into Indeed's expected values.
+      const jt = ({
+        'Full-time':'fulltime','Part-time':'parttime','PRN / Per Diem':'perdiem',
+        'Contract':'contract','Temporary':'temporary',
+      })[j.jobType] || 'fulltime';
+      return `  <job>
+    <title>${_wrapCdata(j.title)}</title>
+    <date>${_wrapCdata(dateStr)}</date>
+    <referencenumber>${_wrapCdata(j.id)}</referencenumber>
+    <url>${_wrapCdata(`${baseUrl}/apply/${j.id}`)}</url>
+    <company>${_wrapCdata(company)}</company>
+    <city>${_wrapCdata(j.city || '')}</city>
+    <state>${_wrapCdata(j.state || '')}</state>
+    <country>${_wrapCdata('US')}</country>
+    <postalcode>${_wrapCdata(j.zip || '')}</postalcode>
+    <description>${_wrapCdata((j.description || '') + (j.requirements ? '\n\nRequirements:\n' + j.requirements : ''))}</description>
+    <salary>${_wrapCdata(j.salary || '')}</salary>
+    <jobtype>${_wrapCdata(jt)}</jobtype>
+    <category>${_wrapCdata(j.department || '')}</category>
+  </job>`;
+    }).join('\n');
+    const xml = `<?xml version="1.0" encoding="utf-8"?>
+<source>
+  <publisher>${_wrapCdata('ManageMyStaffing')}</publisher>
+  <publisherurl>${_wrapCdata(baseUrl)}</publisherurl>
+  <lastBuildDate>${_wrapCdata(lastBuild)}</lastBuildDate>
+${items}
+</source>`;
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=300'); // 5 min — Indeed crawls hourly
+    res.send(xml);
+  } catch (e) {
+    logger.error('jobs_xml_failed', { err: e.message });
+    res.status(500).type('text').send('Feed temporarily unavailable');
+  }
+});
+
+// Public apply page — minimal HTML form that posts back to /api/recruiting/apply.
+// Linked from the Indeed XML <url> field, so this is what candidates land on.
+app.get('/apply/:jobId', async (req, res) => {
+  try {
+    const data = await loadData();
+    const j = (data.jobPostings || []).find(x => x.id === req.params.jobId && x.status === 'active');
+    if (!j) {
+      res.status(404).type('html').send(`<!doctype html><meta charset="utf-8"><title>Position Closed</title>
+        <body style="font-family:system-ui;max-width:520px;margin:80px auto;padding:24px;text-align:center;color:#374151">
+        <h2>This position is no longer accepting applications</h2>
+        <p>Please visit <a href="https://www.managemystaffing.com">our home page</a> to see open roles.</p>
+        </body>`);
+      return;
+    }
+    const b = (data.buildings || []).find(x => x.id === j.buildingId);
+    const company = _xmlEscape(b?.name || 'ManageMyStaffing Facility');
+    const loc = [j.city, j.state].filter(Boolean).map(_xmlEscape).join(', ');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.type('html').send(`<!doctype html><html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${_xmlEscape(j.title)} — ${company}</title>
+<style>
+  body{font-family:'DM Sans',system-ui,sans-serif;background:#F9FAFB;margin:0;color:#111827;line-height:1.5}
+  .wrap{max-width:640px;margin:0 auto;padding:32px 20px}
+  .card{background:#fff;border:1px solid #E5E7EB;border-radius:12px;padding:28px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+  h1{font-size:22px;margin:0 0 6px}
+  .sub{color:#6B7280;font-size:13px;margin-bottom:18px}
+  .pill{display:inline-block;background:#ECFDF5;color:#047857;font-size:11px;font-weight:700;padding:3px 9px;border-radius:99px;margin-right:5px}
+  .desc{white-space:pre-wrap;color:#374151;margin:18px 0;font-size:14px}
+  label{display:block;font-size:12px;font-weight:600;color:#6B7280;margin:12px 0 4px;text-transform:uppercase;letter-spacing:.05em}
+  input,textarea{width:100%;padding:10px 12px;border:1.5px solid #E5E7EB;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box;color:#111827}
+  textarea{resize:vertical;min-height:80px}
+  button{width:100%;background:#6B9E7A;color:#fff;font-weight:700;font-size:14px;padding:12px;border:none;border-radius:8px;cursor:pointer;margin-top:18px}
+  button:hover{background:#5a8b68}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .err{color:#DC2626;font-size:13px;margin-top:10px}
+  .ok{background:#ECFDF5;border:1px solid #6EE7B7;color:#047857;padding:18px;border-radius:8px;font-size:14px;text-align:center}
+  .logo{display:flex;align-items:center;gap:10px;margin-bottom:24px}
+  .logo svg{width:32px;height:32px}
+  .logo span{font-weight:800;font-size:16px;color:#111827}
+</style>
+</head><body><div class="wrap">
+  <div class="logo">
+    <svg viewBox="0 0 100 92" xmlns="http://www.w3.org/2000/svg">
+      <rect x="70" y="2" width="14" height="26" rx="5" fill="#6B9E7A"/>
+      <path d="M50 5 L0 52 Q0 56 4 56 L96 56 Q100 56 100 52 Z" fill="#6B9E7A"/>
+      <rect x="3" y="50" width="94" height="42" rx="6" fill="#6B9E7A"/>
+    </svg>
+    <span>ManageMyStaffing</span>
+  </div>
+  <div class="card">
+    <h1>${_xmlEscape(j.title)}</h1>
+    <div class="sub">${company}${loc ? ' · ' + loc : ''}${j.salary ? ' · ' + _xmlEscape(j.salary) : ''}</div>
+    <div>
+      <span class="pill">${_xmlEscape(j.department)}</span>
+      <span class="pill" style="background:#EFF6FF;color:#1D4ED8">${_xmlEscape(j.jobType)}</span>
+    </div>
+    <div class="desc">${_xmlEscape(j.description)}${j.requirements ? '\n\nRequirements:\n' + _xmlEscape(j.requirements) : ''}</div>
+    <form id="apply-form">
+      <label for="apply-name">Full Name *</label>
+      <input id="apply-name" name="name" required maxlength="100" autocomplete="name">
+      <label for="apply-email">Email *</label>
+      <input id="apply-email" name="email" type="email" required maxlength="254" autocomplete="email">
+      <label for="apply-phone">Phone Number *</label>
+      <input id="apply-phone" name="phone" type="tel" required maxlength="20" autocomplete="tel" placeholder="(555) 123-4567">
+      <label for="apply-msg">Message (optional)</label>
+      <textarea id="apply-msg" name="message" maxlength="2000" placeholder="Tell us about your relevant experience…"></textarea>
+      <button type="submit" id="apply-btn">Submit Application</button>
+      <div id="apply-err" class="err" style="display:none"></div>
+    </form>
+    <div id="apply-ok" class="ok" style="display:none">
+      Thanks for applying! We received your information and will be in touch shortly.
+    </div>
+  </div>
+</div>
+<script>
+document.getElementById('apply-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('apply-btn');
+  const err = document.getElementById('apply-err');
+  err.style.display = 'none';
+  btn.disabled = true; btn.textContent = 'Submitting…';
+  const body = {
+    jobId: ${JSON.stringify(j.id)},
+    name:    document.getElementById('apply-name').value.trim(),
+    email:   document.getElementById('apply-email').value.trim(),
+    phone:   document.getElementById('apply-phone').value.trim(),
+    message: document.getElementById('apply-msg').value.trim(),
+  };
+  try {
+    const r = await fetch('/api/recruiting/apply', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      err.textContent = data.error || 'Could not submit application.'; err.style.display = 'block';
+      btn.disabled = false; btn.textContent = 'Submit Application'; return;
+    }
+    document.getElementById('apply-form').style.display = 'none';
+    document.getElementById('apply-ok').style.display = 'block';
+  } catch (ex) {
+    err.textContent = 'Network error. Please try again.'; err.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Submit Application';
+  }
+});
+</script>
+</body></html>`);
+  } catch (e) {
+    res.status(500).type('text').send('Apply page temporarily unavailable');
+  }
+});
+
+// Public application submission. No auth — this is what candidates use.
+// Rate-limited to thwart bots.
+const applyLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 30, message: { error: 'Too many applications. Try again later.' } });
+app.post('/api/recruiting/apply', applyLimiter, async (req, res) => {
+  const { jobId, name, email, phone, message, source } = req.body || {};
+  if (!jobId || !name || !email) return res.status(400).json({ error: 'jobId, name, and email are required' });
+  const data = await loadData();
+  const job = (data.jobPostings || []).find(j => j.id === jobId);
+  if (!job)                       return res.status(404).json({ error: 'Job posting not found' });
+  if (job.status !== 'active')    return res.status(410).json({ error: 'This position is no longer accepting applications' });
+  const emailNorm = String(email).trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNorm) || emailNorm.length > 254) return res.status(400).json({ error: 'Invalid email' });
+
+  const prospect = {
+    id: 'pr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+    jobId,
+    jobTitle:   job.title,
+    buildingId: job.buildingId || null,
+    name:    String(name).trim().slice(0, 100),
+    email:   emailNorm,
+    phone:   String(phone || '').trim().slice(0, 25),
+    source:  source || 'apply_page',
+    message: String(message || '').trim().slice(0, 2000),
+    status:  'new',
+    appliedAt: new Date().toISOString(),
+    notes: [],
+  };
+  if (!Array.isArray(data.prospects)) data.prospects = [];
+  // Dedupe: same email + same job within the last 7 days collapses to a single record.
+  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const dupe = data.prospects.find(p =>
+    p.email === emailNorm && p.jobId === jobId && new Date(p.appliedAt).getTime() > cutoff);
+  if (dupe) {
+    dupe.appliedAt = prospect.appliedAt;
+    if (prospect.message) dupe.message = prospect.message;
+  } else {
+    data.prospects.push(prospect);
+  }
+  // Cap to last 5000 prospects to bound storage.
+  if (data.prospects.length > 5000) data.prospects = data.prospects.slice(-5000);
+  markDirty();
+  auditLog('PROSPECT_RECEIVED', null, { jobId, emailMasked: emailNorm.replace(/^(.).*(@.*)$/, '$1***$2') });
+  res.json({ ok: true, prospectId: dupe?.id || prospect.id });
+});
+
+// Send onboarding-docs email to a prospect. Marks them as in-progress so the
+// dashboard reflects the handoff. Email body links the candidate to fill out
+// new-hire paperwork via the existing onboarding flow.
+app.post('/api/recruiting/onboard', requireAuth, requireAdmin, async (req, res) => {
+  const { prospectId } = req.body || {};
+  if (!prospectId) return res.status(400).json({ error: 'prospectId is required' });
+  const data = await loadData();
+  const p = (data.prospects || []).find(x => x.id === prospectId);
+  if (!p) return res.status(404).json({ error: 'Prospect not found' });
+  if (!p.email) return res.status(400).json({ error: 'No email on file for this prospect' });
+
+  const baseUrl = (process.env.APP_URL || 'https://www.managemystaffing.com').replace(/\/$/, '');
+  const link = `${baseUrl}/?onboard=${encodeURIComponent(p.id)}`;
+  const escName = String(p.name || '').replace(/[\r\n<>]/g, '');
+  const safePlainName = String(p.name || '').replace(/[\r\n]/g, ' ');
+
+  if (ACS_CONNECTION_STRING) {
+    try {
+      const { EmailClient } = require('@azure/communication-email');
+      const ec = new EmailClient(ACS_CONNECTION_STRING);
+      const poller = await ec.beginSend({
+        senderAddress: ACS_FROM_EMAIL,
+        recipients: { to: [{ address: p.email, displayName: p.name }] },
+        content: {
+          subject: `Onboarding: ${p.jobTitle || 'New Hire Paperwork'}`,
+          plainText: `Hi ${safePlainName},\n\nThanks for applying for ${p.jobTitle || 'a position with us'}.\n\nPlease complete your new-hire paperwork at the link below:\n${link}\n\nIf you have any questions, just reply to this email.\n\n— ManageMyStaffing`,
+          html: `<div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#f9fafb">
+  <div style="background:#fff;border-radius:12px;padding:32px;border:1px solid #e5e7eb">
+    <h2 style="font-size:20px;font-weight:700;color:#111827;margin:0 0 8px">Welcome aboard, ${escName}!</h2>
+    <p style="color:#6b7280;font-size:14px">Thanks for applying for <strong>${escName ? p.jobTitle : 'a position'}</strong>. To finish the hiring process, please complete your new-hire paperwork below.</p>
+    <a href="${link}" style="display:inline-block;background:#6B9E7A;color:#fff;font-weight:700;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;margin-top:8px">Start Onboarding →</a>
+    <p style="color:#9ca3af;font-size:12px;margin:20px 0 0">Reply to this email if you have any questions.</p>
+  </div>
+</div>`,
+        },
+      });
+      await Promise.race([
+        poller.pollUntilDone(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 30000)),
+      ]);
+    } catch (e) {
+      logger.error('onboard_email_failed', { err: e.message, prospectId });
+      return res.status(502).json({ error: `Email failed: ${e.message}` });
+    }
+  } else {
+    return res.status(503).json({ error: 'Email is not configured (ACS_CONNECTION_STRING missing)' });
+  }
+
+  p.status = 'onboarding';
+  p.onboardingSentAt = new Date().toISOString();
+  if (!Array.isArray(p.notes)) p.notes = [];
+  p.notes.push({ at: new Date().toISOString(), kind:'email_out', text:'Onboarding link sent.' });
+  markDirty();
+  auditLog('PROSPECT_ONBOARDING_SENT', req.user, { prospectId, jobId: p.jobId });
+  res.json({ ok: true });
 });
 
 // ── POST /api/auth/login ──────────────────────────────────────────────────────
@@ -1445,6 +1724,13 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   if (Array.isArray(payload.staffEvents)) {
     const inScopeEvent = e => !e.buildingId || callerBIds.has(e.buildingId);
     data.staffEvents = mergeScoped(data.staffEvents || [], payload.staffEvents, inScopeEvent);
+  }
+
+  // Recruiting prospects (incoming applicants). Per-building scoped — building
+  // admins manage their own pipeline. SA can touch all (handled by mergeScoped).
+  if (Array.isArray(payload.prospects)) {
+    const inScopeProspect = p => !p.buildingId || callerBIds.has(p.buildingId);
+    data.prospects = mergeScoped(data.prospects || [], payload.prospects, inScopeProspect);
   }
 
   dataCache = data;
