@@ -2913,45 +2913,123 @@ const App = {
   },
 
   renderSuperAdmin() { this.renderSAOverview(); }, // legacy alias
-  _buildFacilityCard(b) {
-    const admins = this.S.accounts.filter(a =>
-      (a.buildingId === b.id || (a.buildingIds||[]).includes(b.id)) &&
-      (a.role === 'admin' || a.role === 'regionaladmin'));
-    const staff = this.S.employees.filter(e => e.buildingId === b.id);
-    const twoWeeksOut = new Date(); twoWeeksOut.setDate(twoWeeksOut.getDate() + 14);
-    const twoWeeksStr = twoWeeksOut.toISOString().slice(0,10);
-    const openShifts = this.S.shifts.filter(s => s.buildingId === b.id && s.status === 'open' && s.date >= TODAY && s.date <= twoWeeksStr).length;
-    const adminList = admins.length ? admins.map(a => {
-      const initials = sanitize(a.name.split(' ').map(w=>w[0]).join('').slice(0,2));
-      const pending = a.ph === null && a.inviteToken;
-      return `
-        <div class="building-admin" style="cursor:pointer;margin-bottom:6px" onclick="event.stopPropagation();App.openManageAdmin('${a.id}','${b.id}')" title="Click to manage">
-          <div class="building-admin-avatar">${initials}</div>
-          <div class="building-admin-info">
-            <div class="building-admin-name">${sanitize(a.name)}</div>
-            <div class="building-admin-email">${sanitize(a.email)}</div>
-          </div>
-          ${pending ? `<span class="tag" style="font-size:10px;background:#FEF3C7;color:#92400E;border:1px solid #FDE68A">Pending</span>` : `<span class="tag tag-blue" style="font-size:10px">Admin</span>`}
-        </div>`;
-    }).join('') : '<div style="font-size:13px;color:var(--g600);padding:8px 0;margin-bottom:8px">No admin assigned</div>';
 
+  // ── Building operational metrics ────────────────────────────────────────
+  // Computes the 6 stats shown on every SA building card:
+  //   dailyPPD, monthlyPPD, weeklyOtHrs, weeklyOtCost, census, tardyScore.
+  // Tardiness is the percentage of this-week's punches that are NEITHER
+  // late NOR >15-min early — i.e., higher score = better.
+  _buildingMetrics(b) {
+    const tm = this._weekRangeISO ? this._weekRangeISO(TODAY) : null;
+    const wkStart = tm?.start || TODAY;
+    const wkEnd   = tm?.end   || TODAY;
+    const thisMonth = TODAY.slice(0,7);
+    const empById = new Map((this.S.employees||[]).map(e => [e.id, e]));
+
+    // ── Today
+    const todayShifts = (this.S.shifts||[]).filter(s =>
+      s.date === TODAY && s.buildingId === b.id && s.status === 'scheduled');
+    const todayHrs = todayShifts.reduce((s, sh) => s + this._shiftHours(sh), 0);
+    const todayCensus = parseFloat(this.S.ppdDailyCensus?.[TODAY]) || 0;
+    const dailyPPD = todayCensus > 0 ? (todayHrs / todayCensus).toFixed(2) : '—';
+
+    // ── Monthly avg PPD (over days that have BOTH hours and census)
+    const monthHrsByDay = {};
+    for (const s of (this.S.shifts||[])) {
+      if (!s.date.startsWith(thisMonth) || s.buildingId !== b.id || s.status !== 'scheduled') continue;
+      monthHrsByDay[s.date] = (monthHrsByDay[s.date] || 0) + this._shiftHours(s);
+    }
+    let mSum = 0, mDays = 0;
+    for (const [d, h] of Object.entries(monthHrsByDay)) {
+      const c = parseFloat(this.S.ppdDailyCensus?.[d]) || 0;
+      if (c > 0) { mSum += h/c; mDays++; }
+    }
+    const monthlyPPD = mDays > 0 ? (mSum / mDays).toFixed(2) : '—';
+
+    // ── Weekly OT (per-employee hours > 40)
+    const weekHrsByEmp = new Map();
+    for (const s of (this.S.shifts||[])) {
+      if (s.date < wkStart || s.date > wkEnd || s.buildingId !== b.id || s.status !== 'scheduled') continue;
+      if (!s.employeeId) continue;
+      weekHrsByEmp.set(s.employeeId, (weekHrsByEmp.get(s.employeeId) || 0) + this._shiftHours(s));
+    }
+    let otHrs = 0, otCost = 0;
+    for (const [empId, h] of weekHrsByEmp) {
+      if (h <= 40) continue;
+      const over = h - 40;
+      otHrs += over;
+      const emp = empById.get(empId);
+      const rate = emp ? (this._empHourlyRate(emp) || 0) : 0;
+      otCost += over * rate * 0.5;          // 0.5× premium (1× already paid in regular)
+    }
+
+    // ── Tardiness: this week's punches at this building. A punch is "tardy"
+    // if the imported status is 'late' OR the actual clock-in is >15 min
+    // before the scheduled shift start.
+    const recs = (this.S.hrTimeClock || []).filter(r => {
+      if (r.date < wkStart || r.date > wkEnd) return false;
+      const e = empById.get(r.empId);
+      return e && e.buildingId === b.id;
+    });
+    const toMin = t => { if(!t) return null; const [h,m]=String(t).split(':').map(Number); return h*60+(m||0); };
+    let issues = 0;
+    for (const r of recs) {
+      if (r.status === 'late') { issues++; continue; }
+      // Check >15 min early arrival vs scheduled shift
+      const sched = (this.S.shifts||[]).find(s =>
+        s.employeeId === r.empId && s.date === r.date && s.status === 'scheduled');
+      if (!sched) continue;
+      const inMin    = toMin(r.in);
+      const schedMin = toMin(sched.start);
+      if (inMin != null && schedMin != null && (schedMin - inMin) > 15) issues++;
+    }
+    const tardyScore = recs.length > 0
+      ? Math.round((1 - issues/recs.length) * 100) + '%'
+      : '—';
+
+    return {
+      dailyPPD, monthlyPPD,
+      otHrs:  otHrs.toFixed(1),
+      otCost: '$' + Math.round(otCost).toLocaleString(),
+      census: todayCensus || '—',
+      tardyScore,
+      // Also expose the raw counts so the card can color-code "needs attention"
+      _rawIssues: issues,
+      _rawRecs: recs.length,
+      _rawOtHrs: otHrs,
+    };
+  },
+
+  _buildFacilityCard(b) {
+    const m = this._buildingMetrics(b);
     const safeColor = sanitizeColor(b.color);
+
+    // Color accents: warn-red for high tardiness or significant OT.
+    const tardyPct = m._rawRecs > 0 ? Math.round((1 - m._rawIssues/m._rawRecs) * 100) : null;
+    const tardyColor = tardyPct == null ? 'var(--g700)'
+                      : tardyPct >= 90 ? 'var(--green)'
+                      : tardyPct >= 75 ? '#D97706'
+                                       : 'var(--red)';
+    const otHrColor  = m._rawOtHrs > 20 ? 'var(--red)' : m._rawOtHrs > 5 ? '#D97706' : 'var(--g700)';
+    const otCostColor = otHrColor;
+
     return `
       <div class="building-card" style="--accent:${safeColor};cursor:pointer" onclick="App.enterBuilding('${b.id}')">
         <div style="position:absolute;top:0;left:0;right:0;height:4px;background:${safeColor}"></div>
         <div class="building-name">${sanitize(b.name)}</div>
         <div class="building-addr"><svg viewBox="0 0 16 20" width="11" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M8 1C4.69 1 2 3.69 2 7c0 4.5 6 12 6 12s6-7.5 6-12c0-3.31-2.69-6-6-6z"/><circle cx="8" cy="7" r="2"/></svg> ${sanitize(b.address||'')}</div>
-        <div class="building-stats">
-          <div class="building-stat"><div class="building-stat-val">${staff.length}</div><div class="building-stat-label">Staff</div></div>
-          <div class="building-stat"><div class="building-stat-val">${admins.length}</div><div class="building-stat-label">Admins</div></div>
-          <div class="building-stat"><div class="building-stat-val" style="color:var(--g600)">${openShifts}</div><div class="building-stat-label">Open</div></div>
-          <div class="building-stat"><div class="building-stat-val">${b.beds || '—'}</div><div class="building-stat-label">Beds</div></div>
+        <div class="building-stats" style="grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px">
+          <div class="building-stat" title="Today's nursing hours ÷ today's census"><div class="building-stat-val">${m.dailyPPD}</div><div class="building-stat-label">Daily PPD</div></div>
+          <div class="building-stat" title="Average daily PPD across this calendar month"><div class="building-stat-val">${m.monthlyPPD}</div><div class="building-stat-label">Monthly PPD</div></div>
+          <div class="building-stat" title="Today's resident census"><div class="building-stat-val">${m.census}</div><div class="building-stat-label">Census</div></div>
+          <div class="building-stat" title="Hours over 40/week per employee, this week"><div class="building-stat-val" style="color:${otHrColor}">${m.otHrs}</div><div class="building-stat-label">Week OT hrs</div></div>
+          <div class="building-stat" title="Overtime premium cost (0.5× rate × OT hrs)"><div class="building-stat-val" style="color:${otCostColor}">${m.otCost}</div><div class="building-stat-label">Week OT cost</div></div>
+          <div class="building-stat" title="${m._rawRecs} punches this week; lower = more late or >15-min-early arrivals"><div class="building-stat-val" style="color:${tardyColor}">${m.tardyScore}</div><div class="building-stat-label">Tardiness score</div></div>
         </div>
-        ${adminList}
         ${this._renderBuildingSmsStatus(b)}
         <div class="building-actions">
           <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();App.enterBuilding('${b.id}')">Enter Dashboard →</button>
-          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.addAdminToBuilding('${b.id}')">+ Add Admin</button>
+          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.openManageAdmins(); App.S._adminsForBuildingId='${b.id}'" title="Manage admins for this building">Admins</button>
         </div>
       </div>`;
   },
