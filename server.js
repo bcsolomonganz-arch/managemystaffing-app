@@ -85,8 +85,8 @@ const APP_URL    = process.env.APP_URL || 'https://managemystaffing.com';
 //   - Employee (no PHI access): only see own schedule + claim shifts.
 //     §164.312 doesn't require TOTP / aggressive timeouts when the role
 //     can't access PHI, so we relax those for usability.
-const JWT_TTL_SECONDS              = 60 * 60;                  // 1h — admin/SA hard cap
-const IDLE_TIMEOUT_SECONDS         = 60 * 60;                  // 1h idle — admin/SA
+const JWT_TTL_SECONDS              = 60 * 60 * 2;              // 2h — admin/SA hard cap
+const IDLE_TIMEOUT_SECONDS         = 60 * 60 * 2;              // 2h idle — admin/SA
 const EMPLOYEE_JWT_TTL_SECONDS     = 60 * 60 * 24 * 365;       // 1y — employee, effectively no expiry
 const EMPLOYEE_IDLE_TIMEOUT_SECONDS = 60 * 60 * 24 * 365;      // never auto-logout employees
 const MAX_FAILED_ATTEMPTS  = 5;
