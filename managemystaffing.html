@@ -717,7 +717,7 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
         <div style="font-size:11px;color:var(--g500);margin-top:3px">Scheduler Access hides Cost/Day, Total Daily Staffing Cost, Overtime Costs, and employee hourly rates.</div>
       </div>
       <div class="grid-2">
-        <div class="form-group"><label>Hourly Rate ($/hr)</label>
+        <div class="form-group" id="emp-hourly-rate-group"><label>Hourly Rate ($/hr)</label>
           <input type="number" id="emp-hourly-rate" placeholder="22" min="0" step="0.01" inputmode="decimal">
           <div style="font-size:11px;color:var(--g500);margin-top:3px">Used by PPD cost calc · OT &gt; 40 hrs/wk @ 1.5×</div>
         </div>
@@ -1570,6 +1570,7 @@ const App = {
     // Recruiting — prospects from job applications
     prospects: [],            // [{id, jobId, jobTitle, name, email, phone, source, status, appliedAt, notes}]
     recruitFilter: 'all',     // 'all' | 'nursing' | 'support' | 'admin' | 'other'
+    recruitBuildingId: '',    // '' = all, otherwise scopes jobs+prospects to a specific building (SA/regional only)
     // View flags
     eventsView: false,
     textsView: false,
@@ -6838,6 +6839,10 @@ const App = {
     this.S.recruitFilter = cat;
     this.renderHRMain();
   },
+  setRecruitBuilding(buildingId) {
+    this.S.recruitBuildingId = buildingId || '';
+    this.renderHRMain();
+  },
 
   // Short, punchy, slightly humorous starter ads per category.
   // Editable as soon as it's dropped in — these are templates, not final copy.
@@ -7294,7 +7299,15 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
 
   // ── RENDER: RECRUITING PAGE ─────────────────────────────────
   renderHRRecruiting() {
-    const allJobs = this.S.jobPostings || [];
+    const u = this.S.user || {};
+    // Multi-building access: SA, regional, or SA-impersonating-an-admin (we
+    // preserve original SA identity in _prevUser).
+    const origRole = (this.S._prevUser?.role) || u.role;
+    const isMultiBuilding = origRole === 'superadmin' || origRole === 'regionaladmin';
+    const myBuildings = (this.S.buildings || []).slice();
+    const bFilter = this.S.recruitBuildingId || '';
+    let allJobs = this.S.jobPostings || [];
+    if (bFilter) allJobs = allJobs.filter(j => j.buildingId === bFilter);
     const filter  = this.S.recruitFilter || 'all';
     const jobs    = filter === 'all' ? allJobs : allJobs.filter(j => this._jobCategory(j.department) === filter);
     const active  = jobs.filter(j => j.status === 'active').length;
@@ -7363,17 +7376,30 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           </div>`;
         }).join('');
 
+    const buildingSelector = isMultiBuilding && myBuildings.length > 0 ? `
+      <div style="display:flex;align-items:center;gap:8px">
+        <label for="recruit-bld-select" style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.05em">Building</label>
+        <select id="recruit-bld-select" onchange="App.setRecruitBuilding(this.value)"
+          style="padding:7px 10px;border:1.5px solid var(--g200);border-radius:8px;font-size:13px;font-weight:600;color:var(--g800);background:#fff;min-width:200px">
+          <option value="">All buildings</option>
+          ${myBuildings.map(b => `<option value="${b.id}"${bFilter===b.id?' selected':''}>${sanitize(b.name)}</option>`).join('')}
+        </select>
+      </div>` : '';
+
     return `
       ${this.hrHipaaBar()}
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
         <div>
           <div class="hr-page-title">Recruiting</div>
-          <div class="hr-page-sub">Create job postings · distribute to Indeed, LinkedIn &amp; more</div>
+          <div class="hr-page-sub">Create job postings · post and remove from Indeed without leaving this app</div>
         </div>
-        <button class="btn btn-primary" onclick="App.openJobModal()">
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/></svg>
-          Post New Job
-        </button>
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          ${buildingSelector}
+          <button class="btn btn-primary" onclick="App.openJobModal()">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/></svg>
+            Post New Job
+          </button>
+        </div>
       </div>
 
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px">
@@ -7402,7 +7428,10 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
 
   _renderProspectsPanel() {
-    const prospects = (this.S.prospects || []).slice().sort((a,b) =>
+    const bFilter = this.S.recruitBuildingId || '';
+    let pool = this.S.prospects || [];
+    if (bFilter) pool = pool.filter(p => p.buildingId === bFilter);
+    const prospects = pool.slice().sort((a,b) =>
       new Date(b.appliedAt).getTime() - new Date(a.appliedAt).getTime());
     const fmtTime = iso => {
       try {
@@ -11124,6 +11153,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       const passEl = document.getElementById('b-admin-pass');
       if (passEl && !passEl.value) passEl.value = genTempPw();
       this._populateBuildingModalCompanies(this.S._pendingCompanyId || '');
+    }
+    if (id === 'modal-add-emp') {
+      // Hide the Hourly Rate field from scheduler-only admins (financial gate).
+      const rateGroup = document.getElementById('emp-hourly-rate-group');
+      if (rateGroup) rateGroup.style.display = this.canViewFinancials() ? '' : 'none';
+      this.toggleAdminAccessRow();
     }
   },
   closeModal(id) {
