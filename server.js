@@ -126,6 +126,134 @@ const PCC_BASE          = 'https://connect.pointclickcare.com';
 
 let _pccToken = null, _pccTokenExpiry = 0, _pccTokenInflight = null;
 
+// ── INDEED PARTNER CONFIG ────────────────────────────────────────────────────
+// Required env vars for the Partner Program integration:
+//   INDEED_PARTNER_SECRET     — HMAC shared secret for inbound webhook verification
+//                                (Indeed signs every Apply / Event payload with it)
+//   INDEED_API_CLIENT_ID      — OAuth2 client ID for outbound disposition push
+//   INDEED_API_CLIENT_SECRET  — OAuth2 secret for outbound disposition push
+// All three are issued by Indeed during partner onboarding.
+const INDEED_PARTNER_SECRET    = process.env.INDEED_PARTNER_SECRET    || null;
+const INDEED_API_CLIENT_ID     = process.env.INDEED_API_CLIENT_ID     || null;
+const INDEED_API_CLIENT_SECRET = process.env.INDEED_API_CLIENT_SECRET || null;
+const INDEED_API_BASE          = 'https://api.indeed.com';
+const INDEED_AUTH_BASE         = 'https://apis.indeed.com/oauth/v2/tokens';
+
+let _indeedToken = null, _indeedTokenExpiry = 0, _indeedTokenInflight = null;
+
+// OAuth2 client_credentials grant for outbound calls (disposition sync).
+// Same stampede-safe pattern as PCC.
+async function getIndeedToken({ forceRefresh = false } = {}) {
+  if (!INDEED_API_CLIENT_ID || !INDEED_API_CLIENT_SECRET) throw new Error('Indeed API credentials not configured');
+  if (!forceRefresh && _indeedToken && Date.now() < _indeedTokenExpiry) return _indeedToken;
+  if (_indeedTokenInflight) return _indeedTokenInflight;
+  _indeedTokenInflight = (async () => {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 10000);
+      let resp;
+      try {
+        resp = await fetch(INDEED_AUTH_BASE, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'client_credentials',
+            client_id:     INDEED_API_CLIENT_ID,
+            client_secret: INDEED_API_CLIENT_SECRET,
+            scope: 'employer.advertising.partner.account.read employer.advertising.partner.write',
+          }).toString(),
+          signal: ctrl.signal,
+        });
+      } finally { clearTimeout(t); }
+      if (!resp.ok) throw new Error(`Indeed auth failed: ${resp.status}`);
+      const body = await resp.json().catch(() => null);
+      if (!body || !body.access_token) throw new Error('Indeed auth: malformed response');
+      _indeedToken = body.access_token;
+      _indeedTokenExpiry = Date.now() + ((body.expires_in || 3600) - 60) * 1000;
+      return _indeedToken;
+    } finally { _indeedTokenInflight = null; }
+  })();
+  return _indeedTokenInflight;
+}
+
+// Verify HMAC-SHA-256 signature on incoming Indeed webhooks. Indeed uses the
+// "X-Indeed-Signature" header containing a hex-encoded digest of the raw body
+// using INDEED_PARTNER_SECRET. timingSafeEqual prevents a comparison-timing
+// side channel.
+function verifyIndeedSignature(rawBody, sigHeader) {
+  if (!INDEED_PARTNER_SECRET || !sigHeader) return false;
+  try {
+    const expected = crypto.createHmac('sha256', INDEED_PARTNER_SECRET).update(rawBody).digest();
+    const provided = Buffer.from(String(sigHeader), 'hex');
+    if (expected.length !== provided.length) return false;
+    return crypto.timingSafeEqual(expected, provided);
+  } catch { return false; }
+}
+
+// Outbound disposition sync. Tells Indeed when a candidate moves to a new
+// status in our system (interviewed, hired, rejected). Required for the
+// Marketplace certification — Indeed surfaces disposition data back to job
+// seekers and other ATS partners.
+async function pushIndeedDisposition(applyId, status, occurredAtMillis = Date.now()) {
+  if (!applyId) return { ok: false, reason: 'no_apply_id' };
+  if (!INDEED_API_CLIENT_ID) return { ok: false, reason: 'not_configured' };
+  // Map our internal statuses to Indeed's controlled vocabulary.
+  const map = {
+    new:        'NEW',
+    contacted:  'INTERVIEW_SCHEDULED',
+    reviewing:  'INTERVIEW_SCHEDULED',
+    onboarding: 'OFFER_EXTENDED',
+    hired:      'HIRED',
+    rejected:   'REJECTED',
+  };
+  const indeedStatus = map[status] || 'IN_REVIEW';
+  try {
+    const token = await getIndeedToken();
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 10000);
+    let resp;
+    try {
+      resp = await fetch(`${INDEED_API_BASE}/v2/employer/disposition`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({
+          applyId,
+          status: indeedStatus,
+          occurredAtMillis,
+        }),
+        signal: ctrl.signal,
+      });
+    } finally { clearTimeout(t); }
+    if (resp.status === 401) {
+      // Refresh token + retry once.
+      _indeedToken = null;
+      const fresh = await getIndeedToken({ forceRefresh: true });
+      const retryCtrl = new AbortController();
+      const t2 = setTimeout(() => retryCtrl.abort(), 10000);
+      try {
+        resp = await fetch(`${INDEED_API_BASE}/v2/employer/disposition`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${fresh}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ applyId, status: indeedStatus, occurredAtMillis }),
+          signal: retryCtrl.signal,
+        });
+      } finally { clearTimeout(t2); }
+    }
+    if (!resp.ok) {
+      logger.error('indeed_disposition_failed', { status: resp.status, applyId });
+      return { ok: false, status: resp.status };
+    }
+    return { ok: true };
+  } catch (e) {
+    logger.error('indeed_disposition_error', { msg: e.message, applyId });
+    return { ok: false, reason: 'network' };
+  }
+}
+
 // Promise-serialized token fetch — prevents stampede when N concurrent
 // requests all see an expired token at once. PCC partner spec requires
 // minimal auth-endpoint traffic; this collapses the herd to a single fetch.
@@ -1559,10 +1687,157 @@ app.post('/api/recruiting/onboard', requireAuth, requireAdmin, async (req, res) 
   p.notes.push({ at: new Date().toISOString(), kind:'email_out', text:'Onboarding link sent.' });
   markDirty();
   auditLog('PROSPECT_ONBOARDING_SENT', req.user, { prospectId, jobId: p.jobId });
+  // If this prospect came in via Indeed Apply, push the OFFER_EXTENDED
+  // disposition back to Indeed. Fire-and-forget — failure doesn't block the
+  // onboarding email already sent.
+  if (p.indeedApplyId && INDEED_API_CLIENT_ID) {
+    pushIndeedDisposition(p.indeedApplyId, 'onboarding')
+      .catch(e => logger.error('indeed_disposition_onboard_failed', { msg: e.message, prospectId: p.id }));
+  }
   res.json({ ok: true });
 });
 
-// ── POST /api/auth/login ──────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// INDEED PARTNER PROGRAM — APPLY + EVENT WEBHOOKS + DISPOSITION SYNC
+// ─────────────────────────────────────────────────────────────────────────────
+// Indeed Marketplace partners receive applications via "Indeed Apply" — a
+// candidate clicks Apply on Indeed, fills out the form there, and Indeed
+// POSTs the application to a partner-hosted endpoint. We treat this as
+// equivalent to our public /api/recruiting/apply and create the same
+// prospect record. Disposition (status changes) flow back to Indeed via
+// pushIndeedDisposition() in the helper module above, fired automatically
+// on setProspectStatus / startProspectOnboarding state transitions.
+//
+// Auth: every webhook is signed with HMAC-SHA-256 over the raw body using
+// INDEED_PARTNER_SECRET. We require the X-Indeed-Signature header and
+// verify it constant-time before parsing JSON.
+
+// POST /api/indeed/apply — receives a new application from Indeed Apply
+app.post('/api/indeed/apply',
+  express.raw({ type: 'application/json', limit: '5mb' }),
+  async (req, res) => {
+    if (!INDEED_PARTNER_SECRET) {
+      auditLog('INDEED_APPLY_REJECTED', null, { reason: 'not_configured' });
+      return res.status(503).json({ error: 'Indeed Partner integration not configured' });
+    }
+    const sig = req.headers['x-indeed-signature'];
+    if (!verifyIndeedSignature(req.body, sig)) {
+      auditLog('INDEED_APPLY_REJECTED', null, { reason: 'bad_signature' });
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
+    let body;
+    try { body = JSON.parse(req.body.toString('utf8')); }
+    catch { return res.status(400).json({ error: 'Malformed JSON' }); }
+
+    const apply = body.applyData || body || {};
+    const a     = apply.applicant || {};
+    const j     = apply.job || {};
+    // We embed our internal job id in jobMeta when generating the Indeed
+    // listing — Indeed echoes it back so we can correlate the application.
+    const ourJobId = j.jobMeta?.jobId || j.jobMeta?.partnerJobId || j.referencenumber;
+    if (!ourJobId) return res.status(400).json({ error: 'Missing job reference' });
+
+    const data = await loadData();
+    const job  = (data.jobPostings || []).find(x => x.id === ourJobId);
+    if (!job) return res.status(404).json({ error: 'Job not found in our system' });
+
+    const emailNorm = String(a.email || '').trim().toLowerCase();
+    if (emailNorm && (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNorm) || emailNorm.length > 254)) {
+      return res.status(400).json({ error: 'Invalid email' });
+    }
+    const phone = String(a.phoneNumber || a.phone || '').trim().slice(0, 25);
+
+    // Dedupe by Indeed apply id first, then by email + jobId within 7 days.
+    if (!Array.isArray(data.prospects)) data.prospects = [];
+    const indeedApplyId = apply.id || apply.applyId || null;
+    let dupe = indeedApplyId
+      ? data.prospects.find(p => p.indeedApplyId === indeedApplyId)
+      : null;
+    if (!dupe) {
+      const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      dupe = data.prospects.find(p =>
+        p.email === emailNorm && p.jobId === ourJobId && new Date(p.appliedAt).getTime() > cutoff);
+    }
+
+    let prospect;
+    if (dupe) {
+      // Refresh existing record's Indeed metadata in case Indeed re-sent.
+      dupe.indeedApplyId = indeedApplyId || dupe.indeedApplyId;
+      dupe.appliedAt = new Date().toISOString();
+      if (apply.questions && apply.questions.length) dupe.questions = apply.questions;
+      if (apply.resume?.url) dupe.resumeUrl = apply.resume.url;
+      prospect = dupe;
+    } else {
+      prospect = {
+        id: 'pr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        jobId: ourJobId,
+        jobTitle: job.title,
+        buildingId: job.buildingId || null,
+        name: String(a.fullName || `${a.firstName || ''} ${a.lastName || ''}`).trim().slice(0, 100),
+        email: emailNorm,
+        phone,
+        source: 'indeed_apply',
+        indeedApplyId,
+        appliedAt: new Date().toISOString(),
+        status: 'new',
+        notes: [],
+        questions: Array.isArray(apply.questions) ? apply.questions.slice(0, 50) : [],
+        resumeUrl: apply.resume?.url || null,
+        coverLetter: apply.coverLetter?.text ? String(apply.coverLetter.text).slice(0, 5000) : null,
+      };
+      data.prospects.push(prospect);
+    }
+    if (data.prospects.length > 5000) data.prospects = data.prospects.slice(-5000);
+    markDirty();
+    auditLog('INDEED_APPLY_RECEIVED', null, {
+      indeedApplyId,
+      jobId: ourJobId,
+      emailMasked: emailNorm.replace(/^(.).*(@.*)$/, '$1***$2'),
+    });
+    res.json({ ok: true, prospectId: prospect.id });
+  }
+);
+
+// POST /api/indeed/event — receives status events from Indeed (applicant
+// withdrew, Indeed flagged duplicate, etc.). Same signature scheme.
+app.post('/api/indeed/event',
+  express.raw({ type: 'application/json', limit: '256kb' }),
+  async (req, res) => {
+    if (!INDEED_PARTNER_SECRET) return res.status(503).json({ error: 'not configured' });
+    if (!verifyIndeedSignature(req.body, req.headers['x-indeed-signature'])) {
+      auditLog('INDEED_EVENT_REJECTED', null, { reason: 'bad_signature' });
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
+    let body;
+    try { body = JSON.parse(req.body.toString('utf8')); }
+    catch { return res.status(400).json({ error: 'Malformed JSON' }); }
+
+    const eventType = body.event || body.type || '';
+    const applyId   = body.applyId || body.id;
+    if (!applyId) return res.status(400).json({ error: 'Missing applyId' });
+
+    const data = await loadData();
+    const p = (data.prospects || []).find(x => x.indeedApplyId === applyId);
+    if (!p) {
+      auditLog('INDEED_EVENT_ORPHAN', null, { eventType, applyId });
+      return res.status(200).json({ ok: true, note: 'No matching prospect; ignored' });
+    }
+    if (!Array.isArray(p.notes)) p.notes = [];
+
+    if (eventType === 'WITHDRAWN' || eventType === 'withdrawn' || eventType === 'CANDIDATE_WITHDREW') {
+      p.status = 'rejected';
+      p.notes.push({ at: new Date().toISOString(), kind: 'indeed_event', text: 'Candidate withdrew via Indeed.' });
+    } else if (eventType === 'DUPLICATE' || eventType === 'duplicate') {
+      p.notes.push({ at: new Date().toISOString(), kind: 'indeed_event', text: 'Indeed flagged as duplicate application.' });
+    } else {
+      p.notes.push({ at: new Date().toISOString(), kind: 'indeed_event', text: `Indeed event: ${eventType}` });
+    }
+    p.updatedAt = new Date().toISOString();
+    markDirty();
+    auditLog('INDEED_EVENT_RECEIVED', null, { eventType, applyId, prospectId: p.id });
+    res.json({ ok: true });
+  }
+);
 // Body: { email, password, totp?, totpSetupCode? }
 // Returns:
 //   - { needsTotpSetup: true, totpSecret, qrDataUrl } if first 2FA enrollment
@@ -2079,7 +2354,26 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   // admins manage their own pipeline. SA can touch all (handled by mergeScoped).
   if (Array.isArray(payload.prospects)) {
     const inScopeProspect = p => !p.buildingId || callerBIds.has(p.buildingId);
+    // Snapshot pre-merge statuses for Indeed prospects so we can detect
+    // transitions and fire disposition pushes after the write.
+    const indeedPriorStatus = new Map();
+    for (const p of (data.prospects || [])) {
+      if (p.indeedApplyId) indeedPriorStatus.set(p.id, p.status);
+    }
     data.prospects = mergeScoped(data.prospects || [], payload.prospects, inScopeProspect);
+    // Fire-and-forget disposition pushes for any Indeed-sourced prospect whose
+    // status actually changed. Configured-out (no Indeed credentials) is a
+    // no-op so this is safe to run regardless of partner-program enrollment.
+    if (INDEED_API_CLIENT_ID) {
+      for (const p of data.prospects) {
+        if (!p.indeedApplyId) continue;
+        const prev = indeedPriorStatus.get(p.id);
+        if (prev !== p.status && p.status) {
+          pushIndeedDisposition(p.indeedApplyId, p.status).catch(e =>
+            logger.error('indeed_disposition_async_failed', { msg: e.message, prospectId: p.id }));
+        }
+      }
+    }
   }
 
   dataCache = data;
@@ -2589,42 +2883,9 @@ app.get('/api/pcc/staffing/range', requireAuth, requireAdmin, async (req, res) =
   }
 });
 
-// ── GET /jobs.xml ─────────────────────────────────────────────────────────────
-app.get('/jobs.xml', async (_req, res) => {
-  try {
-    const data = await loadData();
-    const jobs  = (data.jobPostings || []).filter(j => j.status === 'active');
-    const esc   = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    const items = jobs.map(j => `  <job>
-    <id><![CDATA[${j.id}]]></id>
-    <title><![CDATA[${esc(j.title)}]]></title>
-    <company><![CDATA[ManageMyStaffing]]></company>
-    <city><![CDATA[${esc(j.city||'')}]]></city>
-    <state><![CDATA[${esc(j.state||'')}]]></state>
-    <country>US</country>
-    <postalcode><![CDATA[${esc(j.zip||'')}]]></postalcode>
-    <date>${(j.createdAt||'').slice(0,10)}</date>
-    <reqid>${esc(j.id)}</reqid>
-    <jobtype><![CDATA[${esc(j.jobType||'Full-time')}]]></jobtype>
-    <category><![CDATA[${esc(j.department||'Healthcare')}]]></category>
-    <description><![CDATA[${esc(j.description||'')}]]></description>
-    <salary><![CDATA[${esc(j.salary||'')}]]></salary>
-    <url><![CDATA[${APP_URL}/#job-${j.id}]]></url>
-  </job>`).join('\n');
-    const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<source>
-  <publisher>ManageMyStaffing</publisher>
-  <publisherurl>${APP_URL}</publisherurl>
-  <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>
-${items}
-</source>`;
-    res.setHeader('Content-Type', 'application/xml; charset=UTF-8');
-    res.setHeader('Cache-Control', 'public, max-age=3600');
-    res.send(xml);
-  } catch (e) {
-    res.status(500).send('<?xml version="1.0"?><error>Feed generation failed</error>');
-  }
-});
+// (Duplicate /jobs.xml route removed — see the canonical implementation in
+// the RECRUITING block above. Express honors the first registration; this
+// stub was dead code and confusing for future maintenance.)
 
 // ── GET /api/jobs ─────────────────────────────────────────────────────────────
 app.get('/api/jobs', async (_req, res) => {
