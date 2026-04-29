@@ -2948,11 +2948,138 @@ const App = {
           <div class="building-stat"><div class="building-stat-val">${b.beds || '—'}</div><div class="building-stat-label">Beds</div></div>
         </div>
         ${adminList}
+        ${this._renderBuildingSmsStatus(b)}
         <div class="building-actions">
           <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();App.enterBuilding('${b.id}')">Enter Dashboard →</button>
           <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.addAdminToBuilding('${b.id}')">+ Add Admin</button>
         </div>
       </div>`;
+  },
+
+  // Per-building SMS number widget on the SA building card. Shows current
+  // status and offers an "Activate SMS" button when the building is fully
+  // set up (admin + employees) and no number is provisioned yet.
+  _renderBuildingSmsStatus(b) {
+    const status = b.smsProvisionStatus || 'none';
+    const fmtPhone = p => {
+      const d = String(p || '').replace(/\D/g,'').slice(-10);
+      return d.length === 10 ? `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}` : (p || '');
+    };
+    const hasAdmin = this.S.accounts.some(a => a.role === 'admin' && a.buildingId === b.id);
+    const hasEmps  = this.S.employees.some(e => e.buildingId === b.id && !e.inactive);
+    const fullySetUp = hasAdmin && hasEmps && b.name && b.state;
+
+    if (status === 'active' && b.smsFromPhone) {
+      return `<div style="background:var(--green-l);border:1px solid var(--green-m);border-radius:8px;padding:8px 10px;margin:8px 0;display:flex;align-items:center;gap:8px;font-size:11px">
+        <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="#047857" stroke-width="1.8" stroke-linecap="round"><path d="M3 5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H6l-3 3z"/></svg>
+        <span style="font-weight:700;color:#047857">SMS:</span>
+        <span style="font-family:monospace;color:#065F46">${sanitize(fmtPhone(b.smsFromPhone))}</span>
+        <span style="color:var(--g500);margin-left:auto">$${(b.smsCostUsd||2).toFixed(2)}/mo</span>
+      </div>`;
+    }
+    if (status === 'pending') {
+      return `<div style="background:#FEF3C7;border:1px solid #FDE68A;border-radius:8px;padding:8px 10px;margin:8px 0;font-size:11px;color:#92400E">
+        ⏳ Provisioning SMS number…
+      </div>`;
+    }
+    if (status === 'failed') {
+      return `<div style="background:var(--red-l);border:1px solid #FCA5A5;border-radius:8px;padding:8px 10px;margin:8px 0;font-size:11px;color:#991B1B">
+        SMS provision failed${b.smsProvisionError?' — '+sanitize(b.smsProvisionError):''}
+        <button onclick="event.stopPropagation();App.provisionBuildingSMS('${b.id}')" class="btn btn-ghost btn-sm" style="margin-left:8px;padding:2px 8px">Retry</button>
+      </div>`;
+    }
+    // 'none' — show activate button if fully set up, else show greyed-out hint.
+    if (!fullySetUp) {
+      return `<div style="font-size:11px;color:var(--g500);margin:6px 0;padding:6px 0;font-style:italic">
+        Add admin + at least one employee to enable a local SMS number.
+      </div>`;
+    }
+    const areaCode = this._zipToAreaCode(b.zip) || '???';
+    return `<div style="display:flex;align-items:center;gap:8px;margin:8px 0;font-size:11px;color:var(--g600)">
+      <button onclick="event.stopPropagation();App.provisionBuildingSMS('${b.id}')"
+        class="btn btn-secondary btn-sm" style="padding:4px 10px;font-size:11px">
+        + Activate SMS (${areaCode}) ~$2/mo
+      </button>
+      <span style="color:var(--g500)">Local-area-code text number for this facility</span>
+    </div>`;
+  },
+
+  // Mirror the server-side ZIP→area-code lookup just for the button label
+  // hint. Server is the source of truth on actual provisioning.
+  _zipToAreaCode(zip) {
+    if (!zip) return null;
+    const z = String(zip).trim().slice(0, 3);
+    const m = {
+      '730':'405','731':'405','732':'405','734':'405','735':'405','736':'580','737':'580','738':'580','739':'580',
+      '740':'918','741':'918','743':'918','744':'918','745':'918','746':'918','747':'918','748':'580','749':'918',
+      '750':'214','751':'214','752':'214','753':'214','754':'214','760':'682','761':'817','762':'817',
+      '770':'713','772':'713','773':'713','774':'713','775':'409','778':'979',
+      '780':'512','781':'737','787':'512','788':'210',
+      '500':'515','501':'515','502':'515','503':'641','520':'515','521':'319','522':'319',
+      '350':'205','351':'205','352':'205','359':'334','360':'334','362':'251',
+    };
+    return m[z] || null;
+  },
+
+  // SA-only action: provision (purchase) a local SMS number for the building.
+  async provisionBuildingSMS(buildingId) {
+    const b = this.S.buildings.find(x => x.id === buildingId);
+    if (!b) return;
+    const areaCode = this._zipToAreaCode(b.zip);
+    let confirmMsg = `Activate a local SMS number for ${b.name}?\n\n`;
+    if (areaCode) {
+      confirmMsg += `Area code: ${areaCode} (derived from ZIP ${b.zip})\n`;
+    } else {
+      confirmMsg += `No area code derived from ZIP. You'll be asked to enter one.\n`;
+    }
+    confirmMsg += `Approximate cost: $2/month\n\nNote: requires 10DLC brand + campaign registration in Azure portal.`;
+    if (!confirm(confirmMsg)) return;
+    let body = {};
+    if (!areaCode) {
+      const manualArea = prompt('Enter the 3-digit area code to search:', '');
+      if (!manualArea || !/^\d{3}$/.test(manualArea)) return;
+      body.areaCode = manualArea;
+    }
+    this.showToast('Provisioning SMS number — this can take a minute…');
+    try {
+      const r = await fetch(`/api/buildings/${buildingId}/provision-sms`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_authToken}` },
+        body: JSON.stringify(body),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        this.showToast(data.error || 'Provisioning failed', 'warn');
+        return;
+      }
+      // Refresh /api/data so the building's new fields show up.
+      const dResp = await fetch('/api/data', { headers: { 'Authorization': `Bearer ${_authToken}` } });
+      if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
+      this.showToast(`SMS number ${data.phoneNumber} active for ${b.name}`);
+      this.render();
+    } catch (e) {
+      this.showToast('Network error', 'warn');
+    }
+  },
+
+  async releaseBuildingSMS(buildingId) {
+    const b = this.S.buildings.find(x => x.id === buildingId);
+    if (!b || !b.smsFromPhone) return;
+    if (!confirm(`Release ${b.smsFromPhone} from ${b.name}?\n\nThis stops the monthly charge but the number cannot be recovered — you'd get a different one if you re-provision.`)) return;
+    try {
+      const r = await fetch(`/api/buildings/${buildingId}/provision-sms`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${_authToken}` },
+      });
+      const data = await r.json();
+      if (!r.ok) { this.showToast(data.error || 'Release failed', 'warn'); return; }
+      const dResp = await fetch('/api/data', { headers: { 'Authorization': `Bearer ${_authToken}` } });
+      if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
+      this.showToast('SMS number released');
+      this.render();
+    } catch (e) {
+      this.showToast('Network error', 'warn');
+    }
   },
 
   renderSAOverview() {

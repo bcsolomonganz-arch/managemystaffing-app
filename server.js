@@ -117,6 +117,73 @@ const ACS_CONNECTION_STRING = process.env.ACS_CONNECTION_STRING || null;
 const ACS_FROM_EMAIL        = process.env.ACS_FROM_EMAIL || 'noreply@751842ed-e753-4e35-9ace-4f2a879b45b7.azurecomm.net';
 const ACS_FROM_PHONE        = process.env.ACS_FROM_PHONE || null;
 
+// ── Per-building SMS number provisioning ────────────────────────────────────
+// Each building can have its own local-area-code SMS number so staff at that
+// facility see a familiar local caller ID. Numbers are purchased on demand
+// (admin presses "Activate SMS" after a building is fully set up — never on
+// creation, to avoid wasted spend on incomplete onboarding).
+//
+// 10DLC NOTE: US local-area-code SMS numbers require a registered 10DLC
+// brand + campaign. Without one, ACS will reject the SMS send even if the
+// number is purchased. The provisioning endpoint logs a clear error message
+// so the SA knows to register first via Azure portal → Communication
+// Service → Phone numbers → Regulatory documents.
+//
+// ZIP-to-area-code lookup. Approximate (ZIP regions don't align perfectly
+// with NPAs); covers common SNF/LTC operator states. Falls back to null,
+// which forces the SA to enter an area code manually.
+const _ZIP3_TO_AREA = {
+  // Oklahoma
+  '730':'405','731':'405','732':'405','734':'405','735':'405','736':'580','737':'580','738':'580','739':'580',
+  '740':'918','741':'918','743':'918','744':'918','745':'918','746':'918','747':'918','748':'580','749':'918',
+  // Texas — Dallas/FtWorth/Austin/Houston/SanAntonio sample
+  '750':'214','751':'214','752':'214','753':'214','754':'214','755':'903','756':'430','757':'409','758':'409','759':'936',
+  '760':'682','761':'817','762':'817','763':'940','764':'940','766':'806','767':'325','768':'325','769':'432',
+  '770':'713','772':'713','773':'713','774':'713','775':'409','776':'936','777':'409','778':'979','779':'254',
+  '780':'512','781':'737','785':'956','786':'956','787':'512','788':'210','789':'830',
+  '790':'806','791':'806','792':'806','793':'915','794':'915','795':'325','796':'432','797':'432','798':'915','799':'915',
+  // Iowa
+  '500':'515','501':'515','502':'515','503':'641','504':'641','505':'641','506':'515','507':'515','508':'515',
+  '510':'712','511':'712','512':'712','513':'712','514':'712','515':'712','516':'712','520':'515','521':'319',
+  '522':'319','523':'319','524':'319','525':'319','526':'319','527':'563','528':'563',
+  // Alabama (common SNF cluster)
+  '350':'205','351':'205','352':'205','354':'205','355':'205','356':'205','357':'205','358':'205','359':'334','360':'334',
+  '361':'334','362':'251','363':'251','364':'251','365':'251','366':'251','367':'334','368':'334','369':'334',
+  // Generic catch-all for a few more
+  '100':'212','101':'212','102':'212','103':'212','110':'516','111':'212','112':'718',
+  '600':'773','601':'773','602':'847','603':'773','604':'773',
+  '900':'213','902':'310','903':'310','904':'310','905':'310','906':'562','907':'562','908':'562','910':'818','913':'818','917':'310','918':'714','919':'714','920':'760','921':'760',
+};
+function zipToAreaCode(zip) {
+  if (!zip) return null;
+  const z = String(zip).trim().slice(0, 3);
+  return _ZIP3_TO_AREA[z] || null;
+}
+
+// "Fully set up" gate for a building before SMS provisioning is allowed.
+// Definition: building has a name + state + at least one admin account +
+// at least one employee. Adjust here if you want to relax/tighten.
+function _buildingIsFullySetUp(buildingId, data) {
+  const b = (data.buildings || []).find(x => x.id === buildingId);
+  if (!b || !b.name || !b.state) return { ok: false, reason: 'Building missing name or state' };
+  const admins = (data.accounts || []).filter(a => a.role === 'admin' && a.buildingId === buildingId);
+  if (admins.length === 0) return { ok: false, reason: 'No admin assigned to this building' };
+  const emps = (data.employees || []).filter(e => e.buildingId === buildingId && !e.inactive);
+  if (emps.length === 0) return { ok: false, reason: 'No employees added to this building yet' };
+  return { ok: true };
+}
+
+// Resolve which FROM phone number to use for outbound SMS to a given
+// building's staff. Falls back to the global ACS_FROM_PHONE if no
+// per-building number is provisioned.
+function _smsFromForBuilding(buildingId, data) {
+  if (buildingId) {
+    const b = (data?.buildings || dataCache?.buildings || []).find(x => x.id === buildingId);
+    if (b?.smsFromPhone && b.smsProvisionStatus === 'active') return b.smsFromPhone;
+  }
+  return ACS_FROM_PHONE;
+}
+
 // ── PCC (PointClickCare) CONFIG ───────────────────────────────────────────────
 const PCC_CLIENT_ID     = process.env.PCC_CLIENT_ID     || null;
 const PCC_CLIENT_SECRET = process.env.PCC_CLIENT_SECRET || null;
@@ -1838,6 +1905,132 @@ app.post('/api/indeed/event',
     res.json({ ok: true });
   }
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PER-BUILDING SMS PROVISIONING
+// ─────────────────────────────────────────────────────────────────────────────
+// SA-only endpoints to purchase / release a local SMS number for a building.
+// Numbers come from the building's own area code (looked up from its ZIP) so
+// staff at that facility see a familiar caller ID.
+//
+// SAFETY: provisioning charges $1–2 / month per number plus 10DLC overhead.
+// Endpoint requires (a) superadmin role and (b) the building to be "fully
+// set up" (has admin + at least one employee). The frontend confirms the
+// charge before posting.
+
+// (requireSuperAdmin already defined above; reused here.)
+
+// POST /api/buildings/:id/provision-sms
+//   Body (optional): { areaCode: "918" }   — overrides ZIP-derived area code
+// Returns: { ok, phoneNumber, monthlyCost, areaCode } on success.
+app.post('/api/buildings/:id/provision-sms', requireAuth, requireSuperAdmin, async (req, res) => {
+  if (!ACS_CONNECTION_STRING) return res.status(503).json({ error: 'ACS not configured' });
+  const buildingId = req.params.id;
+  const data = await loadData();
+  const b = (data.buildings || []).find(x => x.id === buildingId);
+  if (!b) return res.status(404).json({ error: 'Building not found' });
+  if (b.smsFromPhone && b.smsProvisionStatus === 'active') {
+    return res.status(409).json({ error: 'Building already has an active SMS number', phoneNumber: b.smsFromPhone });
+  }
+  // Gate on fully-set-up status to avoid wasting spend on incomplete onboarding.
+  const setup = _buildingIsFullySetUp(buildingId, data);
+  if (!setup.ok) return res.status(412).json({ error: `Building not ready for SMS: ${setup.reason}` });
+
+  // Resolve area code: explicit override wins, else ZIP-derived, else error.
+  const overrideArea = String(req.body?.areaCode || '').replace(/\D/g, '').slice(0, 3);
+  const areaCode = overrideArea || zipToAreaCode(b.zip);
+  if (!areaCode || areaCode.length !== 3) {
+    return res.status(400).json({ error: 'Could not derive area code from ZIP. Pass areaCode explicitly in body.' });
+  }
+
+  // Mark pending immediately so concurrent calls don't double-purchase.
+  b.smsProvisionStatus = 'pending';
+  b.smsAreaCode = areaCode;
+  markDirty();
+
+  let result;
+  try {
+    const { PhoneNumbersClient } = require('@azure/communication-phone-numbers');
+    const client = new PhoneNumbersClient(ACS_CONNECTION_STRING);
+    // Search for one available local number in the area code.
+    const searchPoller = await client.beginSearchAvailablePhoneNumbers({
+      countryCode:    'US',
+      phoneNumberType:'geographic',
+      assignmentType: 'application',
+      capabilities:   { sms: 'inbound+outbound', calling: 'none' },
+      areaCode,
+      quantity:       1,
+    });
+    const searchResult = await searchPoller.pollUntilDone();
+    if (!searchResult.phoneNumbers?.length) {
+      b.smsProvisionStatus = 'failed';
+      markDirty();
+      return res.status(503).json({ error: `No local numbers available in area code ${areaCode}. Try a different code.` });
+    }
+    // Purchase the search.
+    const purchasePoller = await client.beginPurchasePhoneNumbers(searchResult.searchId);
+    await purchasePoller.pollUntilDone();
+    // Result has the purchased number.
+    const purchased = searchResult.phoneNumbers[0];
+    b.smsFromPhone = purchased;
+    b.smsProvisionStatus = 'active';
+    b.smsProvisionedAt = new Date().toISOString();
+    b.smsCostUsd = searchResult.cost?.amount || 2.0;
+    markDirty();
+    auditLog('SMS_NUMBER_PROVISIONED', req.user, { buildingId, phoneNumber: purchased, areaCode });
+    result = {
+      ok: true,
+      phoneNumber: purchased,
+      areaCode,
+      monthlyCost: b.smsCostUsd,
+    };
+  } catch (e) {
+    b.smsProvisionStatus = 'failed';
+    b.smsProvisionError = e.message?.slice(0, 200) || 'unknown';
+    markDirty();
+    logger.error('sms_provision_failed', { buildingId, areaCode, msg: e.message });
+    // Common failure: no 10DLC campaign registered.
+    const isTenDlc = /campaign|10dlc|brand/i.test(e.message || '');
+    return res.status(502).json({
+      error: isTenDlc
+        ? '10DLC brand + campaign must be registered in Azure portal before local SMS numbers can be activated. ACS Phone numbers → Regulatory documents.'
+        : `Number purchase failed: ${e.message}`,
+    });
+  }
+  res.json(result);
+});
+
+// DELETE /api/buildings/:id/provision-sms
+//   Releases the building's SMS number back to ACS (stops billing).
+app.delete('/api/buildings/:id/provision-sms', requireAuth, requireSuperAdmin, async (req, res) => {
+  if (!ACS_CONNECTION_STRING) return res.status(503).json({ error: 'ACS not configured' });
+  const buildingId = req.params.id;
+  const data = await loadData();
+  const b = (data.buildings || []).find(x => x.id === buildingId);
+  if (!b) return res.status(404).json({ error: 'Building not found' });
+  if (!b.smsFromPhone) return res.status(409).json({ error: 'Building has no SMS number to release' });
+  try {
+    const { PhoneNumbersClient } = require('@azure/communication-phone-numbers');
+    const client = new PhoneNumbersClient(ACS_CONNECTION_STRING);
+    const releasePoller = await client.beginReleasePhoneNumber(b.smsFromPhone);
+    await releasePoller.pollUntilDone();
+    auditLog('SMS_NUMBER_RELEASED', req.user, { buildingId, phoneNumber: b.smsFromPhone });
+    delete b.smsFromPhone;
+    delete b.smsProvisionedAt;
+    delete b.smsCostUsd;
+    delete b.smsProvisionError;
+    b.smsProvisionStatus = 'none';
+    markDirty();
+    res.json({ ok: true });
+  } catch (e) {
+    logger.error('sms_release_failed', { buildingId, msg: e.message });
+    return res.status(502).json({ error: `Release failed: ${e.message}` });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LOGIN
+// ─────────────────────────────────────────────────────────────────────────────
 // Body: { email, password, totp?, totpSetupCode? }
 // Returns:
 //   - { needsTotpSetup: true, totpSecret, qrDataUrl } if first 2FA enrollment
@@ -3059,14 +3252,18 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
   }
 
   if (smsList.length) {
-    if (!ACS_FROM_PHONE) {
+    // Use the building's local SMS number if it's been provisioned and
+    // activated; otherwise fall back to the global ACS_FROM_PHONE. Staff at
+    // a facility see a familiar local caller ID this way.
+    const sender = _smsFromForBuilding(scopedBId, data);
+    if (!sender) {
       return res.status(503).json({ error: 'SMS not configured' });
     }
     await _enqueueAlertJob({
       kind: 'sms',
       jobId,
       recipients: smsList.map(e => ({ name: e.name, phone: e.phone })),
-      message, fromPhone: ACS_FROM_PHONE,
+      message, fromPhone: sender,
     });
     queuedJobs.push({ kind: 'sms', count: smsList.length });
   }
@@ -3127,20 +3324,32 @@ app.post('/api/sms/inbound', async (req, res) => {
     auditLog('SMS_INBOUND_REJECTED', null, { reason: 'bad_secret' });
     return res.status(401).json({ error: 'Unauthorized' });
   }
-  // Accept Twilio-style ({ From, Body }) or our own ({ from, body, jobId? }).
-  const from   = (req.body?.from || req.body?.From || '').toString().trim();
-  const body   = (req.body?.body || req.body?.Body || '').toString().slice(0, 1600);
-  const jobId  = (req.body?.jobId || '').toString();
+  // Accept Twilio-style ({ From, To, Body }) or our own ({ from, to, body, jobId? }).
+  const from = (req.body?.from || req.body?.From || '').toString().trim();
+  const to   = (req.body?.to   || req.body?.To   || '').toString().trim();
+  const body = (req.body?.body || req.body?.Body || '').toString().slice(0, 1600);
+  const jobId = (req.body?.jobId || '').toString();
   if (!from || !body) return res.status(400).json({ error: 'from and body required' });
   // Normalize phone for matching (strip non-digits, keep last 10).
   const normPhone = p => String(p || '').replace(/\D/g, '').slice(-10);
   const fromNorm = normPhone(from);
+  const toNorm   = normPhone(to);
 
   const data = await loadData();
   if (!Array.isArray(data.alertLog)) data.alertLog = [];
 
+  // Resolve which building owns the destination number. If TO matches a
+  // provisioned building number, replies are routed into that building's
+  // alertLog; otherwise we fall back to the broader matching below.
+  let routedBuildingId = null;
+  if (toNorm) {
+    const ownerBuilding = (data.buildings || []).find(b =>
+      b.smsFromPhone && normPhone(b.smsFromPhone) === toNorm);
+    if (ownerBuilding) routedBuildingId = ownerBuilding.id;
+  }
+
   // Match by jobId if given, otherwise the most recent alert (last 7 days)
-  // that texted this phone.
+  // that texted this phone, scoped to the routed building when known.
   const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
   let match = null;
   if (jobId) match = data.alertLog.find(e => e.id === jobId);
@@ -3149,17 +3358,20 @@ app.post('/api/sms/inbound', async (req, res) => {
       const e = data.alertLog[i];
       const sentMs = new Date(e.sentAt).getTime();
       if (sentMs < cutoff) break;
+      if (routedBuildingId && e.buildingId !== routedBuildingId) continue;
       const matched = (e.recipients?.sms || []).some(r => normPhone(r.phone) === fromNorm);
       if (matched) { match = e; break; }
     }
   }
   if (!match) {
-    // Park orphan replies in a synthetic entry so they aren't lost.
+    // Park orphan replies in a synthetic entry so they aren't lost. Tag
+    // with the routed building so the right facility's Texts sidebar
+    // shows it even without a matching outbound alert.
     match = {
       id: 'orphan_' + Date.now(),
       sentAt: new Date().toISOString(),
       sentBy: 'inbound',
-      buildingId: null,
+      buildingId: routedBuildingId,
       groups: [],
       subject: 'Inbound SMS (no matching alert)',
       message: '',
@@ -3185,7 +3397,7 @@ app.post('/api/sms', requireAuth, requireAdmin, async (req, res) => {
   const { to, message } = req.body || {};
   if (!to || !message) return res.status(400).json({ error: 'to and message are required' });
   if (message.length > 1600) return res.status(400).json({ error: 'message too long (1600 char max)' });
-  if (!ACS_CONNECTION_STRING || !ACS_FROM_PHONE) {
+  if (!ACS_CONNECTION_STRING) {
     return res.status(503).json({ error: 'SMS not configured' });
   }
   const normalized = toE164(to);
@@ -3196,15 +3408,26 @@ app.post('/api/sms', requireAuth, requireAdmin, async (req, res) => {
   // company SMS gateway.
   const data = await loadData();
   let scopedEmployees = data.employees || [];
+  let recipientBuildingId = null;
   if (req.user.role !== 'superadmin') {
     const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds||[])].filter(Boolean));
     scopedEmployees = scopedEmployees.filter(e => callerBIds.has(e.buildingId));
-    const allowed = scopedEmployees.some(e => !e.inactive && toE164(e.phone) === normalized);
-    if (!allowed) {
+    const recipient = scopedEmployees.find(e => !e.inactive && toE164(e.phone) === normalized);
+    if (!recipient) {
       auditLog('SMS_BLOCKED', req.user, { to: normalized, reason: 'phone_not_in_building_roster' });
       return res.status(403).json({ error: 'Phone number is not in your building roster' });
     }
+    recipientBuildingId = recipient.buildingId;
+  } else {
+    // SA: still resolve building so the per-building number is used.
+    const recipient = (data.employees || []).find(e => !e.inactive && toE164(e.phone) === normalized);
+    recipientBuildingId = recipient?.buildingId || null;
   }
+
+  // Determine which FROM number to use — prefer the building's local
+  // provisioned number; fall back to the global toll-free.
+  const sender = _smsFromForBuilding(recipientBuildingId, data);
+  if (!sender) return res.status(503).json({ error: 'SMS not configured (no FROM number)' });
 
   // PHI guard (HIPAA §164.312(e)) — block any message containing PHI patterns.
   const phiReason = scanMessageForPHI(message, scopedEmployees);
@@ -3216,7 +3439,7 @@ app.post('/api/sms', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { SmsClient } = require('@azure/communication-sms');
     const smsClient = new SmsClient(ACS_CONNECTION_STRING);
-    const results   = await smsClient.send({ from: ACS_FROM_PHONE, to: [normalized], message: message.slice(0, 1600) });
+    const results   = await smsClient.send({ from: sender, to: [normalized], message: message.slice(0, 1600) });
     if (results[0]?.successful) {
       auditLog('SMS_SENT', req.user, { to: normalized });
       res.json({ ok: true });
