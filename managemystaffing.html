@@ -2014,11 +2014,11 @@ const App = {
 
   // ── IDLE TIMEOUT (HIPAA §164.312(a)(2)(iii)) ─────────────
   // Employees: never auto-logged out (clinical workflow, kiosk-style use).
-  // Admins / superadmins: 2 hours of inactivity → forced logout.
+  // Admins / superadmins / regional: 1 hour of inactivity → forced logout.
   _idleTimer: null,
   _idleMs() {
     const role = this.S?.user?.role;
-    if (role === 'admin' || role === 'superadmin' || role === 'regionaladmin') return 2 * 60 * 60 * 1000;
+    if (role === 'admin' || role === 'superadmin' || role === 'regionaladmin') return 60 * 60 * 1000;
     return null; // null = never auto-logout
   },
   _idleStart() {
@@ -2033,7 +2033,7 @@ const App = {
     this._idleTimer = setTimeout(() => this._idleLogout(), ms);
   },
   async _idleLogout() {
-    Audit.log('IDLE_TIMEOUT', 'Auto-logout after 2h idle', this.S.user?.id, 'medium');
+    Audit.log('IDLE_TIMEOUT', 'Auto-logout after 1h idle', this.S.user?.id, 'medium');
     try { await fetch('/api/auth/logout', { method: 'POST' }); } catch(e) {}
     location.reload();
   },
