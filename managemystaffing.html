@@ -6818,21 +6818,26 @@ const App = {
   },
 
   // ── Recruiting category bucketing + starter ads ─────────────────────────
-  // Map any department string to one of four filter buckets.
+  // Map any department string to one of five filter buckets. Housekeeping and
+  // Laundry are intentionally separate so admins can post + track them
+  // independently (different shift patterns, different supervision chain).
   _jobCategory(department) {
     const d = String(department || '').toLowerCase();
     if (/(rn|lpn|charge|cna|cma|nurse|nursing|med tech|medication aide)/.test(d)) return 'nursing';
-    if (/(housekeep|laundry|maintenance|janit)/.test(d))                          return 'support';
+    if (/laundry/.test(d))                                                        return 'laundry';
+    if (/(housekeep|maintenance|janit)/.test(d))                                  return 'housekeeping';
     if (/(admin|office|accounting|hr|management|director|payroll|finance)/.test(d)) return 'admin';
     return 'other';
   },
   _categoryLabel(cat) {
     return ({
-      all:      'All',
-      nursing:  'Nursing',
-      support:  'Housekeeping & Laundry',
-      admin:    'Administration',
-      other:    'Other',
+      all:          'All',
+      nursing:      'Nursing',
+      administration:'Administration',
+      admin:        'Administration',
+      housekeeping: 'Housekeeping',
+      laundry:      'Laundry',
+      other:        'Other',
     })[cat] || cat;
   },
   setRecruitFilter(cat) {
@@ -6874,7 +6879,7 @@ What we offer:
 • Able to lift up to 50 lbs with assistance
 • Two professional references`,
       },
-      support: {
+      housekeeping: {
         title: jobTitle || 'Housekeeping Associate',
         description:
 `Clean spaces. Calm minds. Genuinely happy residents.
@@ -6883,7 +6888,7 @@ If you take pride in a freshly mopped floor and you'd rather catch a problem ear
 
 What you'll do:
 • Keep resident rooms and common areas spotless
-• Restock linens and supplies before anyone has to ask
+• Restock supplies before anyone has to ask
 • Spot maintenance issues and flag them before they become a story
 
 What we offer:
@@ -6894,6 +6899,27 @@ What we offer:
 `• Reliable transportation
 • Able to stand and walk for an 8-hour shift
 • Attention to detail (you notice the corners, not just the middle)`,
+      },
+      laundry: {
+        title: jobTitle || 'Laundry Attendant',
+        description:
+`If a perfectly folded stack of fresh-smelling linens makes your day, we should talk.
+
+Our laundry team keeps the whole facility running — clean linens, clean uniforms, clean towels, every single shift. No glamour, but the residents notice (and so do we).
+
+What you'll do:
+• Sort, wash, dry, and fold linens and resident clothing
+• Keep equipment running — small jams handled, big jams reported
+• Track which items belong to which resident (we have a system; we'll teach you)
+
+What we offer:
+• Predictable shifts on equipment that actually works
+• Pay that reflects the skill (see "Salary" above)
+• A break room with cold drinks and a real chair`,
+        requirements:
+`• Reliable attendance
+• Able to lift up to 40 lbs and stand for an 8-hour shift
+• Comfort working with chemicals (we provide training + PPE)`,
       },
       admin: {
         title: jobTitle || 'Office Coordinator',
@@ -7318,14 +7344,15 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
 
     const statusPill = s => `<span class="job-status-${s}">${s.charAt(0).toUpperCase()+s.slice(1)}</span>`;
 
-    // Per-category counts (across all jobs, not the filtered set, so the
-    // numbers in the tabs reflect the underlying data).
+    // Per-category counts (across all jobs in scope, not the category-filtered set).
     const catCount = (cat) => cat === 'all' ? allJobs.length : allJobs.filter(j => this._jobCategory(j.department) === cat).length;
     const filterTabs = `<div style="display:flex;gap:6px;margin-bottom:18px;flex-wrap:wrap">
-      ${['all','nursing','support','admin','other'].map(cat => {
-        const isActive = filter === cat;
-        const n = catCount(cat);
-        return `<button onclick="App.setRecruitFilter('${cat}')"
+      ${['all','nursing','administration','housekeeping','laundry','other'].map(cat => {
+        // Map 'administration' tab → 'admin' internally for bucketing parity.
+        const internalCat = cat === 'administration' ? 'admin' : cat;
+        const isActive = filter === internalCat;
+        const n = catCount(internalCat);
+        return `<button onclick="App.setRecruitFilter('${internalCat}')"
           style="padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:1.5px solid ${isActive?'var(--blue-d)':'var(--g200)'};background:${isActive?'var(--blue-d)':'#fff'};color:${isActive?'#fff':'var(--g700)'};display:flex;align-items:center;gap:6px;transition:all .15s">
           ${this._categoryLabel(cat)}
           <span style="background:${isActive?'rgba(255,255,255,.25)':'var(--g100)'};color:${isActive?'#fff':'var(--g500)'};padding:0 7px;border-radius:99px;font-size:11px;font-weight:700">${n}</span>
@@ -7395,6 +7422,15 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         </div>
         <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
           ${buildingSelector}
+          ${(() => {
+            const visibleProspects = (this.S.prospects || []).filter(p => !bFilter || p.buildingId === bFilter);
+            const newCount = visibleProspects.filter(p => p.status === 'new').length;
+            return `<button class="btn btn-secondary" onclick="App._scrollToProspects()" style="display:flex;align-items:center;gap:6px;position:relative">
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5"/><circle cx="12" cy="5" r="2.2"/><path d="M9 14c0-2.4 1.8-4.4 4-4.4"/></svg>
+              Applicants
+              <span style="background:${newCount>0?'#DC2626':'var(--g100)'};color:${newCount>0?'#fff':'var(--g500)'};padding:1px 7px;border-radius:99px;font-size:11px;font-weight:700;min-width:18px;text-align:center">${visibleProspects.length}</span>
+            </button>`;
+          })()}
           <button class="btn btn-primary" onclick="App.openJobModal()">
             <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/></svg>
             Post New Job
@@ -7471,7 +7507,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       No applicants yet. Share the public apply pages from job cards above (or wait for Indeed traffic).
     </td></tr>`;
 
-    return `<div style="margin-top:24px;background:#fff;border:1.5px solid var(--g200);border-radius:12px;overflow:hidden">
+    return `<div id="prospects-panel" style="margin-top:24px;background:#fff;border:1.5px solid var(--g200);border-radius:12px;overflow:hidden;scroll-margin-top:80px">
       <div style="padding:14px 16px;background:var(--g50);border-bottom:1px solid var(--g200);display:flex;align-items:center;justify-content:space-between">
         <div style="font-size:14px;font-weight:800;color:var(--g900)">Applicants / Prospects</div>
         <div style="font-size:11px;color:var(--g600)">${prospects.length} total</div>
@@ -7499,37 +7535,156 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.renderHRMain();
   },
 
-  // Send a one-off SMS to a prospect using their captured phone number.
-  // Reuses the same /api/sms endpoint as the normal alert flow.
-  async messageProspect(id) {
+  // Smooth-scroll the recruiting page down to the Applicants panel (header
+  // button shortcut). The panel itself is rendered inline below the job
+  // cards; this just brings the user to it in one click.
+  _scrollToProspects() {
+    const el = document.getElementById('prospects-panel');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  },
+
+  // ── Prospect chat modal (in-app two-way SMS) ────────────────────────────
+  // Opens a chat-style overlay anchored to a single prospect. The thread is
+  // built from p.notes (every outgoing SMS we logged) + S.alertLog replies
+  // whose `from` phone matches the prospect's phone (inbound webhook).
+  // Sending posts to /api/sms — same path as the broadcast Send Alert flow.
+  openProspectChat(id) {
     const p = (this.S.prospects || []).find(x => x.id === id);
     if (!p) return;
     if (!p.phone) { this.showToast('No phone number on file for this prospect','warn'); return; }
+    if (!Array.isArray(p.notes)) p.notes = [];
+    this.S._chatProspectId = id;
+    // Build an inline modal — no markup needed in modal-stack since this is
+    // self-contained. We re-render on every send so the thread updates live.
+    this._renderProspectChat();
+  },
+
+  _renderProspectChat() {
+    const id = this.S._chatProspectId;
+    const p  = (this.S.prospects || []).find(x => x.id === id);
+    if (!p) return;
+    const fmt = iso => {
+      try {
+        const d = new Date(iso);
+        return d.toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+      } catch { return iso; }
+    };
+    // Combine our outgoing notes + matching inbound replies into a single
+    // chronological thread. Inbound replies are matched by phone (last 10
+    // digits) within the most recent 30 days of alertLog entries.
+    const normPhone = ph => String(ph || '').replace(/\D/g, '').slice(-10);
+    const target = normPhone(p.phone);
+    const inbound = [];
+    for (const e of (this.S.alertLog || [])) {
+      for (const r of (e.replies || [])) {
+        if (normPhone(r.from) === target) {
+          inbound.push({ at: r.receivedAt, kind: 'sms_in', text: r.body });
+        }
+      }
+    }
+    const thread = [
+      ...(p.notes || []).filter(n => n.kind === 'sms_out' || n.kind === 'sms_in'),
+      ...inbound,
+    ].sort((a,b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+
+    const bubbles = thread.length ? thread.map(m => {
+      const out = m.kind === 'sms_out';
+      return `<div style="display:flex;justify-content:${out?'flex-end':'flex-start'};margin-bottom:8px">
+        <div style="max-width:75%;padding:8px 12px;border-radius:14px;background:${out?'var(--green)':'var(--g100)'};color:${out?'#fff':'var(--g800)'};font-size:13px;line-height:1.4;word-break:break-word">
+          ${sanitize(m.text || '')}
+          <div style="font-size:10px;opacity:.7;margin-top:3px;text-align:${out?'right':'left'}">${fmt(m.at)}</div>
+        </div>
+      </div>`;
+    }).join('') : `<div style="text-align:center;padding:30px 14px;color:var(--g500);font-size:12px">
+      No messages yet. Send the first one below.
+    </div>`;
+
     const defaultBody = `Hi ${p.name?.split(' ')[0] || ''}, this is ${this.S.user?.name || ''} regarding your application for ${p.jobTitle || 'a position with us'}. When are you available for a quick call?`;
-    const body = prompt(`Message to ${p.name} (${p.phone}):`, defaultBody);
-    if (!body || !body.trim()) return;
+
+    // Mount the modal fresh each render.
+    let div = document.getElementById('modal-prospect-chat');
+    if (!div) {
+      div = document.createElement('div');
+      div.id = 'modal-prospect-chat';
+      div.className = 'modal-overlay open';
+      document.body.appendChild(div);
+    }
+    div.innerHTML = `<div class="modal" style="max-width:520px;display:flex;flex-direction:column;max-height:80vh">
+      <div class="modal-header" style="border-bottom:1px solid var(--g200);padding:14px 16px;display:flex;align-items:center;gap:10px">
+        <div style="width:36px;height:36px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0">${sanitize((p.name || '?').split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase())}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:14px;color:var(--g900)">${sanitize(p.name || '—')}</div>
+          <div style="font-size:11px;color:var(--g500)">${sanitize(p.phone || '—')} · ${sanitize(p.jobTitle || '')}</div>
+        </div>
+        <button class="modal-close" aria-label="Close" onclick="App._closeProspectChat()" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--g500);padding:0 4px">✕</button>
+      </div>
+      <div id="prospect-chat-thread" style="flex:1;overflow-y:auto;padding:14px 16px;background:var(--g50);min-height:200px">
+        ${bubbles}
+      </div>
+      <div style="border-top:1px solid var(--g200);padding:12px 14px;background:#fff">
+        <textarea id="prospect-chat-input" rows="2" maxlength="1600" placeholder="Type your message…" style="width:100%;padding:8px 10px;border:1.5px solid var(--g200);border-radius:8px;font-family:inherit;font-size:13px;resize:vertical;box-sizing:border-box"></textarea>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;gap:10px">
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('prospect-chat-input').value=${JSON.stringify(defaultBody)};document.getElementById('prospect-chat-input').focus()" type="button">Use template</button>
+          <button class="btn btn-primary btn-sm" onclick="App._sendProspectChat()" id="prospect-chat-send">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;vertical-align:-1px"><path d="M14 2L7 14l-2-6-6-2z"/></svg>
+            Send Text
+          </button>
+        </div>
+      </div>
+    </div>`;
+    // Auto-scroll to bottom of thread
+    setTimeout(() => {
+      const t = document.getElementById('prospect-chat-thread');
+      if (t) t.scrollTop = t.scrollHeight;
+      const i = document.getElementById('prospect-chat-input');
+      if (i) i.focus();
+    }, 30);
+  },
+
+  _closeProspectChat() {
+    const div = document.getElementById('modal-prospect-chat');
+    if (div) div.remove();
+    this.S._chatProspectId = null;
+  },
+
+  async _sendProspectChat() {
+    const id = this.S._chatProspectId;
+    const p  = (this.S.prospects || []).find(x => x.id === id);
+    if (!p) return;
+    const inp = document.getElementById('prospect-chat-input');
+    const btn = document.getElementById('prospect-chat-send');
+    const body = (inp?.value || '').trim();
+    if (!body) { inp?.focus(); return; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
     try {
       const r = await fetch('/api/sms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_authToken}` },
-        body: JSON.stringify({ to: p.phone, message: body.trim() }),
+        body: JSON.stringify({ to: p.phone, message: body }),
       });
       if (!r.ok) {
         const data = await r.json().catch(() => ({}));
         this.showToast(data.error || 'SMS failed','warn');
+        if (btn) { btn.disabled = false; btn.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;vertical-align:-1px"><path d="M14 2L7 14l-2-6-6-2z"/></svg>Send Text'; }
         return;
       }
-      this.showToast(`Message sent to ${p.name}`);
-      // Mark as contacted if we sent the first message.
-      if (p.status === 'new') p.status = 'contacted';
+      // Log the outgoing message + bump status
       if (!Array.isArray(p.notes)) p.notes = [];
-      p.notes.push({ at: new Date().toISOString(), kind:'sms_out', text: body.trim() });
+      p.notes.push({ at: new Date().toISOString(), kind:'sms_out', text: body });
+      if (p.status === 'new') p.status = 'contacted';
       this.persistData();
-      this.renderHRMain();
+      if (inp) inp.value = '';
+      this._renderProspectChat();      // re-render thread
+      this.renderHRMain();             // update prospects table status pill
     } catch (e) {
       this.showToast('Connection error','warn');
+      if (btn) { btn.disabled = false; btn.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;vertical-align:-1px"><path d="M14 2L7 14l-2-6-6-2z"/></svg>Send Text'; }
     }
   },
+
+  // Backwards-compat: old buttons that called messageProspect now route to
+  // the chat modal.
+  messageProspect(id) { return this.openProspectChat(id); },
 
   // Send the onboarding-docs email to the prospect's saved email address.
   // (Wires to the existing onboarding flow — admins can also drag the
