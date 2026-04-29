@@ -124,22 +124,86 @@ const PCC_FACILITY_ID   = process.env.PCC_FACILITY_ID   || null;
 const PCC_ORG_UUID      = process.env.PCC_ORG_UUID      || null;
 const PCC_BASE          = 'https://connect.pointclickcare.com';
 
-let _pccToken = null, _pccTokenExpiry = 0;
+let _pccToken = null, _pccTokenExpiry = 0, _pccTokenInflight = null;
 
-async function getPCCToken() {
-  if (_pccToken && Date.now() < _pccTokenExpiry) return _pccToken;
-  const creds = Buffer.from(`${PCC_CLIENT_ID}:${PCC_CLIENT_SECRET}`).toString('base64');
-  const resp = await fetch(`${PCC_BASE}/auth/token`, {
-    method: 'POST',
-    headers: { 'Authorization': `Basic ${creds}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'grant_type=client_credentials',
-  });
-  if (!resp.ok) throw new Error(`PCC auth failed: ${resp.status} ${await resp.text()}`);
-  const { access_token, expires_in } = await resp.json();
-  _pccToken = access_token;
-  _pccTokenExpiry = Date.now() + ((expires_in || 3600) - 60) * 1000;
-  return _pccToken;
+// Promise-serialized token fetch — prevents stampede when N concurrent
+// requests all see an expired token at once. PCC partner spec requires
+// minimal auth-endpoint traffic; this collapses the herd to a single fetch.
+async function getPCCToken({ forceRefresh = false } = {}) {
+  if (!forceRefresh && _pccToken && Date.now() < _pccTokenExpiry) return _pccToken;
+  if (_pccTokenInflight) return _pccTokenInflight;
+  _pccTokenInflight = (async () => {
+    try {
+      const creds = Buffer.from(`${PCC_CLIENT_ID}:${PCC_CLIENT_SECRET}`).toString('base64');
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 10000);
+      let resp;
+      try {
+        resp = await fetch(`${PCC_BASE}/auth/token`, {
+          method: 'POST',
+          headers: { 'Authorization': `Basic ${creds}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'grant_type=client_credentials',
+          signal: ctrl.signal,
+        });
+      } finally { clearTimeout(t); }
+      // SECURITY: never log resp.text() here — it can echo back the auth header
+      // and the credentials. Status code only.
+      if (!resp.ok) throw new Error(`PCC auth failed: ${resp.status}`);
+      const body = await resp.json().catch(() => null);
+      if (!body || !body.access_token) throw new Error('PCC auth: malformed response');
+      _pccToken = body.access_token;
+      _pccTokenExpiry = Date.now() + ((body.expires_in || 3600) - 60) * 1000;
+      return _pccToken;
+    } finally {
+      _pccTokenInflight = null;
+    }
+  })();
+  return _pccTokenInflight;
 }
+
+// Hardened PCC fetch: timeout + 401 single-retry with token refresh + 429
+// retry-after honoring + 5xx exponential backoff (max 3 attempts) + log
+// scrubbing. Returns { ok, status, body, retryAfter }.
+async function pccFetch(url, { timeoutMs = 15000, maxRetries = 3 } = {}) {
+  let attempt = 0;
+  let token = await getPCCToken();
+  while (attempt < maxRetries) {
+    attempt++;
+    const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' };
+    if (PCC_ORG_UUID) headers['x-pcc-appkey'] = PCC_ORG_UUID;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    let resp;
+    try { resp = await fetch(url, { headers, signal: ctrl.signal }); }
+    catch (e) { clearTimeout(t); if (attempt >= maxRetries) return { ok:false, status:0, body:null, error:'network' }; await _sleep(200 * attempt); continue; }
+    finally { clearTimeout(t); }
+
+    if (resp.status === 401 && attempt === 1) {
+      // Token expired or revoked — refresh once, retry once.
+      _pccToken = null;
+      try { token = await getPCCToken({ forceRefresh: true }); } catch (e) { return { ok:false, status:401, body:null, error:'auth' }; }
+      continue;
+    }
+    if (resp.status === 429) {
+      // Respect Retry-After header (may be seconds or HTTP-date).
+      const ra = resp.headers.get('Retry-After');
+      const waitMs = ra ? (isNaN(Number(ra)) ? Math.max(0, new Date(ra).getTime() - Date.now()) : Number(ra) * 1000) : 1000 * attempt;
+      if (attempt >= maxRetries) return { ok:false, status:429, body:null, retryAfter: ra };
+      await _sleep(Math.min(waitMs, 30000));
+      continue;
+    }
+    if (resp.status >= 500 && resp.status < 600) {
+      if (attempt >= maxRetries) return { ok:false, status:resp.status, body:null };
+      await _sleep(50 * Math.pow(2, attempt - 1));     // 50ms, 100ms, 200ms
+      continue;
+    }
+    let body = null;
+    try { body = await resp.json(); } catch { body = null; }
+    return { ok: resp.ok, status: resp.status, body };
+  }
+  return { ok:false, status:0, body:null };
+}
+function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ── SEED ACCOUNTS ─────────────────────────────────────────────────────────────
 const SEED_SA = {
@@ -1323,7 +1387,10 @@ app.post('/api/recruiting/onboard', requireAuth, requireAdmin, async (req, res) 
 
   const baseUrl = (process.env.APP_URL || 'https://www.managemystaffing.com').replace(/\/$/, '');
   const link = `${baseUrl}/?onboard=${encodeURIComponent(p.id)}`;
-  const escName = String(p.name || '').replace(/[\r\n<>]/g, '');
+  // Use the full escapeHtml() — covers <, >, &, ", '. The earlier regex
+  // missed quotes, leaving a path for HTML attribute injection if the name
+  // ever ended up inside an attribute. Defense in depth.
+  const escName = escapeHtml(String(p.name || ''));
   const safePlainName = String(p.name || '').replace(/[\r\n]/g, ' ');
 
   if (ACS_CONNECTION_STRING) {
@@ -1526,7 +1593,7 @@ async function _generateRecoveryCodes(n = 10) {
     // Format: xxxx-xxxx (8 hex chars + dash + 8 hex chars) — easy to read/type
     const raw = crypto.randomBytes(4).toString('hex') + '-' + crypto.randomBytes(4).toString('hex');
     codes.push(raw);
-    hashes.push(await bcrypt.hash(raw, 10));
+    hashes.push(await bcrypt.hash(raw, 12));
   }
   return { codes, hashes };
 }
@@ -1779,8 +1846,46 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   data.hrEmployees      = mergeScoped(data.hrEmployees,      payload.hrEmployees,      inScopeEmployee);
   data.hrTimeClock      = mergeScoped(data.hrTimeClock,      payload.hrTimeClock,      inScopeEmployee);
 
-  // Accounts: protect seed accounts; prevent caller from escalating own role.
+  // Accounts: protect seed accounts; prevent caller from escalating own role
+  // OR another in-scope admin's authority via mass-assignment.
   if (Array.isArray(payload.accounts)) {
+    // Non-SA callers can only modify a tightly-defined subset of account
+    // fields. role / buildingId / buildingIds / schedulerOnly / group are
+    // privileged — changing them requires explicit endpoints (/api/invite,
+    // toggleAdminScheduler, manage-admin building assignment). Without this
+    // whitelist, a building admin could promote a colleague to superadmin or
+    // grant themselves access to other facilities by editing their own
+    // account record in /api/data POST.
+    const NON_SA_ACCOUNT_WRITABLE = new Set([
+      'id', 'name', 'email', 'phone',
+      'notifEmail', 'notifSMS', 'notifPrefs', 'notifChannels',
+      'inactive',
+      // Secret fields are restored separately below regardless of whether
+      // they're in this list.
+      'ph', 'totpSecret', 'totpEnrolledAt', 'totpRecoveryCodesHashes',
+      'totpRecoveryCodesGeneratedAt', 'inviteToken', 'inviteExpiry',
+      'invitedBy', 'invitedAt', 'activatedAt',
+      'passwordResetTokenHash', 'passwordResetExpiry',
+      'deviceTrustEpoch', 'failedAttempts', 'lockedUntil',
+    ]);
+    if (!isSA) {
+      for (let i = 0; i < payload.accounts.length; i++) {
+        const incoming = payload.accounts[i];
+        const orig = (data.accounts || []).find(x => x.id === incoming.id);
+        if (!orig) continue;       // mergeScoped will reject new accounts via inScopeAccount
+        const sanitized = { ...orig };
+        for (const k of Object.keys(incoming)) {
+          if (NON_SA_ACCOUNT_WRITABLE.has(k)) sanitized[k] = incoming[k];
+        }
+        // Hard pin: privileged fields ALWAYS come from the existing record.
+        sanitized.role             = orig.role;
+        sanitized.buildingId       = orig.buildingId;
+        sanitized.buildingIds      = orig.buildingIds || [];
+        sanitized.schedulerOnly    = orig.schedulerOnly || false;
+        sanitized.group            = orig.group;
+        payload.accounts[i] = sanitized;
+      }
+    }
     const accountsScoped = mergeScoped(data.accounts, payload.accounts, inScopeAccount);
     for (const seed of [SEED_SA, SEED_DEMO, SEED_DEMO_NURSE]) {
       const a = accountsScoped.find(x => x.id === seed.id);
@@ -2035,9 +2140,10 @@ app.post('/api/auth/password-reset/request', authLimiter, async (req, res) => {
   const data = await loadData();
   const acct = (data.accounts || []).find(a => (a.email || '').toLowerCase() === emailNorm);
 
-  // Constant-ish time: still hash a dummy if no account so timing is similar
+  // Constant-ish time: still hash a dummy if no account so timing is similar.
+  // Cost matches the real reset-token hash below to keep timing constant.
   if (!acct) {
-    await bcrypt.hash('dummy', 10).catch(()=>{});
+    await bcrypt.hash('dummy', 12).catch(()=>{});
     auditLog('PWD_RESET_REQUESTED', null, { email: emailNorm, found: false });
     return res.json(safeRes);
   }
@@ -2048,7 +2154,7 @@ app.post('/api/auth/password-reset/request', authLimiter, async (req, res) => {
   }
 
   const rawToken = crypto.randomBytes(32).toString('hex');   // 64-char hex
-  const tokenHash = await bcrypt.hash(rawToken, 10);
+  const tokenHash = await bcrypt.hash(rawToken, 12);    // matches password hash cost
   acct.passwordResetTokenHash = tokenHash;
   acct.passwordResetExpiry = Date.now() + 60 * 60 * 1000;     // 1 hour
   await persistAccountNow(acct);
@@ -2196,36 +2302,43 @@ app.get('/api/pcc/status', requireAuth, (_req, res) => {
   });
 });
 
+// Validate ISO date and reject impossible ones (Feb 30, year 9999, future).
+function _isValidIsoDate(s) {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(s + 'T00:00:00Z');
+  if (isNaN(d.getTime())) return false;
+  if (d.toISOString().slice(0,10) !== s) return false;   // catches Feb 30 etc.
+  // Reasonable range: 2000-01-01 to today + 1 year
+  const minMs = Date.UTC(2000, 0, 1);
+  const maxMs = Date.now() + 366 * 86400000;
+  return d.getTime() >= minMs && d.getTime() <= maxMs;
+}
+
 // ── GET /api/pcc/census ───────────────────────────────────────────────────────
 app.get('/api/pcc/census', requireAuth, requireAdmin, async (req, res) => {
   if (!PCC_CLIENT_ID || !PCC_CLIENT_SECRET || !PCC_FACILITY_ID) {
     return res.status(503).json({ error: 'PCC not configured.' });
   }
-  const date = (req.query.date || new Date().toISOString().slice(0, 10)).replace(/[^0-9-]/g, '');
-  try {
-    const token   = await getPCCToken();
-    const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' };
-    if (PCC_ORG_UUID) headers['x-pcc-appkey'] = PCC_ORG_UUID;
-    const url  = `${PCC_BASE}/partner/v1/facilities/${PCC_FACILITY_ID}/census?censusDate=${date}`;
-    const resp = await fetch(url, { headers });
-    if (!resp.ok) return res.status(502).json({ error: `PCC census API ${resp.status}` });
-    const body = await resp.json();
-    const d    = body.data || body;
-    res.json({
-      ok:     true,
-      census: d.totalCensus ?? d.occupiedBeds ?? d.census ?? null,
-      date:   d.censusDate || date,
-      details: {
-        totalBeds:     d.totalBeds     || null,
-        medicareCount: d.medicareCount || null,
-        medicaidCount: d.medicaidCount || null,
-        otherCount:    d.otherCount    || null,
-      },
-    });
-  } catch (e) {
-    console.error('[mms] PCC census error:', e.message);
-    res.status(502).json({ error: `PCC request failed: ${e.message}` });
+  const dateRaw = (req.query.date || new Date().toISOString().slice(0, 10)).slice(0, 10);
+  if (!_isValidIsoDate(dateRaw)) return res.status(400).json({ error: 'Invalid date — expected YYYY-MM-DD' });
+  const url = `${PCC_BASE}/partner/v1/facilities/${encodeURIComponent(PCC_FACILITY_ID)}/census?censusDate=${dateRaw}`;
+  const r = await pccFetch(url);
+  if (!r.ok) {
+    logger.error('pcc_census_failed', { status: r.status });
+    return res.status(502).json({ error: `PCC census unavailable (status ${r.status})` });
   }
+  const d = (r.body && (r.body.data || r.body)) || {};
+  res.json({
+    ok: true,
+    census: d.totalCensus ?? d.occupiedBeds ?? d.census ?? null,
+    date:   d.censusDate || dateRaw,
+    details: {
+      totalBeds:     d.totalBeds     || null,
+      medicareCount: d.medicareCount || null,
+      medicaidCount: d.medicaidCount || null,
+      otherCount:    d.otherCount    || null,
+    },
+  });
 });
 
 // ── GET /api/pcc/census/range ─────────────────────────────────────────────────
@@ -2235,38 +2348,26 @@ app.get('/api/pcc/census/range', requireAuth, requireAdmin, async (req, res) => 
   if (!PCC_CLIENT_ID || !PCC_CLIENT_SECRET || !PCC_FACILITY_ID) {
     return res.status(503).json({ error: 'PCC not configured.' });
   }
-  const start = String(req.query.start || '').replace(/[^0-9-]/g, '');
-  const end   = String(req.query.end   || '').replace(/[^0-9-]/g, '');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+  const start = String(req.query.start || '').slice(0, 10);
+  const end   = String(req.query.end   || '').slice(0, 10);
+  if (!_isValidIsoDate(start) || !_isValidIsoDate(end)) {
     return res.status(400).json({ error: 'start and end must be YYYY-MM-DD' });
   }
-  // Cap the range to avoid abusive queries.
   const startMs = new Date(start + 'T00:00:00Z').getTime();
   const endMs   = new Date(end   + 'T00:00:00Z').getTime();
   if (endMs < startMs) return res.status(400).json({ error: 'end before start' });
   const days = Math.round((endMs - startMs) / 86400000) + 1;
-  if (days > 62) return res.status(400).json({ error: 'Range too large (max 62 days)' });
-  try {
-    const token   = await getPCCToken();
-    const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' };
-    if (PCC_ORG_UUID) headers['x-pcc-appkey'] = PCC_ORG_UUID;
-    const out = {};
-    for (let i = 0; i < days; i++) {
-      const d   = new Date(startMs + i * 86400000).toISOString().slice(0, 10);
-      const url = `${PCC_BASE}/partner/v1/facilities/${PCC_FACILITY_ID}/census?censusDate=${d}`;
-      try {
-        const r = await fetch(url, { headers });
-        if (!r.ok) { out[d] = null; continue; }
-        const body = await r.json();
-        const x    = body.data || body;
-        out[d] = x.totalCensus ?? x.occupiedBeds ?? x.census ?? null;
-      } catch { out[d] = null; }
-    }
-    res.json({ ok: true, start, end, census: out });
-  } catch (e) {
-    console.error('[mms] PCC census range error:', e.message);
-    res.status(502).json({ error: `PCC request failed: ${e.message}` });
+  if (days > 31) return res.status(400).json({ error: 'Range too large (max 31 days)' });
+  const out = {};
+  for (let i = 0; i < days; i++) {
+    const d = new Date(startMs + i * 86400000).toISOString().slice(0, 10);
+    const url = `${PCC_BASE}/partner/v1/facilities/${encodeURIComponent(PCC_FACILITY_ID)}/census?censusDate=${d}`;
+    const r = await pccFetch(url);
+    if (!r.ok || !r.body) { out[d] = null; continue; }
+    const x = r.body.data || r.body;
+    out[d] = x.totalCensus ?? x.occupiedBeds ?? x.census ?? null;
   }
+  res.json({ ok: true, start, end, census: out });
 });
 
 // ── GET /api/pcc/staffing ─────────────────────────────────────────────────────
@@ -2274,16 +2375,18 @@ app.get('/api/pcc/staffing', requireAuth, requireAdmin, async (req, res) => {
   if (!PCC_CLIENT_ID || !PCC_CLIENT_SECRET || !PCC_FACILITY_ID) {
     return res.status(503).json({ error: 'PCC not configured.' });
   }
-  const date = (req.query.date || new Date().toISOString().slice(0, 10)).replace(/[^0-9-]/g, '');
+  const dateRaw = (req.query.date || new Date().toISOString().slice(0, 10)).slice(0, 10);
+  if (!_isValidIsoDate(dateRaw)) return res.status(400).json({ error: 'Invalid date — expected YYYY-MM-DD' });
+  const url = `${PCC_BASE}/partner/v1/facilities/${encodeURIComponent(PCC_FACILITY_ID)}/staffShifts?date=${dateRaw}`;
+  const r = await pccFetch(url);
+  if (!r.ok) {
+    logger.error('pcc_staffing_failed', { status: r.status });
+    return res.status(502).json({ error: `PCC staffing unavailable (status ${r.status})` });
+  }
+  const body   = r.body || {};
+  const shifts = body.data || body.shifts || body || [];
+  const _date  = dateRaw;
   try {
-    const token   = await getPCCToken();
-    const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' };
-    if (PCC_ORG_UUID) headers['x-pcc-appkey'] = PCC_ORG_UUID;
-    const url    = `${PCC_BASE}/partner/v1/facilities/${PCC_FACILITY_ID}/staffShifts?date=${date}`;
-    const resp   = await fetch(url, { headers });
-    if (!resp.ok) return res.status(502).json({ error: `PCC staffing API ${resp.status}` });
-    const body   = await resp.json();
-    const shifts = body.data || body.shifts || body || [];
     const hours  = { rn: 0, lpn: 0, cna: 0, cma: 0, nm: 0 };
     for (const s of (Array.isArray(shifts) ? shifts : [])) {
       const hrs = parseFloat(s.workedHours ?? s.scheduledHours ?? s.hours ?? 0) || 0;
@@ -2294,10 +2397,10 @@ app.get('/api/pcc/staffing', requireAuth, requireAdmin, async (req, res) => {
       else if (/\bCMA\b|MED AIDE|MEDICATION AIDE|MEDICATION TECH/.test(hay))            hours.cma += hrs;
       else if (/DIRECTOR OF NURSING|\bDON\b|NURSE MANAGER|DIR OF NURS/.test(hay))       hours.nm  += hrs;
     }
-    res.json({ ok: true, date, hours, rn24: hours.rn >= 24, shifts: Array.isArray(shifts) ? shifts.length : 0 });
+    res.json({ ok: true, date: _date, hours, rn24: hours.rn >= 24, shifts: Array.isArray(shifts) ? shifts.length : 0 });
   } catch (e) {
-    console.error('[mms] PCC staffing error:', e.message);
-    res.status(502).json({ error: `PCC staffing failed: ${e.message}` });
+    logger.error('pcc_staffing_parse_failed', { msg: e.message });
+    res.status(502).json({ error: 'PCC response could not be parsed' });
   }
 });
 
@@ -2306,22 +2409,23 @@ app.get('/api/pcc/staffing/range', requireAuth, requireAdmin, async (req, res) =
   if (!PCC_CLIENT_ID || !PCC_CLIENT_SECRET || !PCC_FACILITY_ID) {
     return res.status(503).json({ error: 'PCC not configured' });
   }
-  const today   = new Date().toISOString().slice(0, 10);
-  const start   = (req.query.start || today.slice(0, 8) + '01').replace(/[^0-9-]/g, '');
-  const end     = (req.query.end   || today).replace(/[^0-9-]/g, '');
-  const startMs = new Date(start).getTime(), endMs = new Date(end).getTime();
-  if (isNaN(startMs) || isNaN(endMs) || endMs < startMs || endMs - startMs > 32 * 86400000) {
+  const today = new Date().toISOString().slice(0, 10);
+  const start = String(req.query.start || (today.slice(0, 8) + '01')).slice(0, 10);
+  const end   = String(req.query.end   || today).slice(0, 10);
+  if (!_isValidIsoDate(start) || !_isValidIsoDate(end)) return res.status(400).json({ error: 'Invalid date — expected YYYY-MM-DD' });
+  const startMs = new Date(start + 'T00:00:00Z').getTime(), endMs = new Date(end + 'T00:00:00Z').getTime();
+  if (endMs < startMs || endMs - startMs > 31 * 86400000) {
     return res.status(400).json({ error: 'Invalid date range (max 31 days)' });
   }
+  const url = `${PCC_BASE}/partner/v1/facilities/${encodeURIComponent(PCC_FACILITY_ID)}/staffShifts?startDate=${start}&endDate=${end}`;
+  const r = await pccFetch(url);
+  if (!r.ok) {
+    logger.error('pcc_staffing_range_failed', { status: r.status });
+    return res.status(502).json({ error: `PCC staffing range unavailable (status ${r.status})` });
+  }
+  const body   = r.body || {};
+  const shifts = body.data || body.shifts || body || [];
   try {
-    const token   = await getPCCToken();
-    const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' };
-    if (PCC_ORG_UUID) headers['x-pcc-appkey'] = PCC_ORG_UUID;
-    const url    = `${PCC_BASE}/partner/v1/facilities/${PCC_FACILITY_ID}/staffShifts?startDate=${start}&endDate=${end}`;
-    const resp   = await fetch(url, { headers });
-    if (!resp.ok) return res.status(502).json({ error: `PCC range API ${resp.status}` });
-    const body   = await resp.json();
-    const shifts = body.data || body.shifts || body || [];
     const byDate = {};
     for (const s of (Array.isArray(shifts) ? shifts : [])) {
       const d   = (s.shiftDate || s.date || start).slice(0, 10);
@@ -2352,8 +2456,8 @@ app.get('/api/pcc/staffing/range', requireAuth, requireAdmin, async (req, res) =
       byDate,
     });
   } catch (e) {
-    console.error('[mms] PCC range error:', e.message);
-    res.status(502).json({ error: `PCC range failed: ${e.message}` });
+    logger.error('pcc_staffing_range_parse_failed', { msg: e.message });
+    res.status(502).json({ error: 'PCC response could not be parsed' });
   }
 });
 
@@ -2582,6 +2686,12 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
   // subject, body, channels). Inbound replies (Twilio webhook → /api/sms/inbound,
   // not yet wired) will append into the same log keyed by jobId / phone.
   if (!Array.isArray(data.alertLog)) data.alertLog = [];
+  // Recipient email/phone are masked in the persisted alertLog entry. The
+  // actual delivery has already been queued — we don't need full PII in
+  // the searchable audit trail. employeeId remains so admins can still
+  // join back to the employee record when needed.
+  const maskEmail = e => String(e || '').replace(/^(.).*?(?=@)/, (_,a) => a + '***');
+  const maskPhone = p => { const n = String(p || '').replace(/\D/g,''); return n ? '***-***-' + n.slice(-4) : ''; };
   data.alertLog.push({
     id: jobId,
     sentAt: new Date().toISOString(),
@@ -2593,8 +2703,8 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
     message,
     channels: { email: !!viaEmail, sms: !!viaSMS },
     recipients: {
-      email: emailList.map(e => ({ id: e.id, name: e.name, email: e.email })),
-      sms:   smsList.map(e   => ({ id: e.id, name: e.name, phone: e.phone })),
+      email: emailList.map(e => ({ id: e.id, name: e.name, email: maskEmail(e.email) })),
+      sms:   smsList.map(e   => ({ id: e.id, name: e.name, phone: maskPhone(e.phone) })),
     },
     replies: [], // inbound SMS responses appended here when webhook lands
   });
