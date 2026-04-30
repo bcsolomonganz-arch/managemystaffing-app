@@ -2260,6 +2260,554 @@ app.post('/api/timeclock/set-pin', requireAuth, requireAdmin, async (req, res) =
   res.json({ ok: true });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// HR REPORTS — SCHEDULED EMAIL DIGESTS
+// ─────────────────────────────────────────────────────────────────────────────
+// Admins create report subscriptions naming the recipients, the facility
+// (or facilities, for regional admins), and the metrics they want. The
+// daily scheduler renders an HTML email body with a styled table — NO
+// attachments, the table renders inline in any email client.
+//
+// Friday emails include the week's totals; the last-day-of-month email
+// includes the month's totals. Otherwise it's just the day's metrics.
+//
+// Subscription shape (data.reportSubscriptions):
+//   {
+//     id, name, recipients: [emails...],
+//     buildingIds: [...],         // 1 or many; many = regional digest
+//     metrics: ['ppd','ot','cost','missed'],   // any subset
+//     enabled: true, createdBy, createdAt, lastSentAt
+//   }
+
+// Helper: compute one day's metrics for one building.
+function _reportDayMetrics(data, buildingId, dateISO) {
+  const shifts = (data.shifts || []).filter(s =>
+    s.date === dateISO && s.buildingId === buildingId && s.status === 'scheduled');
+  const totalHrs = shifts.reduce((sum, sh) => {
+    const [ih, im] = String(sh.start || '0:00').split(':').map(Number);
+    const [oh, om] = String(sh.end   || '0:00').split(':').map(Number);
+    let m = (oh*60 + (om||0)) - (ih*60 + (im||0));
+    if (m < 0) m += 24*60;
+    return sum + (m / 60);
+  }, 0);
+  const census = (data.ppdDailyCensus || {})[dateISO] || 0;
+  const ppd = census > 0 ? (totalHrs / census).toFixed(2) : '—';
+  // Daily cost = sum of (hours × hourlyRate) for all shifts that day, plus
+  // any agency hours for that day.
+  const empById = new Map((data.employees || []).map(e => [e.id, e]));
+  let cost = 0;
+  for (const s of shifts) {
+    const emp = empById.get(s.employeeId);
+    const rate = emp ? (parseFloat(emp.hourlyRate) || 0) : 0;
+    const [ih, im] = String(s.start || '0:00').split(':').map(Number);
+    const [oh, om] = String(s.end   || '0:00').split(':').map(Number);
+    let m = (oh*60 + (om||0)) - (ih*60 + (im||0));
+    if (m < 0) m += 24*60;
+    cost += (m / 60) * rate;
+  }
+  // Add agency hours for the day
+  const agency = (data.hrTimeClock || []).filter(r =>
+    r.kind === 'agency' && r.buildingId === buildingId && r.date === dateISO);
+  for (const a of agency) {
+    cost += (parseFloat(a.hours) || 0) * (parseFloat(a.hourlyRate) || 0);
+  }
+  // Daily OT = today's punches that pushed someone over 40 this week. We
+  // approximate per-day by looking at this-week-cumulative hours up to and
+  // including dateISO; the "today contribution" is hours past 40.
+  const wkStart = (() => {
+    const d = new Date(dateISO + 'T00:00:00');
+    const day = d.getDay();
+    const offset = day === 0 ? -6 : 1 - day;
+    const s = new Date(d); s.setDate(d.getDate() + offset);
+    return s.toISOString().slice(0,10);
+  })();
+  const recs = (data.hrTimeClock || []).filter(r =>
+    r.buildingId === buildingId && r.date >= wkStart && r.date <= dateISO);
+  const wkByEmp = new Map();
+  for (const r of recs) {
+    if (!r.empId || r.kind === 'agency') continue;
+    wkByEmp.set(r.empId, (wkByEmp.get(r.empId) || 0) + (parseFloat(r.hours) || 0));
+  }
+  let otHrs = 0;
+  for (const [empId, hrs] of wkByEmp) {
+    if (hrs > 40) otHrs += Math.min(hrs - 40, parseFloat(
+      (recs.filter(r => r.empId === empId && r.date === dateISO).reduce((s,r)=>s+(parseFloat(r.hours)||0),0))
+    ));
+  }
+  const missed = (data.hrTimeClock || []).filter(r =>
+    r.buildingId === buildingId && r.date === dateISO && (r.status === 'missed' || r.status === 'no-out')).length;
+  return {
+    date: dateISO,
+    census,
+    totalHrs: totalHrs.toFixed(1),
+    ppd,
+    cost,
+    otHrs: otHrs.toFixed(1),
+    missed,
+  };
+}
+
+// Helper: aggregate one period (weekly or monthly) for one building.
+function _reportPeriodMetrics(data, buildingId, fromISO, toISO) {
+  const days = [];
+  const start = new Date(fromISO + 'T00:00:00Z').getTime();
+  const end   = new Date(toISO   + 'T00:00:00Z').getTime();
+  for (let t = start; t <= end; t += 86400000) {
+    days.push(new Date(t).toISOString().slice(0,10));
+  }
+  let totalHrs = 0, totalCost = 0, totalOt = 0, totalMissed = 0;
+  let ppdSum = 0, ppdDays = 0;
+  for (const d of days) {
+    const m = _reportDayMetrics(data, buildingId, d);
+    totalHrs   += parseFloat(m.totalHrs) || 0;
+    totalCost  += m.cost;
+    totalOt    += parseFloat(m.otHrs) || 0;
+    totalMissed += m.missed;
+    if (m.ppd !== '—') { ppdSum += parseFloat(m.ppd); ppdDays++; }
+  }
+  return {
+    fromISO, toISO,
+    totalHrs:    totalHrs.toFixed(1),
+    avgPPD:      ppdDays > 0 ? (ppdSum / ppdDays).toFixed(2) : '—',
+    totalCost,
+    totalOt:     totalOt.toFixed(1),
+    totalMissed,
+  };
+}
+
+// Render the inline HTML email body for a subscription on a given send date.
+function _reportEmailHtml(data, sub, sendDate) {
+  const moneyFmt = n => '$' + Math.round(n).toLocaleString('en-US');
+  const today = sendDate || new Date().toISOString().slice(0,10);
+  const yesterday = new Date(new Date(today).getTime() - 86400000).toISOString().slice(0,10);
+  const day = new Date(today).getDay();
+  const includeWeekTotals  = day === 5;        // Friday → roll up the past week
+  const dayOfMonth = new Date(today).getDate();
+  const lastDayOfMonth = new Date(new Date(today).getFullYear(), new Date(today).getMonth() + 1, 0).getDate();
+  const includeMonthTotals = dayOfMonth === lastDayOfMonth;
+
+  const wkStart = (() => {
+    const d = new Date(yesterday + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() - 6);
+    return d.toISOString().slice(0,10);
+  })();
+  const moStart = yesterday.slice(0,7) + '-01';
+
+  const buildings = (data.buildings || []).filter(b => sub.buildingIds.includes(b.id));
+  if (!buildings.length) return null;
+  const wantPpd     = !sub.metrics || sub.metrics.includes('ppd');
+  const wantCost    = !sub.metrics || sub.metrics.includes('cost');
+  const wantOt      = !sub.metrics || sub.metrics.includes('ot');
+  const wantMissed  = !sub.metrics || sub.metrics.includes('missed');
+
+  // Style — inline only, email-client safe (no external CSS)
+  const TH = `style="background:#1A3C34;color:#fff;text-align:left;padding:10px 14px;font-size:13px;font-weight:700;font-family:Arial,Helvetica,sans-serif;border-bottom:2px solid #2D6A4F"`;
+  const TD = `style="padding:10px 14px;font-size:13px;color:#1F2937;font-family:Arial,Helvetica,sans-serif;border-bottom:1px solid #E5E7EB"`;
+  const TDR = TD.replace('"','" style="text-align:right;') + ';font-variant-numeric:tabular-nums';
+
+  const renderTable = (title, rows, totalRow) => `
+    <h3 style="font-family:Arial,Helvetica,sans-serif;color:#1A3C34;margin:24px 0 8px">${title}</h3>
+    <table cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;width:100%;border:1px solid #E5E7EB;border-radius:8px;overflow:hidden">
+      ${rows}
+      ${totalRow || ''}
+    </table>`;
+
+  // Daily section: rows = facilities, columns = metrics.
+  const headerCols = [
+    'Facility',
+    wantPpd    ? 'Daily PPD' : null,
+    'Census',
+    wantOt     ? 'OT hrs' : null,
+    wantCost   ? 'Cost' : null,
+    wantMissed ? 'Missed punches' : null,
+  ].filter(Boolean);
+  const dailyHeader = `<tr>${headerCols.map(c => `<th ${TH}>${c}</th>`).join('')}</tr>`;
+  const dailyRows = buildings.map(b => {
+    const m = _reportDayMetrics(data, b.id, yesterday);
+    return `<tr>
+      <td ${TD}><strong>${b.name}</strong></td>
+      ${wantPpd    ? `<td ${TDR}">${m.ppd}</td>` : ''}
+      <td ${TDR}">${m.census || '—'}</td>
+      ${wantOt     ? `<td ${TDR}">${m.otHrs}</td>` : ''}
+      ${wantCost   ? `<td ${TDR}">${moneyFmt(m.cost)}</td>` : ''}
+      ${wantMissed ? `<td ${TDR}" style="text-align:right;${m.missed > 0 ? 'color:#DC2626;font-weight:700' : ''}">${m.missed}</td>` : ''}
+    </tr>`;
+  }).join('');
+  let dailyTotalRow = '';
+  if (buildings.length > 1) {
+    const tot = buildings.reduce((acc, b) => {
+      const m = _reportDayMetrics(data, b.id, yesterday);
+      acc.cost += m.cost; acc.ot += parseFloat(m.otHrs); acc.missed += m.missed;
+      return acc;
+    }, { cost:0, ot:0, missed:0 });
+    dailyTotalRow = `<tr style="background:#F0F8F2">
+      <td ${TD}><strong>Total (${buildings.length} facilities)</strong></td>
+      ${wantPpd    ? `<td ${TDR}">—</td>` : ''}
+      <td ${TDR}">—</td>
+      ${wantOt     ? `<td ${TDR}"><strong>${tot.ot.toFixed(1)}</strong></td>` : ''}
+      ${wantCost   ? `<td ${TDR}"><strong>${moneyFmt(tot.cost)}</strong></td>` : ''}
+      ${wantMissed ? `<td ${TDR}"><strong>${tot.missed}</strong></td>` : ''}
+    </tr>`;
+  }
+  const dailyTable = renderTable(`Daily Recap — ${yesterday}`, dailyHeader + dailyRows, dailyTotalRow);
+
+  // Weekly + monthly totals (Friday / month-end)
+  let weeklyTable = '';
+  if (includeWeekTotals) {
+    const periodHeader = `<tr>${['Facility','Avg PPD','Total hours','OT hours','Cost','Missed punches'].map(c => `<th ${TH}>${c}</th>`).join('')}</tr>`;
+    const weekRows = buildings.map(b => {
+      const m = _reportPeriodMetrics(data, b.id, wkStart, yesterday);
+      return `<tr>
+        <td ${TD}><strong>${b.name}</strong></td>
+        <td ${TDR}">${m.avgPPD}</td>
+        <td ${TDR}">${m.totalHrs}</td>
+        <td ${TDR}">${m.totalOt}</td>
+        <td ${TDR}">${moneyFmt(m.totalCost)}</td>
+        <td ${TDR}">${m.totalMissed}</td>
+      </tr>`;
+    }).join('');
+    weeklyTable = renderTable(`Weekly Totals — ${wkStart} to ${yesterday}`, periodHeader + weekRows);
+  }
+  let monthlyTable = '';
+  if (includeMonthTotals) {
+    const periodHeader = `<tr>${['Facility','Avg PPD','Total hours','OT hours','Cost','Missed punches'].map(c => `<th ${TH}>${c}</th>`).join('')}</tr>`;
+    const moRows = buildings.map(b => {
+      const m = _reportPeriodMetrics(data, b.id, moStart, yesterday);
+      return `<tr>
+        <td ${TD}><strong>${b.name}</strong></td>
+        <td ${TDR}">${m.avgPPD}</td>
+        <td ${TDR}">${m.totalHrs}</td>
+        <td ${TDR}">${m.totalOt}</td>
+        <td ${TDR}">${moneyFmt(m.totalCost)}</td>
+        <td ${TDR}">${m.totalMissed}</td>
+      </tr>`;
+    }).join('');
+    monthlyTable = renderTable(`Monthly Totals — ${moStart} to ${yesterday}`, periodHeader + moRows);
+  }
+
+  return `<!doctype html><html><body style="margin:0;padding:24px;background:#F9FAFB;font-family:Arial,Helvetica,sans-serif;color:#1F2937">
+    <div style="max-width:760px;margin:0 auto;background:#fff;border-radius:12px;padding:32px;border:1px solid #E5E7EB">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+        <div style="width:32px;height:32px;background:#6B9E7A;border-radius:7px;color:#fff;font-weight:800;display:inline-flex;align-items:center;justify-content:center;font-size:15px">M</div>
+        <span style="font-size:15px;font-weight:700;color:#1A3C34">ManageMyStaffing</span>
+      </div>
+      <h2 style="margin:0 0 4px;color:#1F2937">${sub.name || 'Daily Operations Report'}</h2>
+      <p style="color:#6B7280;margin:0 0 8px;font-size:13px">For ${yesterday} · sent ${today}</p>
+      ${dailyTable}
+      ${weeklyTable}
+      ${monthlyTable}
+      <p style="color:#6B7280;font-size:11px;margin-top:24px;border-top:1px solid #E5E7EB;padding-top:14px">
+        Auto-generated daily by ManageMyStaffing. Manage subscribers in HR → Reports.
+      </p>
+    </div>
+  </body></html>`;
+}
+
+// POST /api/reports/subscriptions — upsert a subscription.
+app.post('/api/reports/subscriptions', requireAuth, requireAdmin, async (req, res) => {
+  const { id, name, recipients, buildingIds, metrics, enabled } = req.body || {};
+  if (!Array.isArray(recipients) || !recipients.length) return res.status(400).json({ error: 'recipients required' });
+  if (!Array.isArray(buildingIds) || !buildingIds.length) return res.status(400).json({ error: 'buildingIds required' });
+  // Validate emails
+  for (const e of recipients) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e))) return res.status(400).json({ error: `Invalid email: ${e}` });
+  }
+  // Authz scoping
+  const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds||[])].filter(Boolean));
+  if (req.user.role !== 'superadmin') {
+    for (const bId of buildingIds) {
+      if (!callerBIds.has(bId)) return res.status(403).json({ error: `Out of scope: ${bId}` });
+    }
+  }
+  const data = await loadData();
+  if (!Array.isArray(data.reportSubscriptions)) data.reportSubscriptions = [];
+  const sub = id ? data.reportSubscriptions.find(s => s.id === id) : null;
+  if (id && !sub) return res.status(404).json({ error: 'Subscription not found' });
+  const upsert = sub || {
+    id: 'rs_' + Date.now() + Math.random().toString(36).slice(2,5),
+    createdBy: req.user.email,
+    createdAt: new Date().toISOString(),
+  };
+  upsert.name = String(name || 'Daily report').slice(0,100);
+  upsert.recipients = recipients.map(e => String(e).toLowerCase());
+  upsert.buildingIds = buildingIds.slice(0, 50);
+  upsert.metrics = Array.isArray(metrics) ? metrics : ['ppd','ot','cost','missed'];
+  upsert.enabled = enabled !== false;
+  if (!sub) data.reportSubscriptions.push(upsert);
+  markDirty();
+  auditLog('REPORT_SUBSCRIPTION_SAVED', req.user, { id: upsert.id, recipients: upsert.recipients.length, buildings: upsert.buildingIds.length });
+  res.json({ ok: true, subscription: upsert });
+});
+
+// DELETE /api/reports/subscriptions/:id
+app.delete('/api/reports/subscriptions/:id', requireAuth, requireAdmin, async (req, res) => {
+  const data = await loadData();
+  const before = (data.reportSubscriptions || []).length;
+  data.reportSubscriptions = (data.reportSubscriptions || []).filter(s => s.id !== req.params.id);
+  if (data.reportSubscriptions.length === before) return res.status(404).json({ error: 'Subscription not found' });
+  markDirty();
+  auditLog('REPORT_SUBSCRIPTION_DELETED', req.user, { id: req.params.id });
+  res.json({ ok: true });
+});
+
+// POST /api/reports/test/:id — send the report immediately to verify config.
+app.post('/api/reports/test/:id', requireAuth, requireAdmin, async (req, res) => {
+  if (!ACS_CONNECTION_STRING) return res.status(503).json({ error: 'ACS not configured' });
+  const data = await loadData();
+  const sub = (data.reportSubscriptions || []).find(s => s.id === req.params.id);
+  if (!sub) return res.status(404).json({ error: 'Subscription not found' });
+  const html = _reportEmailHtml(data, sub, new Date().toISOString().slice(0,10));
+  if (!html) return res.status(400).json({ error: 'Report has no buildings to render' });
+  try {
+    const { EmailClient } = require('@azure/communication-email');
+    const ec = new EmailClient(ACS_CONNECTION_STRING);
+    const poller = await ec.beginSend({
+      senderAddress: ACS_FROM_EMAIL,
+      recipients: { to: sub.recipients.map(e => ({ address: e })) },
+      content: {
+        subject: `[Test] ${sub.name} — ManageMyStaffing daily report`,
+        plainText: 'Your email client does not support HTML. Open in a browser to view the table.',
+        html,
+      },
+    });
+    await poller.pollUntilDone();
+    auditLog('REPORT_SUBSCRIPTION_TEST_SENT', req.user, { id: sub.id, recipients: sub.recipients.length });
+    res.json({ ok: true });
+  } catch (e) {
+    logger.error('report_test_send_failed', { msg: e.message });
+    res.status(502).json({ error: 'Email send failed' });
+  }
+});
+
+// Background timer: every hour, on the hour, send any subscriptions due.
+// Reports go out at 06:00 Central Time = 12:00 UTC each day. We snapshot
+// "lastSentDate" on the subscription so a restart mid-day doesn't double-send.
+async function _maybeSendDueReports() {
+  if (!ACS_CONNECTION_STRING) return;
+  try {
+    const now = new Date();
+    if (now.getUTCHours() !== 12) return;       // only at noon UTC (≈ 6am CT)
+    const today = now.toISOString().slice(0,10);
+    const data = await loadData();
+    const subs = (data.reportSubscriptions || []).filter(s => s.enabled !== false);
+    for (const sub of subs) {
+      if (sub.lastSentDate === today) continue;
+      const html = _reportEmailHtml(data, sub, today);
+      if (!html) continue;
+      try {
+        const { EmailClient } = require('@azure/communication-email');
+        const ec = new EmailClient(ACS_CONNECTION_STRING);
+        const poller = await ec.beginSend({
+          senderAddress: ACS_FROM_EMAIL,
+          recipients: { to: sub.recipients.map(e => ({ address: e })) },
+          content: {
+            subject: `${sub.name} — ${today}`,
+            plainText: 'Your email client does not support HTML. View in browser.',
+            html,
+          },
+        });
+        await poller.pollUntilDone();
+        sub.lastSentDate = today;
+        markDirty();
+        auditLog('REPORT_SUBSCRIPTION_SENT', null, { id: sub.id, date: today, recipients: sub.recipients.length });
+      } catch (e) {
+        logger.error('report_send_failed', { id: sub.id, msg: e.message });
+      }
+    }
+  } catch (e) { logger.error('reports_scheduler_error', { msg: e.message }); }
+}
+// Check once a minute. Cheap; fires exactly once per day per subscription.
+setInterval(_maybeSendDueReports, 60 * 1000);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ONBOARDING → EMPLOYEE ROSTER (push completed onboardee into the staff list)
+// ─────────────────────────────────────────────────────────────────────────────
+// When a prospect/candidate finishes onboarding paperwork, admin clicks
+// "Push to Roster" — we promote the prospect record into the employees
+// collection so the new hire shows up on the schedule, gets a PIN slot,
+// etc. The original prospect is marked 'hired' for traceability.
+app.post('/api/recruiting/push-to-roster', requireAuth, requireAdmin, async (req, res) => {
+  const { prospectId, position, hireDate, hourlyRate, dob, phone, employmentType } = req.body || {};
+  if (!prospectId) return res.status(400).json({ error: 'prospectId required' });
+  const data = await loadData();
+  const p = (data.prospects || []).find(x => x.id === prospectId);
+  if (!p) return res.status(404).json({ error: 'Prospect not found' });
+  const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds||[])].filter(Boolean));
+  if (req.user.role !== 'superadmin' && p.buildingId && !callerBIds.has(p.buildingId)) {
+    return res.status(403).json({ error: 'Out of scope' });
+  }
+  // Already promoted? guard to avoid double-create.
+  if (p.employeeId) {
+    const existing = (data.employees || []).find(e => e.id === p.employeeId);
+    if (existing) return res.status(409).json({ error: 'Already on roster', employeeId: existing.id });
+  }
+  // Map prospect → employee
+  const validPositions = ['Nurse Management','Charge Nurse','CNA','CMA','Housekeeping','Laundry','Cook','Dietary Aid','Maintenance','Marketing'];
+  const pos = position || p.appliedPosition || p.role;
+  if (!validPositions.includes(pos)) return res.status(400).json({ error: `position must be one of ${validPositions.join(', ')}` });
+  const initials = String(p.name || '').split(' ').map(w => w[0] || '').join('').slice(0,2).toUpperCase();
+  const newEmp = {
+    id: 'e' + Date.now() + Math.random().toString(36).slice(2,5),
+    name: p.name,
+    initials,
+    group: pos,
+    email: p.email,
+    phone: phone || p.phone || '',
+    buildingId: p.buildingId,
+    employmentType: employmentType || 'full-time',
+    hireDate: hireDate || new Date().toISOString().slice(0,10),
+    hourlyRate: hourlyRate ? parseFloat(hourlyRate) : null,
+    dob: dob || null,
+    inactive: false,
+    notifEmail: true,
+    notifSMS: !!p.phone,
+    notifPrefs: ['immediate','day'],
+    notifChannels: { immediate:{email:true,sms:!!p.phone}, day:{email:true,sms:false}, week:{email:true,sms:false}, daily:{email:false,sms:false} },
+    onboardedAt: new Date().toISOString(),
+    onboardingProspectId: prospectId,
+    terminationLog: [],
+  };
+  if (!Array.isArray(data.employees)) data.employees = [];
+  data.employees.push(newEmp);
+  // Update prospect → mark hired and link
+  p.status = 'hired';
+  p.employeeId = newEmp.id;
+  p.hiredAt = new Date().toISOString();
+  if (!Array.isArray(p.notes)) p.notes = [];
+  p.notes.push({ at: new Date().toISOString(), kind:'system', text:`Pushed to employee roster as ${pos}` });
+  markDirty();
+  auditLog('PROSPECT_PUSHED_TO_ROSTER', req.user, { prospectId, employeeId: newEmp.id, position: pos });
+  // Push disposition to Indeed if this prospect came from there
+  if (p.indeedApplyId && INDEED_API_CLIENT_ID) {
+    pushIndeedDisposition(p.indeedApplyId, 'hired')
+      .catch(e => logger.error('indeed_disposition_hire_failed', { msg: e.message }));
+  }
+  res.json({ ok: true, employee: newEmp });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SMARTLINX SLATE INTEGRATION
+// ─────────────────────────────────────────────────────────────────────────────
+// SmartLinx Slate clocks export punches via SOAP/REST or nightly SFTP. The
+// most reliable path for non-partners is to run a small bridge script on the
+// facility's network that polls the Slate clock's local export and POSTs
+// each punch to this endpoint.
+//
+// Supports two payload shapes:
+//   A. Single punch:  { badgeId, action: 'in'|'out', timestamp, deviceId? }
+//   B. Batch:         { punches: [ {badgeId, action, timestamp, deviceId?}, ... ] }
+//
+// Auth: shared-secret header (SMARTLINX_WEBHOOK_SECRET env var) on
+// X-SmartLinx-Secret. Bridge scripts attach the secret. Mismatch → 401.
+//
+// Employee identification: SmartLinx sends a badge ID (printed on the
+// physical badge). We map to an employee via employee.badgeId. Admin sets
+// this once per employee in the roster.
+app.post('/api/timeclock/smartlinx', express.json({ limit:'1mb' }), async (req, res) => {
+  const expected = process.env.SMARTLINX_WEBHOOK_SECRET;
+  if (!expected) return res.status(503).json({ error: 'SmartLinx integration not configured' });
+  if (req.headers['x-smartlinx-secret'] !== expected) {
+    auditLog('SMARTLINX_REJECTED', null, { reason: 'bad_secret' });
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  const body = req.body || {};
+  const punches = Array.isArray(body.punches) ? body.punches : [body];
+  const data = await loadData();
+  const empByBadge = new Map();
+  for (const e of (data.employees || [])) {
+    if (e.badgeId) empByBadge.set(String(e.badgeId), e);
+  }
+  let accepted = 0, skipped = 0, errors = [];
+  for (const p of punches) {
+    const badgeId = String(p.badgeId || p.badge || p.empCode || '').trim();
+    const action  = String(p.action || p.type || '').toLowerCase().replace(/^punch_?/,'');
+    const ts      = p.timestamp || p.time || p.punchTime;
+    if (!badgeId) { skipped++; continue; }
+    const emp = empByBadge.get(badgeId);
+    if (!emp) { skipped++; errors.push(`unknown badge ${badgeId}`); continue; }
+    if (!['in','out'].includes(action)) { skipped++; continue; }
+    const r = _applyPunch(data, emp, action, ts, {
+      source: 'smartlinx',
+      deviceId: p.deviceId || null,
+    });
+    if (r.error) { errors.push(`${emp.name}: ${r.error}`); skipped++; continue; }
+    accepted++;
+  }
+  if (accepted > 0) {
+    markDirty();
+    auditLog('SMARTLINX_PUNCHES', null, { accepted, skipped });
+  }
+  res.json({ ok: true, accepted, skipped, errors: errors.slice(0,20) });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AGENCY TIME ENTRY (PBJ-eligible non-staff hours)
+// ─────────────────────────────────────────────────────────────────────────────
+// When an open shift is filled by an agency nurse (not a regular employee),
+// admin records the hours here. The data feeds into PBJ submissions and
+// daily PPD calcs as if it were a regular punch — but the source is tagged
+// 'agency' and the worker isn't on the staff roster.
+//
+// Body: { shiftId, agencyName, workerName, in, out, hourlyRate, license? }
+// Returns: created hrTimeClock record (with kind:'agency') + updated shift.
+app.post('/api/timeclock/agency', requireAuth, requireAdmin, async (req, res) => {
+  const { shiftId, agencyName, workerName, in: inTime, out: outTime, hourlyRate, license } = req.body || {};
+  if (!shiftId || !workerName || !inTime || !outTime) {
+    return res.status(400).json({ error: 'shiftId, workerName, in, out required' });
+  }
+  if (!/^\d{1,2}:\d{2}$/.test(inTime) || !/^\d{1,2}:\d{2}$/.test(outTime)) {
+    return res.status(400).json({ error: 'in/out must be HH:MM' });
+  }
+  const data = await loadData();
+  const shift = (data.shifts || []).find(s => s.id === shiftId);
+  if (!shift) return res.status(404).json({ error: 'Shift not found' });
+  // Authz scope check
+  const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds||[])].filter(Boolean));
+  if (req.user.role !== 'superadmin' && !callerBIds.has(shift.buildingId)) {
+    return res.status(403).json({ error: 'Out of scope' });
+  }
+  // Compute hours
+  const [ih, im] = inTime.split(':').map(Number);
+  const [oh, om] = outTime.split(':').map(Number);
+  let mins = (oh*60 + (om||0)) - (ih*60 + (im||0));
+  if (mins < 0) mins += 24*60;
+  const hours = (mins / 60).toFixed(2);
+
+  const agencyId = 'agency_' + crypto.randomBytes(6).toString('hex');
+  const record = {
+    empId: agencyId,
+    name: String(workerName).slice(0,100),
+    role: shift.group,                           // matches the shift's role for PPD bucketing
+    buildingId: shift.buildingId,
+    date: shift.date,
+    in: inTime,
+    out: outTime,
+    hours,
+    status: 'normal',
+    kind: 'agency',                              // distinguishes from staff punches
+    agencyName: String(agencyName || '').slice(0,100),
+    license:    String(license    || '').slice(0,50),
+    hourlyRate: parseFloat(hourlyRate) || 0,
+    enteredBy:  req.user.email,
+    enteredAt:  new Date().toISOString(),
+    events: [{
+      action: 'agency-entry', at: new Date().toISOString(),
+      source: 'admin-agency', editor: req.user.email,
+    }],
+  };
+  if (!Array.isArray(data.hrTimeClock)) data.hrTimeClock = [];
+  data.hrTimeClock.push(record);
+  // Mark the shift as filled by agency.
+  shift.status = 'agency-filled';
+  shift.agencyName  = record.agencyName;
+  shift.agencyWorker = record.name;
+  shift.filledByAgencyAt = new Date().toISOString();
+  markDirty();
+  auditLog('AGENCY_TIME_RECORDED', req.user, {
+    shiftId, agencyName: record.agencyName, hours, buildingId: shift.buildingId,
+  });
+  res.json({ ok: true, record, shift });
+});
+
 // PATCH /api/timeclock/punch — admin correction.
 // Body: { empId, date, in?, out?, note? }
 app.patch('/api/timeclock/punch', requireAuth, requireAdmin, async (req, res) => {

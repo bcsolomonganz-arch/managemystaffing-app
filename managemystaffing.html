@@ -274,6 +274,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .btn-assign-sm{padding:5px 12px;font-size:12px;font-weight:600;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer}
 .btn-assign-sm:hover{background:var(--blue-d)}
 .btn-claim-sm{padding:5px 12px;font-size:12px;font-weight:600;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer}
+.btn-agency-sm{margin-left:6px;padding:5px 12px;font-size:11px;font-weight:700;background:#FBBF24;color:#78350F;border:none;border-radius:6px;cursor:pointer;letter-spacing:.04em;text-transform:uppercase}
 .btn-claim-sm:hover{background:var(--blue-d)}
 .assign-select{font-family:inherit;font-size:12px;padding:4px 8px;border:1.5px solid var(--blue-m);border-radius:6px;background:#fff;color:var(--g900);max-width:150px}
 
@@ -3671,6 +3672,7 @@ const App = {
       ['recruiting','Recruiting','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 6.5a6 6 0 1 1-12 0 6 6 0 0 1 12 0z"/><path d="M6.5 4v2.5l1.5 1.5"/><path d="M10 11l4 4"/></svg>'],
       ['pbj','PBJ Reports','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 14V2h12v12H2z"/><path d="M5 6h6M5 9h4"/></svg>'],
       ['accounts','Accounts','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>'],
+      ['reports','Reports','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="13" rx="1.5"/><path d="M5 6h6M5 9h6M5 12h4"/><circle cx="13" cy="4" r="1.5" fill="currentColor"/></svg>'],
       ['auditlog','Audit Log','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="1" width="12" height="14" rx="1.5"/><path d="M5 5h6M5 8h6M5 11h3"/><circle cx="12" cy="12" r="3" fill="var(--blue-l)" stroke="var(--blue)"/><path d="M11 12h2M12 11v2"/></svg>'],
       ['billing','Billing','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 7h14"/><path d="M4 11h2M9 11h3"/></svg>'],
     ];
@@ -3694,6 +3696,7 @@ const App = {
       recruiting:   () => this.renderHRRecruiting(),
       pbj: () => this.renderHRPBJ(),
       accounts: () => this.renderHRAccounts(),
+      reports:  () => this.renderHRReports(),
       auditlog: () => this.renderHRAuditLog(),
       billing: () => this.renderHRBilling(),
     };
@@ -3852,10 +3855,11 @@ const App = {
             <div style="display:flex;flex-direction:column;gap:6px">
               <button class="btn btn-primary btn-sm" onclick="App.approveHRDoc('${e.id}')">Review</button>
               <button class="btn btn-secondary btn-sm" onclick="App.exportHRSmartLinx('${e.id}')">Export to SmartLinx</button>
+              <button class="btn btn-secondary btn-sm" style="background:var(--green-l);color:#047857;border:1px solid var(--green-m);font-weight:700" onclick="App.pushHrToRoster('${e.id}')" title="Add this onboardee directly to the employee roster (skips SmartLinx)">+ Push to Roster</button>
             </div>
           </div>
         </div>
-        <div style="margin-top:10px;font-size:11px;color:var(--g600);background:var(--blue-l);padding:6px 10px;border-radius:6px">Downloads CSV for SmartLinx import · Enter hourly rate before exporting to SmartLinx</div>
+        <div style="margin-top:10px;font-size:11px;color:var(--g600);background:var(--blue-l);padding:6px 10px;border-radius:6px">Downloads CSV for SmartLinx import · Enter hourly rate before exporting to SmartLinx · "Push to Roster" adds them directly to the active staff list</div>
       </div>`).join('') : '<div style="padding:40px;text-align:center;color:var(--g600);font-size:13px">No documents pending review</div>';
     return `
       ${this.hrHipaaBar()}
@@ -8388,6 +8392,158 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       </div>`;
   },
 
+  // ── HR Reports — daily/weekly/monthly email digests ────────────────────────
+  // Lets admin (or regional admin) configure subscriptions: recipients,
+  // facilities, metrics. Server sends the HTML table at 6am Central daily.
+  renderHRReports() {
+    const u = this.S.user;
+    const subs = (this.S.reportSubscriptions || []);
+    const allBuildings = this.S.buildings || [];
+    const callerBIds = u.role === 'superadmin'
+      ? new Set(allBuildings.map(b => b.id))
+      : new Set([u.buildingId, ...(u.buildingIds || [])].filter(Boolean));
+    const myBuildings = allBuildings.filter(b => callerBIds.has(b.id));
+
+    const rows = subs.length ? subs.map(s => {
+      const blds = (s.buildingIds || []).map(id =>
+        sanitize((allBuildings.find(b => b.id === id) || {}).name || id)).join(', ');
+      return `<tr style="border-bottom:1px solid var(--g100)">
+        <td style="padding:10px 14px"><strong>${sanitize(s.name)}</strong>
+          <div style="font-size:11px;color:var(--g500)">${(s.recipients || []).length} recipient${(s.recipients||[]).length===1?'':'s'} · ${(s.metrics || []).join(', ')}</div></td>
+        <td style="padding:10px 14px;font-size:12px;color:var(--g700)">${blds || '—'}</td>
+        <td style="padding:10px 14px;font-size:12px;color:var(--g600)">${s.lastSentDate || 'Never'}</td>
+        <td style="padding:10px 14px;text-align:right;white-space:nowrap">
+          <button class="btn btn-ghost btn-sm" onclick="App.testReport('${s.id}')">Send test now</button>
+          <button class="btn btn-ghost btn-sm" onclick="App.editReport('${s.id}')">Edit</button>
+          <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="App.deleteReport('${s.id}')">Delete</button>
+        </td>
+      </tr>`;
+    }).join('') : `<tr><td colspan="4" style="padding:30px;text-align:center;color:var(--g600)">No subscriptions yet. Click <strong>+ New Report</strong> to set one up.</td></tr>`;
+
+    return `<div style="padding:24px">
+      ${this.hrHipaaBar()}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px">
+        <div>
+          <div class="hr-page-title">Reports</div>
+          <div class="hr-page-sub">Daily email digests · Friday rolls up the week · last day of the month rolls up the month</div>
+        </div>
+        <button class="btn btn-primary" onclick="App.editReport()">+ New Report</button>
+      </div>
+      <div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:12px;color:var(--g700)">
+        Reports send at 6am Central daily. Each email contains an inline HTML table — no attachments. The
+        previous day's data is included; Fridays add weekly totals and the last day of the month adds month totals.
+      </div>
+      <table class="admin-table" style="background:#fff;border:1px solid var(--g200);border-radius:8px;overflow:hidden;width:100%">
+        <thead style="background:var(--g50)">
+          <tr>
+            <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Report</th>
+            <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Buildings</th>
+            <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Last sent</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div id="report-edit-modal-host"></div>
+    </div>`;
+  },
+
+  // Open create/edit modal for a subscription. id null = new.
+  editReport(id) {
+    const u = this.S.user;
+    const allBuildings = this.S.buildings || [];
+    const callerBIds = u.role === 'superadmin'
+      ? new Set(allBuildings.map(b => b.id))
+      : new Set([u.buildingId, ...(u.buildingIds || [])].filter(Boolean));
+    const myBuildings = allBuildings.filter(b => callerBIds.has(b.id));
+    const sub = id ? (this.S.reportSubscriptions || []).find(s => s.id === id) : null;
+    const sel = new Set(sub?.buildingIds || (myBuildings.length === 1 ? [myBuildings[0].id] : []));
+    const metrics = new Set(sub?.metrics || ['ppd','ot','cost','missed']);
+    const host = document.getElementById('report-edit-modal-host');
+    if (!host) return;
+    host.innerHTML = `<div class="modal-overlay open" id="rmodal">
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header"><span class="modal-title">${sub ? 'Edit Report' : 'New Report'}</span>
+          <button class="modal-close" onclick="document.getElementById('rmodal').remove()">✕</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label>Report name</label><input type="text" id="rep-name" value="${sanitize(sub?.name || 'Daily Operations Report')}" maxlength="100"></div>
+          <div class="form-group"><label>Recipients (comma-separated emails)</label>
+            <textarea id="rep-recipients" rows="2" style="width:100%">${sanitize((sub?.recipients || []).join(', '))}</textarea>
+            <div style="font-size:11px;color:var(--g500);margin-top:3px">Up to 20 addresses. Each gets the same email.</div>
+          </div>
+          <div class="form-group"><label>Buildings</label>
+            <div style="max-height:200px;overflow-y:auto;border:1px solid var(--g200);border-radius:6px;padding:8px">
+              ${myBuildings.map(b => `<label style="display:flex;align-items:center;gap:8px;padding:4px 0">
+                <input type="checkbox" class="rep-bld" data-id="${b.id}" ${sel.has(b.id)?'checked':''}>
+                ${sanitize(b.name)}
+              </label>`).join('') || '<div style="color:var(--g500);padding:8px">No buildings in scope</div>'}
+            </div>
+            <div style="font-size:11px;color:var(--g500);margin-top:3px">Select multiple to combine into a single email with each facility as a row.</div>
+          </div>
+          <div class="form-group"><label>Metrics included</label>
+            <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px">
+              <label><input type="checkbox" class="rep-met" data-m="ppd"    ${metrics.has('ppd')?'checked':''}> Daily PPD</label>
+              <label><input type="checkbox" class="rep-met" data-m="ot"     ${metrics.has('ot')?'checked':''}> OT hours</label>
+              <label><input type="checkbox" class="rep-met" data-m="cost"   ${metrics.has('cost')?'checked':''}> Daily cost</label>
+              <label><input type="checkbox" class="rep-met" data-m="missed" ${metrics.has('missed')?'checked':''}> Missed punches</label>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="document.getElementById('rmodal').remove()">Cancel</button>
+          <button class="btn btn-primary" onclick="App.saveReport(${sub ? `'${sub.id}'` : 'null'})">${sub ? 'Save' : 'Create Report'}</button>
+        </div>
+      </div></div>`;
+  },
+
+  async saveReport(id) {
+    const name = document.getElementById('rep-name')?.value.trim();
+    const recipients = (document.getElementById('rep-recipients')?.value || '')
+      .split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+    const buildingIds = [...document.querySelectorAll('.rep-bld:checked')].map(c => c.dataset.id);
+    const metrics = [...document.querySelectorAll('.rep-met:checked')].map(c => c.dataset.m);
+    if (!name || !recipients.length || !buildingIds.length || !metrics.length) {
+      this.showToast('Name, recipients, buildings, and at least one metric are required','warn'); return;
+    }
+    try {
+      const r = await fetch('/api/reports/subscriptions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, name, recipients, buildingIds, metrics, enabled: true }),
+      });
+      const data = await r.json();
+      if (!r.ok) { this.showToast(data.error || 'Save failed','warn'); return; }
+      // Update local cache
+      if (!Array.isArray(this.S.reportSubscriptions)) this.S.reportSubscriptions = [];
+      const idx = this.S.reportSubscriptions.findIndex(s => s.id === data.subscription.id);
+      if (idx >= 0) this.S.reportSubscriptions[idx] = data.subscription;
+      else this.S.reportSubscriptions.push(data.subscription);
+      document.getElementById('rmodal')?.remove();
+      this.showToast('Report saved');
+      this.renderHRMain();
+    } catch (e) { this.showToast('Network error','warn'); }
+  },
+
+  async deleteReport(id) {
+    if (!confirm('Delete this report subscription?')) return;
+    try {
+      const r = await fetch('/api/reports/subscriptions/' + encodeURIComponent(id), { method: 'DELETE' });
+      if (!r.ok) { const d = await r.json().catch(()=>({})); this.showToast(d.error || 'Delete failed','warn'); return; }
+      this.S.reportSubscriptions = (this.S.reportSubscriptions || []).filter(s => s.id !== id);
+      this.showToast('Report deleted');
+      this.renderHRMain();
+    } catch(e) { this.showToast('Network error','warn'); }
+  },
+
+  async testReport(id) {
+    try {
+      const r = await fetch('/api/reports/test/' + encodeURIComponent(id), { method: 'POST' });
+      const data = await r.json();
+      if (!r.ok) { this.showToast(data.error || 'Send failed','warn'); return; }
+      this.showToast('Test report sent');
+    } catch(e) { this.showToast('Network error','warn'); }
+  },
+
   renderHRAccounts() {
     const accts = this.S.hrAccounts;
     const rows = accts.map(a=>`
@@ -8767,6 +8923,66 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   approveHRDoc(id) {
     const emp = this.S.hrEmployees.find(e=>e.id===id);
     if (emp) { emp.status='approved'; emp.progress='Complete'; this.persistData(); this.renderHRMain(); this.showToast('Documents approved'); }
+  },
+
+  // Push a completed onboardee straight into the active employee roster.
+  // Maps the HR-onboarding fields → employees row. Same shape as the
+  // /api/recruiting/push-to-roster endpoint, but for the HR-paperwork
+  // origin (hrEmployees) which is separate from the recruiting pipeline.
+  pushHrToRoster(hrId) {
+    const h = this.S.hrEmployees.find(e => e.id === hrId);
+    if (!h) return;
+    if (h.employeeId) {
+      const existing = this.S.employees.find(e => e.id === h.employeeId);
+      if (existing) { this.showToast(`${h.name} is already on the roster`,'warn'); return; }
+    }
+    if (!confirm(`Push ${h.name} into the active employee roster?\n\nThis creates a new staff record on the schedule for ${h.role || 'their role'}. Their hourly rate ${h.hourlyRate ? '($' + h.hourlyRate + '/hr)' : 'is not set'} and hire date ${h.hireDate || '(today)'} will carry over.`)) return;
+    if (!h.hourlyRate) {
+      const rate = prompt('Set hourly rate before adding to roster ($):', '');
+      if (!rate) return;
+      h.hourlyRate = parseFloat(rate);
+    }
+    const initials = String(h.name || '').split(' ').map(w => w[0] || '').join('').slice(0,2).toUpperCase();
+    const callerB = this.S.user?.buildingId
+      || (h.facilityId ? (this.S.buildings.find(b => b.id === h.facilityId)?.id) : null)
+      || (this.S.buildings[0]?.id);
+    const newEmp = {
+      id: 'e' + Date.now() + Math.random().toString(36).slice(2,5),
+      name: h.name,
+      initials,
+      group: h.role || 'CNA',
+      email: h.email || '',
+      phone: h.phone || '',
+      buildingId: callerB,
+      employmentType: 'full-time',
+      hireDate: h.hireDate || TODAY,
+      hourlyRate: parseFloat(h.hourlyRate) || null,
+      dob: h.dob || null,
+      inactive: false,
+      notifEmail: !!h.email,
+      notifSMS:   !!h.phone,
+      notifPrefs: ['immediate','day'],
+      notifChannels: {
+        immediate:{email:!!h.email,sms:!!h.phone},
+        day:      {email:!!h.email,sms:false},
+        week:     {email:!!h.email,sms:false},
+        daily:    {email:false,sms:false},
+      },
+      onboardedAt: new Date().toISOString(),
+      onboardingHrId: hrId,
+      terminationLog: [],
+    };
+    if (!Array.isArray(this.S.employees)) this.S.employees = [];
+    this.S.employees.push(newEmp);
+    h.status = 'active';
+    h.progress = 'On roster';
+    h.employeeId = newEmp.id;
+    h.pushedToRosterAt = new Date().toISOString();
+    this.persistData();
+    Audit.log('EMPLOYEE_ADDED', `Pushed ${sanitize(h.name)} from onboarding to roster`, this.S.user?.id, 'medium');
+    this.showToast(`${h.name} added to active roster`);
+    this.renderHRMain();
+    this.renderSidebar();
   },
 
   exportHRSmartLinx(id) {
@@ -10795,10 +11011,57 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         <div class="cal-header-row">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cal-dow">${d}</div>`).join('')}</div>
         <div class="cal-days">${cells}</div>
       </div>
+
+      <!-- Actual-punches calendar (live) — every past day shows real clock-in/out -->
+      <div style="padding:0 16px;margin-bottom:20px">
+        <div style="font-size:13px;font-weight:700;color:var(--g700);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">My Actual Punches — ${MONTH_NAMES[viewMonth]} ${viewYear}</div>
+        ${this._renderEmployeePunchCalendar(u.id, viewYear, viewMonth)}
+      </div>
+
       <div style="padding:0 16px">
         <div style="font-size:13px;font-weight:700;color:var(--g700);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">Upcoming Shifts</div>
         ${upcomingRows}
       </div>
+    </div>`;
+  },
+
+  // Renders a compact second calendar showing each past day's actual punch
+  // (in/out + hours). Live — reads from S.hrTimeClock which is kept in sync
+  // with mobile / kiosk / SmartLinx pushes via /api/data refresh.
+  _renderEmployeePunchCalendar(empId, year, month) {
+    const firstDay = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month+1, 0).getDate();
+    const punches = (this.S.hrTimeClock || []).filter(r => r.empId === empId &&
+      r.date.startsWith(`${year}-${String(month+1).padStart(2,'0')}`));
+    const byDate = {};
+    for (const p of punches) byDate[p.date] = p;
+    let cells = '';
+    for (let i = 0; i < firstDay; i++) cells += `<div style="background:var(--g50);min-height:64px;border-right:1px solid var(--g100);border-bottom:1px solid var(--g100)"></div>`;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const ds = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const isToday = ds === TODAY;
+      const isPast  = ds <= TODAY;
+      const p = byDate[ds];
+      let body = '';
+      if (p) {
+        const statusColor = ({late:'#D97706', missed:'#DC2626', 'no-out':'#7C3AED', early:'#D97706', normal:'var(--green)'}[p.status]) || 'var(--g700)';
+        body = `<div style="font-size:10px;color:${statusColor};font-weight:700;font-variant-numeric:tabular-nums">${p.in || '—'} → ${p.out || '—'}</div>
+                <div style="font-size:10px;color:var(--g600);font-variant-numeric:tabular-nums">${p.hours ? p.hours + ' hrs' : ''}</div>`;
+      } else if (isPast) {
+        body = `<div style="font-size:10px;color:var(--g400)">no punch</div>`;
+      }
+      cells += `<div style="background:#fff;min-height:64px;padding:4px 5px;border-right:1px solid var(--g100);border-bottom:1px solid var(--g100);${isToday?'box-shadow:inset 0 0 0 2px var(--green)':''}">
+        <div style="font-size:11px;font-weight:${isToday?'800':'600'};color:${isToday?'#047857':'var(--g600)'}">${d}</div>
+        ${body}
+      </div>`;
+    }
+    const tail = (7 - ((firstDay + daysInMonth) % 7)) % 7;
+    for (let i = 0; i < tail; i++) cells += `<div style="background:var(--g50);min-height:64px;border-right:1px solid var(--g100);border-bottom:1px solid var(--g100)"></div>`;
+    const dows = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d =>
+      `<div style="padding:6px 4px;font-size:10px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.05em;text-align:center;background:var(--g50);border-bottom:1px solid var(--g200)">${d}</div>`).join('');
+    return `<div style="background:#fff;border:1.5px solid var(--g200);border-radius:10px;overflow:hidden">
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);background:var(--g100)">${dows}</div>
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);background:var(--g100)">${cells}</div>
     </div>`;
   },
 
@@ -11236,10 +11499,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           if (slot.status==='open') {
             if (u.role==='admin') {
               const opts = this.S.employees.filter(e=>e.group===grp&&!e.inactive).map(e=>`<option value="${e.id}">${sanitize(e.name)}</option>`).join('');
-              slotsHtml += `<div class="emp-slot-open"><span class="emp-slot-open-label" style="display:flex;align-items:center;gap:4px"><svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 1L1 13h12z"/><line x1="7" y1="6" x2="7" y2="9"/></svg>OPEN</span><select class="assign-select" onchange="App.assignShift('${slot.id}',this.value)"><option value="">Assign to...</option>${opts}</select></div>`;
+              slotsHtml += `<div class="emp-slot-open"><span class="emp-slot-open-label" style="display:flex;align-items:center;gap:4px"><svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 1L1 13h12z"/><line x1="7" y1="6" x2="7" y2="9"/></svg>OPEN</span><select class="assign-select" onchange="App.assignShift('${slot.id}',this.value)"><option value="">Assign to...</option>${opts}</select><button class="btn-agency-sm" onclick="App.openAgencyEntry('${slot.id}')" title="Record agency / contract worker for PBJ">Agency</button></div>`;
             } else if (!u.group || u.group === grp) {
               slotsHtml += `<div class="emp-slot-open"><span class="emp-slot-open-label" style="display:flex;align-items:center;gap:4px"><svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 1L1 13h12z"/><line x1="7" y1="6" x2="7" y2="9"/></svg>OPEN SHIFT</span><button class="btn-claim-sm" onclick="App.confirmClaim('${slot.id}')">Claim</button></div>`;
             }
+          } else if (slot.status === 'agency-filled') {
+            slotsHtml += `<div class="emp-slot" style="background:#FFFBEB;border-color:#FDE68A;color:#92400E"><span style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Agency:</span> ${sanitize(slot.agencyWorker || '')} <span style="font-size:11px;color:var(--g600);margin-left:4px">${sanitize(slot.agencyName || '')}</span></div>`;
           } else {
             const emp = this.S.employees.find(e=>e.id===slot.employeeId);
             if (emp) slotsHtml += `<div class="emp-slot">
@@ -11660,6 +11925,88 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.showToast('Shift opened');
     if(this.S.panelOpen&&this.S.selectedDate) this.renderPanel(this.S.selectedDate);
     this.renderMain();
+  },
+
+  // ── Agency time entry on an open shift ─────────────────────────────────────
+  // Admin clicks the "Agency" button on an open slot. Opens a modal with all
+  // fields needed for PBJ submission. POSTs to /api/timeclock/agency which
+  // creates an hrTimeClock record (kind:'agency') and marks the shift filled.
+  openAgencyEntry(shiftId) {
+    const shift = this.S.shifts.find(s => s.id === shiftId);
+    if (!shift) return;
+    const sh = (typeof SHIFT_TYPES !== 'undefined') ? SHIFT_TYPES(shift.group).find(t => t.type === shift.type) : null;
+    const guessIn  = sh ? this._12hto24h(sh.start) : '';
+    const guessOut = sh ? this._12hto24h(sh.end)   : '';
+    const div = document.createElement('div');
+    div.id = 'modal-agency';
+    div.className = 'modal-overlay open';
+    div.innerHTML = `<div class="modal" style="max-width:480px">
+      <div class="modal-header"><span class="modal-title">Agency / Contract Worker — ${sanitize(shift.date)} · ${sanitize(shift.group)} · ${sanitize(shift.type)}</span>
+        <button class="modal-close" onclick="document.getElementById('modal-agency').remove()">✕</button></div>
+      <div class="modal-body">
+        <div class="form-group"><label>Worker name *</label><input type="text" id="ag-worker" placeholder="Jane Smith" maxlength="100"></div>
+        <div class="form-group"><label>Agency *</label><input type="text" id="ag-name" placeholder="e.g. Maxim Healthcare" maxlength="100"></div>
+        <div class="grid-2">
+          <div class="form-group"><label>Clock In * (HH:MM)</label><input type="text" id="ag-in" placeholder="07:00" value="${guessIn}" maxlength="5"></div>
+          <div class="form-group"><label>Clock Out * (HH:MM)</label><input type="text" id="ag-out" placeholder="15:00" value="${guessOut}" maxlength="5"></div>
+        </div>
+        <div class="grid-2">
+          <div class="form-group"><label>Hourly Rate ($)</label><input type="number" id="ag-rate" placeholder="42" min="0" step="0.01"></div>
+          <div class="form-group"><label>License # (PBJ)</label><input type="text" id="ag-license" placeholder="RN12345" maxlength="50"></div>
+        </div>
+        <div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:6px;padding:10px 12px;font-size:11px;color:var(--g700)">
+          Hours count toward CMS PBJ as agency-source nursing hours and into today's PPD/cost calc. The worker is NOT added to your roster.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="document.getElementById('modal-agency').remove()">Cancel</button>
+        <button class="btn btn-primary" onclick="App.saveAgencyEntry('${shiftId}')">Record Time</button>
+      </div>
+    </div>`;
+    document.body.appendChild(div);
+    setTimeout(() => document.getElementById('ag-worker')?.focus(), 50);
+  },
+
+  _12hto24h(label) {
+    if (!label) return '';
+    const m = String(label).match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+    if (!m) return '';
+    let h = parseInt(m[1],10);
+    if (m[3] && /pm/i.test(m[3]) && h !== 12) h += 12;
+    if (m[3] && /am/i.test(m[3]) && h === 12) h = 0;
+    return String(h).padStart(2,'0') + ':' + m[2];
+  },
+
+  async saveAgencyEntry(shiftId) {
+    const workerName = document.getElementById('ag-worker')?.value.trim();
+    const agencyName = document.getElementById('ag-name')?.value.trim();
+    const inTime  = document.getElementById('ag-in')?.value.trim();
+    const outTime = document.getElementById('ag-out')?.value.trim();
+    const hourlyRate = document.getElementById('ag-rate')?.value;
+    const license = document.getElementById('ag-license')?.value.trim();
+    if (!workerName || !agencyName || !inTime || !outTime) {
+      this.showToast('Worker, agency, in, and out are required','warn'); return;
+    }
+    if (!/^\d{1,2}:\d{2}$/.test(inTime) || !/^\d{1,2}:\d{2}$/.test(outTime)) {
+      this.showToast('In/out must be HH:MM','warn'); return;
+    }
+    try {
+      const r = await fetch('/api/timeclock/agency', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shiftId, workerName, agencyName, in: inTime, out: outTime, hourlyRate, license }),
+      });
+      const data = await r.json();
+      if (!r.ok) { this.showToast(data.error || 'Save failed','warn'); return; }
+      // Update local state
+      const shift = this.S.shifts.find(s => s.id === shiftId);
+      if (shift) Object.assign(shift, data.shift);
+      if (!Array.isArray(this.S.hrTimeClock)) this.S.hrTimeClock = [];
+      this.S.hrTimeClock.push(data.record);
+      document.getElementById('modal-agency')?.remove();
+      this.showToast(`Agency time recorded: ${data.record.hours} hrs`);
+      this.render();
+    } catch(e) { this.showToast('Network error','warn'); }
   },
 
   confirmClaim(shiftId) {
