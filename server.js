@@ -2261,6 +2261,203 @@ app.post('/api/timeclock/set-pin', requireAuth, requireAdmin, async (req, res) =
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PBJ — CMS PAYROLL-BASED JOURNAL QUARTERLY EXPORT
+// ─────────────────────────────────────────────────────────────────────────────
+// CMS requires every Medicare/Medicaid-certified SNF to submit staffing and
+// census data quarterly via the Payroll-Based Journal (PBJ) system. The
+// submission is XML conforming to the published CMS PBJ XSD (current
+// version 4.0). This module renders that XML straight from our existing
+// hrTimeClock + ppdDailyCensus data — no third-party tool needed.
+//
+// Required reference data on the building record:
+//   building.ccn          — federal CMS Certification Number (6-digit)
+//   building.stateCode    — 2-letter postal code, e.g. "OK"
+// These are added via the SA building edit modal.
+//
+// Job titles (CMS controlled vocabulary, partial — only the codes our
+// roster taxonomy maps to). Full list in the PBJ Manual Appendix A.
+const PBJ_JOB_CODE = {
+  'Nurse Management': 11,   // Director of Nursing
+  'Charge Nurse':     6,    // LPN/LVN — most common SNF charge role; admin
+                            //   can override per employee with employee.pbjCode
+  'CNA':              7,    // Nurse Aide (Certified)
+  'CMA':              9,    // Medication Aide / Technician
+  'Cook':             26,   // Cook — Dietary Service Worker
+  'Dietary Aid':      27,   // Other Dietary Service Worker
+  // Maintenance, Housekeeping, Laundry, Marketing — not PBJ-reportable.
+  // RN if added in the future would map to 5; ADON to 12; NAT to 8.
+};
+function _pbjCodeFor(emp) {
+  if (emp?.pbjCode) return parseInt(emp.pbjCode, 10) || null;  // explicit override
+  return PBJ_JOB_CODE[emp?.group] || null;
+}
+const PBJ_PAY_TYPE = { employee: 1, contract: 2, agency: 3 };
+
+// XML escape — CMS rejects unescaped < > & " '
+function _xmlEsc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
+// Compute quarter range. Federal PBJ uses calendar quarters (Q1 = Jan–Mar).
+function _pbjQuarterRange(year, quarter) {
+  const q = parseInt(quarter, 10);
+  if (q < 1 || q > 4) return null;
+  const startMonth = (q - 1) * 3;
+  const start = new Date(Date.UTC(year, startMonth, 1));
+  const end   = new Date(Date.UTC(year, startMonth + 3, 0));
+  return {
+    start: start.toISOString().slice(0,10),
+    end:   end.toISOString().slice(0,10),
+  };
+}
+
+// Generate the full PBJ XML for one building, one quarter.
+function _generatePbjXml({ data, buildingId, year, quarter }) {
+  const range = _pbjQuarterRange(year, quarter);
+  if (!range) throw new Error('Invalid year/quarter');
+  const b = (data.buildings || []).find(x => x.id === buildingId);
+  if (!b) throw new Error('Building not found');
+  const emps = (data.employees || []).filter(e => e.buildingId === buildingId);
+  const punches = (data.hrTimeClock || []).filter(r =>
+    r.buildingId === buildingId && r.date >= range.start && r.date <= range.end);
+
+  // Employee block — one entry per W-2 employee (NOT agency, those are
+  // anonymized in the staffingHours block per CMS guidance).
+  const empById = new Map(emps.map(e => [e.id, e]));
+  const empXml = emps.map(e => {
+    const term = e.terminationLog?.length
+      ? e.terminationLog[e.terminationLog.length - 1].date
+      : '';
+    return `    <employee>
+      <employeeId>${_xmlEsc(e.id)}</employeeId>
+      <hireDate>${_xmlEsc(e.hireDate || range.start)}</hireDate>
+      ${term ? `<terminationDate>${_xmlEsc(term)}</terminationDate>` : ''}
+    </employee>`;
+  }).join('\n');
+
+  // staffingHours — one <staffHours> per (employeeId × date × jobCode × payType).
+  // Hours are quarter-hour-precision in CMS spec (e.g. 7.50, 8.00, 8.25).
+  const hoursXml = [];
+  let unmapped = 0;
+  for (const r of punches) {
+    if (!r.hours) continue;
+    const hrs = parseFloat(r.hours);
+    if (!hrs || hrs <= 0) continue;
+    let jobCode, payType, empIdOut;
+    if (r.kind === 'agency') {
+      // Agency hours: PBJ requires a synthesized employee ID per agency
+      // worker per facility, and the role from the shift, not the staff
+      // roster. payType = 3.
+      jobCode = PBJ_JOB_CODE[r.role] || null;
+      payType = PBJ_PAY_TYPE.agency;
+      empIdOut = r.empId;     // agency_<random>
+    } else {
+      const emp = empById.get(r.empId);
+      jobCode  = _pbjCodeFor(emp);
+      payType  = PBJ_PAY_TYPE.employee;
+      empIdOut = r.empId;
+    }
+    if (!jobCode) { unmapped++; continue; }     // role doesn't map to PBJ — skip
+    hoursXml.push(`    <staffHours>
+      <employeeId>${_xmlEsc(empIdOut)}</employeeId>
+      <jobTitleCode>${jobCode}</jobTitleCode>
+      <payTypeCode>${payType}</payTypeCode>
+      <workDate>${_xmlEsc(r.date)}</workDate>
+      <hoursWorked>${hrs.toFixed(2)}</hoursWorked>
+    </staffHours>`);
+  }
+
+  // residentCensus — one <residentDayCount> per day in the quarter.
+  // Pulls from our ppdDailyCensus map; days without a census recorded are
+  // emitted with 0 (CMS requires every day to be present).
+  const censusXml = [];
+  for (let d = new Date(range.start + 'T00:00:00Z'); d.toISOString().slice(0,10) <= range.end; d.setUTCDate(d.getUTCDate() + 1)) {
+    const ds = d.toISOString().slice(0,10);
+    const c  = parseInt((data.ppdDailyCensus || {})[ds], 10) || 0;
+    censusXml.push(`    <residentDayCount>
+      <reportDate>${ds}</reportDate>
+      <residentCount>${c}</residentCount>
+    </residentDayCount>`);
+  }
+
+  const ccn   = b.ccn || '';
+  const state = b.stateCode || b.state || '';
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<nursingHomeData xmlns="http://www.cms.hhs.gov/PBJ" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <header>
+    <reportQuarter>${quarter}</reportQuarter>
+    <federalFiscalYear>${year}</federalFiscalYear>
+    <facilityId>${_xmlEsc(ccn)}</facilityId>
+    <stateCode>${_xmlEsc(state)}</stateCode>
+    <softwareVendorName>ManageMyStaffing</softwareVendorName>
+    <softwareProductName>ManageMyStaffing PBJ Export</softwareProductName>
+    <softwareProductVersion>1.0</softwareProductVersion>
+    <reportPeriod>
+      <startDate>${range.start}</startDate>
+      <endDate>${range.end}</endDate>
+    </reportPeriod>
+  </header>
+  <employees>
+${empXml}
+  </employees>
+  <staffingHours>
+${hoursXml.join('\n')}
+  </staffingHours>
+  <residentCensus>
+${censusXml.join('\n')}
+  </residentCensus>
+</nursingHomeData>
+`;
+  return {
+    xml,
+    summary: {
+      ccn, year, quarter, range,
+      employees: emps.length,
+      staffHoursLines: hoursXml.length,
+      unmappedHours: unmapped,
+      censusDays: censusXml.length,
+      missingCcn: !ccn,
+      missingStateCode: !state,
+    },
+  };
+}
+
+// GET /api/pbj/quarterly?year=YYYY&quarter=N&buildingId=...
+// Returns either:
+//   ?format=xml  → application/xml file download
+//   ?format=json → { xml, summary } for preview in the UI
+app.get('/api/pbj/quarterly', requireAuth, requireAdmin, async (req, res) => {
+  const year     = parseInt(req.query.year, 10);
+  const quarter  = parseInt(req.query.quarter, 10);
+  const buildingId = String(req.query.buildingId || '');
+  const format   = req.query.format === 'xml' ? 'xml' : 'json';
+  if (!year || year < 2018 || year > 2100) return res.status(400).json({ error: 'Invalid year' });
+  if (!quarter || quarter < 1 || quarter > 4) return res.status(400).json({ error: 'Invalid quarter (1–4)' });
+  if (!buildingId) return res.status(400).json({ error: 'buildingId required' });
+
+  const data = await loadData();
+  const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds || [])].filter(Boolean));
+  if (req.user.role !== 'superadmin' && !callerBIds.has(buildingId)) {
+    return res.status(403).json({ error: 'Out of scope' });
+  }
+  let result;
+  try { result = _generatePbjXml({ data, buildingId, year, quarter }); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
+
+  auditLog('PBJ_GENERATED', req.user, { buildingId, year, quarter, ccn: result.summary.ccn });
+  if (format === 'xml') {
+    const fileName = `pbj_${result.summary.ccn || buildingId}_${year}Q${quarter}.xml`;
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    return res.send(result.xml);
+  }
+  res.json({ ok: true, ...result });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // HR REPORTS — SCHEDULED EMAIL DIGESTS
 // ─────────────────────────────────────────────────────────────────────────────
 // Admins create report subscriptions naming the recipients, the facility

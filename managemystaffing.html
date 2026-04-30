@@ -981,23 +981,23 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
   </div>
 </div>
 
-<!-- Add Shifts Modal -->
+<!-- Add / Remove Shifts Modal (shared) -->
 <div class="modal-overlay" id="modal-add-shifts" role="dialog" aria-modal="true" aria-label="Add Shifts">
   <div class="modal" style="max-width:600px;width:96%;max-height:90vh;display:flex;flex-direction:column">
     <div class="modal-header" style="flex-shrink:0">
-      <span class="modal-title">
+      <span class="modal-title" id="add-shifts-title">
         <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px;color:var(--blue-d)"><rect x="2" y="3" width="16" height="14" rx="1.5"/><path d="M2 7h16M6 3v4M14 3v4M10 10v5M7.5 12.5h5"/></svg>
         Add Shifts
       </span>
       <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-add-shifts')">✕</button>
     </div>
-    <div style="padding:6px 20px 2px;background:var(--blue-l);border-bottom:1px solid var(--blue-m);flex-shrink:0">
-      <p style="font-size:12px;color:var(--blue-d);margin:8px 0">Choose a shift type, how many slots are needed each day, then select which days repeat every two weeks.</p>
+    <div id="add-shifts-banner" style="padding:6px 20px 2px;background:var(--blue-l);border-bottom:1px solid var(--blue-m);flex-shrink:0">
+      <p id="add-shifts-banner-text" style="font-size:12px;color:var(--blue-d);margin:8px 0">Choose a shift type, how many slots are needed each day, then select which days repeat every two weeks.</p>
     </div>
     <div id="modal-add-shifts-body" style="overflow-y:auto;flex:1;padding:20px"></div>
     <div class="modal-footer" style="flex-shrink:0">
       <button class="btn btn-secondary" onclick="App.closeModal('modal-add-shifts')">Cancel</button>
-      <button class="btn btn-primary" onclick="App.saveAddShifts()">Add to Calendar</button>
+      <button class="btn btn-primary" id="add-shifts-submit" onclick="App._submitShiftPicker()">Add to Calendar</button>
     </div>
   </div>
 </div>
@@ -5351,6 +5351,28 @@ const App = {
     const week1 = `<div style="display:flex;gap:5px">${[0,1,2,3,4,5,6].map(makeDay).join('')}</div>`;
     const week2 = `<div style="display:flex;gap:5px">${[7,8,9,10,11,12,13].map(makeDay).join('')}</div>`;
 
+    // Title / banner / submit-button label switch on mode
+    const isRemove = st.mode === 'remove';
+    const titleEl   = document.getElementById('add-shifts-title');
+    const bannerEl  = document.getElementById('add-shifts-banner-text');
+    const bannerWrap= document.getElementById('add-shifts-banner');
+    const submitEl  = document.getElementById('add-shifts-submit');
+    if (titleEl)  titleEl.innerHTML = isRemove
+      ? `<svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px;color:var(--red)"><rect x="2" y="3" width="16" height="14" rx="1.5"/><path d="M2 7h16M6 3v4M14 3v4M6 12h8"/></svg>Remove Shifts`
+      : `<svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px;color:var(--blue-d)"><rect x="2" y="3" width="16" height="14" rx="1.5"/><path d="M2 7h16M6 3v4M14 3v4M10 10v5M7.5 12.5h5"/></svg>Add Shifts`;
+    if (bannerEl) bannerEl.textContent = isRemove
+      ? 'Pick the shift type and the days in the rotation to remove. Only OPEN (unassigned) shifts in the next 90 days will be deleted; assigned shifts are kept and must be reassigned individually.'
+      : 'Choose a shift type, how many slots are needed each day, then select which days repeat every two weeks.';
+    if (bannerWrap) {
+      bannerWrap.style.background = isRemove ? 'var(--red-l)' : 'var(--blue-l)';
+      bannerWrap.style.borderBottomColor = isRemove ? '#FCA5A5' : 'var(--blue-m)';
+    }
+    if (bannerEl) bannerEl.style.color = isRemove ? '#991B1B' : 'var(--blue-d)';
+    if (submitEl) {
+      submitEl.textContent = isRemove ? 'Remove from Calendar' : 'Add to Calendar';
+      submitEl.style.background = isRemove ? 'var(--red)' : '';
+    }
+
     document.getElementById('modal-add-shifts-body').innerHTML = `
       <div style="margin-bottom:16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
@@ -5360,7 +5382,7 @@ const App = {
         <div style="display:flex;gap:8px;flex-wrap:wrap">${builtinTabs}${customTabs}${customBtn}</div>
         ${builtinEditPanel}${customFields}
       </div>
-      <div style="margin-bottom:20px">
+      ${st.mode === 'remove' ? '' : `<div style="margin-bottom:20px">
         <div class="form-lbl">Slots Added to Shift</div>
         <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
           <button onclick="if(App.S._addShiftState.slots>1){App.S._addShiftState.slots--;App._renderAddShiftsBody()}"
@@ -5370,7 +5392,7 @@ const App = {
             style="width:32px;height:32px;border:1.5px solid var(--g200);border-radius:8px;background:#fff;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1">+</button>
           <span style="font-size:12px;color:var(--g500)">open position${st.slots===1?'':'s'} per day</span>
         </div>
-      </div>
+      </div>`}
       <div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
           <div class="form-lbl" style="margin:0">
@@ -5572,6 +5594,85 @@ const App = {
     this.closeModal('modal-add-shifts');
     this.renderMain();
     this.showToast(`${added} open shift${added===1?'':'s'} added to calendar`);
+  },
+
+  // ── REMOVE SHIFTS — same 14-day picker, opposite action ─────────────────
+  // Reuses the Add Shifts modal (same DOM) but flips the state to mode:'remove'
+  // so _renderAddShiftsBody knows to swap the title + button. saveAddShifts
+  // dispatches to saveRemoveShifts when mode === 'remove'.
+  openRemoveShiftsModal() {
+    const g = this.S.selectedGroup;
+    if (!g) { this.showToast('Select a department from the sidebar first', 'warn'); return; }
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
+    const startD = new Date(TODAY + 'T12:00:00');
+    const dow = startD.getDay();
+    startD.setDate(startD.getDate() - (dow === 0 ? 6 : dow - 1));
+    const dates = [];
+    for (let i = 0; i < 14; i++) {
+      const d = new Date(startD); d.setDate(d.getDate() + i);
+      dates.push(d.toISOString().slice(0, 10));
+    }
+    // Default to the first effective shift type for this group.
+    const defaultType = this.getEffectiveShiftTypes(bId, g)[0]?.type || 'Day';
+    this.S._addShiftState = {
+      mode: 'remove',
+      group: g, buildingId: bId,
+      shiftType: defaultType,
+      slots: 1, selectedDays: [], dates,
+      customName: '', customStart: '7:00 AM', customEnd: '3:00 PM',
+      editingBuiltinType: null, editingBuiltinName: '', editingBuiltinStart: '', editingBuiltinEnd: '',
+    };
+    this._renderAddShiftsBody();
+    this.openModal('modal-add-shifts');
+  },
+
+  // Removes shifts in the next 90 days that match the picked shift type AND
+  // the selected days within the 14-day cycle. ONLY removes shifts that are
+  // currently 'open' (not assigned to anyone yet) — we never delete a shift
+  // someone has already claimed, would be confusing.
+  saveRemoveShifts() {
+    const st = this.S._addShiftState;
+    if (!st?.selectedDays?.length) { this.showToast('Select at least one day', 'warn'); return; }
+    const { group: g, buildingId: bId, shiftType } = st;
+    const pickerStart = new Date(st.dates[0] + 'T12:00:00');
+    const end = new Date(TODAY + 'T12:00:00');
+    end.setDate(end.getDate() + 90);
+    // Build a set of dates whose cycle position is in selectedDays.
+    const toRemoveDates = new Set();
+    for (let cur = new Date(TODAY + 'T12:00:00'); cur <= end; cur.setDate(cur.getDate() + 1)) {
+      const ds = cur.toISOString().slice(0, 10);
+      const diff = Math.round((cur - pickerStart) / 86400000);
+      const cyclePos = ((diff % 14) + 14) % 14;
+      if (st.selectedDays.includes(cyclePos)) toRemoveDates.add(ds);
+    }
+    const before = this.S.shifts.length;
+    let removedAssigned = 0;
+    this.S.shifts = this.S.shifts.filter(s => {
+      if (s.buildingId !== bId) return true;
+      if (s.group !== g) return true;
+      if (s.type !== shiftType) return true;
+      if (!toRemoveDates.has(s.date)) return true;
+      // Match — remove if open. If already assigned, count separately and keep.
+      if (s.status === 'open') return false;
+      removedAssigned++;
+      return true;     // keep assigned shifts; admin must reassign manually
+    });
+    const removedCount = before - this.S.shifts.length;
+    Audit.log('SHIFTS_REMOVED', `Removed ${removedCount} open ${shiftType} shifts for ${g}`, this.S.user?.id, 'medium');
+    this.persistData();
+    this.closeModal('modal-add-shifts');
+    this.renderMain();
+    let msg = `${removedCount} open shift${removedCount===1?'':'s'} removed`;
+    if (removedAssigned > 0) {
+      msg += ` · ${removedAssigned} matching assigned shift${removedAssigned===1?'':'s'} kept (reassign or delete individually)`;
+    }
+    this.showToast(msg);
+  },
+
+  // Submit dispatcher for the shared modal — picks add vs remove based on mode.
+  _submitShiftPicker() {
+    if (this.S._addShiftState?.mode === 'remove') return this.saveRemoveShifts();
+    return this.saveAddShifts();
   },
 
   // ── ASSIGN SHIFT (14-day rotation picker) ───────────────────
@@ -8381,15 +8482,107 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
 
   renderHRPBJ() {
-    return `
+    const u = this.S.user;
+    const allBuildings = this.S.buildings || [];
+    const callerBIds = u.role === 'superadmin'
+      ? new Set(allBuildings.map(b => b.id))
+      : new Set([u.buildingId, ...(u.buildingIds || [])].filter(Boolean));
+    const myBuildings = allBuildings.filter(b => callerBIds.has(b.id));
+
+    const now = new Date();
+    const thisQuarter = Math.floor(now.getMonth() / 3) + 1;
+    const lastQuarter = thisQuarter === 1 ? 4 : thisQuarter - 1;
+    const lastQuarterYear = thisQuarter === 1 ? now.getFullYear() - 1 : now.getFullYear();
+
+    const buildingOpts = myBuildings.map(b => `<option value="${b.id}">${sanitize(b.name)}${b.ccn ? ' · CCN '+sanitize(b.ccn) : ' · no CCN'}</option>`).join('');
+    const yearOpts = [now.getFullYear() + 1, now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2].map(y =>
+      `<option value="${y}">${y}</option>`).join('');
+    const quarterOpts = [1,2,3,4].map(q => `<option value="${q}"${q === lastQuarter ? ' selected' : ''}>Q${q}</option>`).join('');
+
+    return `<div style="padding:24px">
       ${this.hrHipaaBar()}
-      <div style="margin-bottom:20px"><div class="hr-page-title">PBJ Reports</div><div class="hr-page-sub">CMS Payroll-Based Journal — staffing data for submission</div></div>
-      <div class="hr-section" style="padding:48px;text-align:center">
-        <svg viewBox="0 0 48 48" width="48" height="48" fill="none" stroke="var(--g300)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin:0 auto 16px"><rect x="4" y="6" width="40" height="36" rx="3"/><path d="M12 18h24M12 26h16"/></svg>
-        <div style="font-weight:700;font-size:16px;color:var(--g700);margin-bottom:8px">ADP Connection Required</div>
-        <div style="font-size:13px;color:var(--g500);max-width:360px;margin:0 auto 20px">Connect ADP Workforce Now in Integrations to generate PBJ reports from time &amp; attendance data.</div>
-        <button class="btn btn-primary" onclick="App.navigateHR('integrations')">Configure ADP</button>
-      </div>`;
+      <div style="margin-bottom:20px">
+        <div class="hr-page-title">PBJ Reports</div>
+        <div class="hr-page-sub">CMS Payroll-Based Journal — quarterly staffing + census XML for submission to CASPER / iQIES</div>
+      </div>
+
+      <div style="background:#fff;border:1.5px solid var(--g200);border-radius:12px;padding:24px;max-width:680px">
+        <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:14px;margin-bottom:18px">
+          <div class="form-group" style="margin:0">
+            <label>Facility</label>
+            <select id="pbj-building">${buildingOpts}</select>
+          </div>
+          <div class="form-group" style="margin:0">
+            <label>Year</label>
+            <select id="pbj-year">${yearOpts}</select>
+          </div>
+          <div class="form-group" style="margin:0">
+            <label>Quarter</label>
+            <select id="pbj-quarter">${quarterOpts}</select>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn btn-secondary" onclick="App.previewPbj()">Preview Summary</button>
+          <button class="btn btn-primary" onclick="App.downloadPbj()">Download XML</button>
+        </div>
+
+        <div id="pbj-preview" style="margin-top:18px"></div>
+
+        <div style="margin-top:24px;padding:14px;background:var(--blue-l);border-radius:8px;border:1px solid var(--blue-m);font-size:12px;color:var(--g700);line-height:1.5">
+          <strong>How it works.</strong> The XML pulls staffing hours from the
+          HR Time Clock and the daily census from the PPD Calendar / PCC sync.
+          Roles map to CMS PBJ job codes automatically (DON → 11, LPN/Charge
+          Nurse → 6, CNA → 7, CMA → 9, Cook → 26, Dietary Aid → 27). Agency
+          hours are flagged payTypeCode=3. Roles outside CMS's PBJ taxonomy
+          (Housekeeping, Laundry, Maintenance, Marketing) are excluded as
+          required.
+          <br><br>
+          <strong>Before downloading:</strong> make sure each facility has
+          its <strong>CCN</strong> (CMS Certification Number — 6 digits) and
+          state code populated on the Building edit form. The export still
+          generates without them, but CMS will reject the upload.
+        </div>
+      </div>
+    </div>`;
+  },
+
+  async previewPbj() {
+    const buildingId = document.getElementById('pbj-building')?.value;
+    const year       = parseInt(document.getElementById('pbj-year')?.value, 10);
+    const quarter    = parseInt(document.getElementById('pbj-quarter')?.value, 10);
+    if (!buildingId || !year || !quarter) { this.showToast('Pick a facility, year, and quarter','warn'); return; }
+    try {
+      const r = await fetch(`/api/pbj/quarterly?buildingId=${encodeURIComponent(buildingId)}&year=${year}&quarter=${quarter}&format=json`);
+      const data = await r.json();
+      if (!r.ok) { this.showToast(data.error || 'Preview failed','warn'); return; }
+      const s = data.summary;
+      const warns = [];
+      if (s.missingCcn)       warns.push('CCN not set on this building — CMS will reject the upload');
+      if (s.missingStateCode) warns.push('State code missing on this building');
+      if (s.unmappedHours > 0) warns.push(`${s.unmappedHours} punch records with roles outside the PBJ taxonomy (excluded — this is correct for non-clinical staff)`);
+      const warnHtml = warns.length ? `<div style="background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#92400E">⚠ ${warns.join('<br>⚠ ')}</div>` : '';
+      document.getElementById('pbj-preview').innerHTML = `
+        <div style="background:var(--g50);border:1px solid var(--g200);border-radius:10px;padding:18px;margin-top:8px">
+          <div style="font-size:14px;font-weight:700;color:var(--g900);margin-bottom:10px">Preview · ${year} Q${quarter} · ${s.range.start} → ${s.range.end}</div>
+          ${warnHtml}
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px">
+            <div><div style="font-size:11px;color:var(--g500);text-transform:uppercase;letter-spacing:.06em;font-weight:700">CCN</div><div style="font-size:18px;font-weight:800;color:${s.missingCcn?'var(--red)':'var(--g900)'}">${sanitize(s.ccn || '— missing —')}</div></div>
+            <div><div style="font-size:11px;color:var(--g500);text-transform:uppercase;letter-spacing:.06em;font-weight:700">Employees</div><div style="font-size:18px;font-weight:800">${s.employees}</div></div>
+            <div><div style="font-size:11px;color:var(--g500);text-transform:uppercase;letter-spacing:.06em;font-weight:700">Punch lines</div><div style="font-size:18px;font-weight:800">${s.staffHoursLines}</div></div>
+            <div><div style="font-size:11px;color:var(--g500);text-transform:uppercase;letter-spacing:.06em;font-weight:700">Census days</div><div style="font-size:18px;font-weight:800">${s.censusDays}</div></div>
+          </div>
+        </div>`;
+    } catch (e) { this.showToast('Network error','warn'); }
+  },
+
+  downloadPbj() {
+    const buildingId = document.getElementById('pbj-building')?.value;
+    const year       = document.getElementById('pbj-year')?.value;
+    const quarter    = document.getElementById('pbj-quarter')?.value;
+    if (!buildingId || !year || !quarter) { this.showToast('Pick a facility, year, and quarter','warn'); return; }
+    // Browsers handle the file save when the response sets Content-Disposition.
+    window.location.href = `/api/pbj/quarterly?buildingId=${encodeURIComponent(buildingId)}&year=${year}&quarter=${quarter}&format=xml`;
   },
 
   // ── HR Reports — daily/weekly/monthly email digests ────────────────────────
@@ -10559,6 +10752,10 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/></svg>
       Add Shifts
     </button>`;
+    const removeShiftsBtn = `<button class="btn btn-secondary btn-sm" onclick="App.openRemoveShiftsModal()" style="display:flex;align-items:center;gap:6px;font-weight:600;color:var(--red);border-color:#FCA5A5">
+      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="2" y1="8" x2="14" y2="8"/></svg>
+      Remove Shifts
+    </button>`;
     const slotsBtn = `<button class="btn btn-secondary btn-sm" onclick="App.openShiftManagerModal()" style="display:flex;align-items:center;gap:6px;font-weight:600">
       <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 6h14M5 2v4M11 2v4M4 10h3M9 10h3"/></svg>
       Manage Shifts
@@ -10611,7 +10808,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     else calHtml = this.renderShiftView();
 
     document.getElementById('main').innerHTML = `${stats}
-      <div class="cal-toolbar">${viewTabs}${groupPill}${g?addShiftsBtn:''}${filterTabs}</div>${calHtml}`;
+      <div class="cal-toolbar">${viewTabs}${groupPill}${g?addShiftsBtn:''}${g?removeShiftsBtn:''}${filterTabs}</div>${calHtml}`;
   },
 
   // ── PPD CALCULATOR ──────────────────────────────────────────
