@@ -3039,6 +3039,7 @@ const App = {
         ${this._renderBuildingSmsStatus(b)}
         <div class="building-actions">
           <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();App.enterBuilding('${b.id}')">Enter Dashboard →</button>
+          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.showKioskUrl('${b.id}')" title="Tablet kiosk URL — opens on any tablet at the nurse station for employees to clock in/out by PIN">📱 Kiosk URL</button>
           <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.openManageAdmins(); App.S._adminsForBuildingId='${b.id}'" title="Manage admins for this building">Admins</button>
         </div>
       </div>`;
@@ -4122,7 +4123,7 @@ const App = {
         <td style="padding:9px 14px">
           <span title="${scTip}" style="display:inline-flex;align-items:center;font-size:12px;font-weight:800;color:${scColor};background:${scBg};padding:2px 9px;border-radius:6px;cursor:help;min-width:30px;justify-content:center">${sc.score}</span>
         </td>
-        <td style="padding:9px 14px"><button class="btn btn-ghost btn-sm" onclick="App.showToast('Punch edit — coming soon','warn')">Edit</button></td>
+        <td style="padding:9px 14px"><button class="btn btn-ghost btn-sm" onclick="App.tcEditPunch('${r.empId}','${r.date}','${r.in||''}','${r.out||''}')">Edit</button></td>
       </tr>`;
     }).join('');
 
@@ -4566,6 +4567,35 @@ const App = {
   // Most timeclock vendors (Kronos, ADP, PCC, Paychex) export a daily punch
   // CSV. We accept a flexible header set and auto-classify each row's status
   // by cross-referencing the scheduled shift for that empId+date.
+  // Inline admin edit of a punch row. Two prompts (in / out) keeps the UX
+  // compact — fancier modal can come later if usage warrants it. The
+  // server-side PATCH handler bcrypts nothing (no secrets) but does require
+  // admin scope and rebuilds the audit trail on every edit.
+  async tcEditPunch(empId, date, currentIn, currentOut) {
+    const newIn  = prompt(`Edit clock-in time for ${date} (HH:MM 24-hr, blank to clear):`, currentIn || '');
+    if (newIn === null) return;
+    const newOut = prompt(`Edit clock-out time for ${date} (HH:MM 24-hr, blank to clear):`, currentOut || '');
+    if (newOut === null) return;
+    const validTime = t => t === '' || /^\d{1,2}:\d{2}$/.test(t.trim());
+    if (!validTime(newIn) || !validTime(newOut)) { this.showToast('Times must be HH:MM','warn'); return; }
+    const note = prompt('Reason for edit (recorded in audit log):', '') || '';
+    try {
+      const r = await fetch('/api/timeclock/punch', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ empId, date, in: newIn.trim(), out: newOut.trim(), note }),
+      });
+      const data = await r.json();
+      if (!r.ok) { this.showToast(data.error || 'Edit failed','warn'); return; }
+      // Update the local cache so the table re-renders with the change.
+      const recs = this.S.hrTimeClock || [];
+      const idx = recs.findIndex(x => x.empId === empId && x.date === date);
+      if (idx >= 0) Object.assign(recs[idx], data.record); else recs.push(data.record);
+      this.showToast('Punch updated');
+      this.renderHRMain();
+    } catch(e) { this.showToast('Network error','warn'); }
+  },
+
   tcImportCSVPicker() {
     const inp = document.createElement('input');
     inp.type = 'file';
@@ -9334,6 +9364,13 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           </button>
         </div>` : '';
 
+      const pinBtn = isActive ? `<button class="btn btn-ghost btn-sm"
+        style="color:${emp.pinHash?'var(--green)':'var(--g600)'};border:1.5px solid ${emp.pinHash?'var(--green-m)':'var(--g200)'}"
+        title="${emp.pinHash?'Reset 4-digit kiosk PIN':'Set 4-digit kiosk PIN for time-clock punching'}"
+        onclick="App.setEmpPin('${emp.id}')">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+          ${emp.pinHash?'Reset PIN':'Set PIN'}
+       </button>` : '';
       const actionBtn = isActive
         ? `<button class="btn btn-ghost btn-sm" style="color:var(--red);border:1.5px solid var(--g200)" onclick="App.showInactivateForm('${emp.id}')">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> Inactivate
@@ -9359,7 +9396,9 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         <td><span style="display:flex;align-items:center;gap:5px">${G_ICONS[emp.group]||''}<span style="color:${isActive?col:'var(--g400)'};font-weight:500">${sanitize(emp.group)}</span></span></td>
         <td>${sanitize(emp.phone||'—')}</td>
         <td><span class="${isActive?'tag-active':'tag-inactive'}">${isActive?'Active':'Inactive'}</span></td>
-        <td style="text-align:right">${actionBtn}</td>
+        <td style="text-align:right;white-space:nowrap">
+          ${pinBtn ? pinBtn + ' ' : ''}${actionBtn}
+        </td>
       </tr>`;
     };
 
@@ -9589,6 +9628,44 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.showToast(`${sanitize(emp.name)} is now active again`, '');
     this.renderMain();
     this.renderSidebar();
+  },
+
+  // ── Time clock — admin actions ─────────────────────────────────────────────
+  // Set or reset an employee's 4-digit kiosk PIN. Admin pastes new PIN; we
+  // post to /api/timeclock/set-pin which bcrypts + collision-checks within
+  // the building.
+  async setEmpPin(empId) {
+    const emp = this.S.employees.find(e => e.id === empId);
+    if (!emp) return;
+    const pin = prompt(`Set kiosk PIN for ${emp.name}\n\n4 to 6 digits. Used to clock in/out at the tablet kiosk.`, '');
+    if (!pin) return;
+    if (!/^\d{4,6}$/.test(pin)) { this.showToast('PIN must be 4–6 digits','warn'); return; }
+    try {
+      const r = await fetch('/api/timeclock/set-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ empId, pin }),
+      });
+      const data = await r.json();
+      if (!r.ok) { this.showToast(data.error || 'Failed','warn'); return; }
+      // Reflect locally so the button color updates without a full reload
+      emp.pinHash = '*';
+      emp.pinSetAt = new Date().toISOString();
+      this.showToast(`PIN set for ${emp.name}`);
+      this.renderMain();
+    } catch(e) { this.showToast('Network error','warn'); }
+  },
+
+  // Open the kiosk URL for the current building. SA can also pull it for any
+  // building via the SA building card. Admin gets a copy-to-clipboard prompt.
+  async showKioskUrl(buildingId) {
+    const b = this.S.buildings.find(x => x.id === (buildingId || this.S.user?.buildingId || 'b1'));
+    if (!b) return;
+    const url = (window.location.origin || 'https://www.managemystaffing.com') + '/kiosk/' + encodeURIComponent(b.id);
+    if (confirm(`Tablet kiosk URL for ${b.name}:\n\n${url}\n\nOpen this URL on a tablet at the nurse station and leave it running. Employees clock in by entering their 4-digit PIN.\n\nClick OK to copy to clipboard, Cancel to dismiss.`)) {
+      try { await navigator.clipboard.writeText(url); this.showToast('Kiosk URL copied to clipboard'); }
+      catch(e) { this.showToast('Copy failed — URL is in the dialog above','warn'); }
+    }
   },
 
   // ── Cost helpers (used by PPD calculator) ───────────────────────────────
@@ -10679,6 +10756,11 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       </div>`;
     }).join('') : `<div style="font-size:13px;color:var(--g600);padding:12px 0">No upcoming shifts scheduled.</div>`;
 
+    // Today's punch state for the Clock In/Out panel
+    const todayPunch = (this.S.hrTimeClock || []).find(p => p.empId === u.id && p.date === TODAY);
+    const isClockedIn = !!(todayPunch?.in && !todayPunch?.out);
+    const isDoneToday = !!(todayPunch?.in && todayPunch?.out);
+
     return `<div style="padding:0 0 16px">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 16px 12px">
         <div>
@@ -10692,6 +10774,23 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           <button class="btn btn-primary btn-sm" onclick="App.setEmpView('open')" style="margin-left:4px">Pick Up Shifts</button>
         </div>
       </div>
+
+      <!-- Clock In / Out panel (mobile) -->
+      <div style="margin:0 16px 16px;background:#fff;border:1.5px solid var(--g200);border-radius:14px;padding:18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <div style="flex:1;min-width:160px">
+          <div style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.06em">${isClockedIn ? 'Currently Clocked In' : isDoneToday ? 'Today' : 'Not Clocked In'}</div>
+          ${isClockedIn ? `<div style="font-size:22px;font-weight:800;color:var(--green);margin-top:2px;font-variant-numeric:tabular-nums">${todayPunch.in}<span style="font-size:13px;color:var(--g500);font-weight:600;margin-left:6px">started</span></div>` : ''}
+          ${isDoneToday ? `<div style="font-size:14px;color:var(--g700);margin-top:2px;font-variant-numeric:tabular-nums">${todayPunch.in} → ${todayPunch.out} <span style="color:var(--g500)">·</span> <strong>${todayPunch.hours} hrs</strong></div>` : ''}
+          ${!isClockedIn && !isDoneToday ? `<div style="font-size:14px;color:var(--g600);margin-top:2px">Tap Clock In when you arrive on site.</div>` : ''}
+        </div>
+        ${!isDoneToday ? `<button id="clock-btn"
+          class="btn ${isClockedIn ? 'btn-secondary' : 'btn-primary'}"
+          style="font-size:15px;padding:14px 22px;background:${isClockedIn?'var(--red)':'var(--green)'};color:#fff;border:none;font-weight:700"
+          onclick="App.${isClockedIn ? 'employeeClockOut' : 'employeeClockIn'}()">
+          ${isClockedIn ? 'Clock Out' : 'Clock In'}
+        </button>` : `<span style="font-size:13px;color:var(--g500)">Done for today ✓</span>`}
+      </div>
+
       <div class="cal-grid" style="margin-bottom:20px">
         <div class="cal-header-row">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cal-dow">${d}</div>`).join('')}</div>
         <div class="cal-days">${cells}</div>
@@ -10702,6 +10801,51 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       </div>
     </div>`;
   },
+
+  // ── Mobile employee Clock In / Clock Out ──────────────────────────────────
+  // Asks the browser for the device's GPS coords (geolocation prompt) so the
+  // server can verify the user is on site. If the building has no lat/lng
+  // configured, geofence is skipped server-side.
+  async _employeePunchAction(action) {
+    const btn = document.getElementById('clock-btn');
+    if (btn) { btn.disabled = true; btn.textContent = action === 'in' ? 'Clocking in…' : 'Clocking out…'; }
+    let gps = null;
+    try {
+      gps = await new Promise((resolve, reject) => {
+        if (!navigator.geolocation) return resolve(null);   // server will skip fence if no coords + no fence
+        const t = setTimeout(() => reject(new Error('timeout')), 12000);
+        navigator.geolocation.getCurrentPosition(
+          p => { clearTimeout(t); resolve({ lat: p.coords.latitude, lng: p.coords.longitude, accuracyM: p.coords.accuracy }); },
+          err => { clearTimeout(t); resolve(null); },     // missing GPS → server decides whether to allow
+          { enableHighAccuracy: true, maximumAge: 30000, timeout: 10000 }
+        );
+      });
+    } catch(e) { gps = null; }
+    try {
+      const r = await fetch('/api/timeclock/punch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, timestamp: new Date().toISOString(), gps }),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        this.showToast(data.error || 'Punch failed', 'warn');
+        if (btn) btn.disabled = false;
+        this.renderMain();
+        return;
+      }
+      // Refresh data so the panel updates with the new punch state.
+      const dResp = await fetch('/api/data');
+      if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
+      this.showToast(action === 'in' ? 'Clocked in' : `Clocked out — ${data.record.hours} hrs today`);
+      this.renderMain();
+    } catch(e) {
+      this.showToast('Network error — try again', 'warn');
+      if (btn) btn.disabled = false;
+    }
+  },
+  employeeClockIn()  { return this._employeePunchAction('in'); },
+  employeeClockOut() { return this._employeePunchAction('out'); },
 
   empSelectDay(dateStr) {
     // Show a simple shift detail for the employee's own shift on that day

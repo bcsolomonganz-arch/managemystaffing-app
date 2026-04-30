@@ -2029,6 +2029,413 @@ app.delete('/api/buildings/:id/provision-sms', requireAuth, requireSuperAdmin, a
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TIME CLOCK — primary T&A for the platform
+// ─────────────────────────────────────────────────────────────────────────────
+// Three punch entry paths, all writing to data.hrTimeClock:
+//   1. In-app mobile (/api/timeclock/punch with session auth + GPS)
+//   2. Kiosk tablet at the nurse station (/kiosk/<buildingId> page)
+//   3. Bridge from existing physical clocks via signed webhook
+// Plus admin correction via PATCH on individual records.
+
+const TIMECLOCK_KIOSK_SECRET = process.env.TIMECLOCK_KIOSK_SECRET || JWT_SECRET;
+
+// Distance helper (Haversine, meters) for geofence checks.
+function _haversineMeters(lat1, lng1, lat2, lng2) {
+  const toRad = d => d * Math.PI / 180;
+  const R = 6371000;
+  const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// Punch status classifier. Cross-references the scheduled shift for this
+// (empId, date) to detect late arrivals, missed clock-outs, and >15-minute
+// early arrivals.
+function _classifyPunch(emp, date, inTime, outTime, shifts) {
+  const sched = (shifts || []).find(s =>
+    s.employeeId === emp.id && s.date === date && s.status === 'scheduled');
+  if (!inTime) return 'missed';
+  if (!outTime) return 'no-out';
+  const toMin = t => { if(!t) return null; const [h,m]=String(t).trim().split(':').map(Number); return h*60+(m||0); };
+  const inMin = toMin(inTime);
+  const schedIn = toMin(sched?.start);
+  if (schedIn != null && inMin != null && (inMin - schedIn) > 7) return 'late';
+  if (schedIn != null && inMin != null && (schedIn - inMin) > 15) return 'early';
+  return 'normal';
+}
+
+// Find an existing punch record for (empId, date) — punches dedupe per day.
+function _findOrCreatePunch(data, empId, date) {
+  if (!Array.isArray(data.hrTimeClock)) data.hrTimeClock = [];
+  let r = data.hrTimeClock.find(x => x.empId === empId && x.date === date);
+  if (!r) {
+    r = { empId, date, in: '', out: '', hours: '', status: 'normal' };
+    data.hrTimeClock.push(r);
+  }
+  return r;
+}
+
+// Apply a single punch event (action: 'in' | 'out') to data.hrTimeClock.
+// Returns { ok, record } or { error }.
+function _applyPunch(data, emp, action, when, sourceMeta = {}) {
+  if (!emp) return { error: 'Employee not found' };
+  if (emp.inactive) return { error: 'Employee is inactive' };
+  if (!['in','out'].includes(action)) return { error: 'action must be "in" or "out"' };
+  const ts = when instanceof Date ? when : new Date(when || Date.now());
+  if (isNaN(ts.getTime())) return { error: 'invalid timestamp' };
+  const date = ts.toISOString().slice(0,10);
+  const time = ts.toISOString().slice(11,16);  // HH:MM (UTC)
+
+  const r = _findOrCreatePunch(data, emp.id, date);
+  // Snapshot identity fields on each row so HR Time Clock UI shows correctly
+  // even if employee is later renamed / reassigned.
+  r.name = emp.name; r.role = emp.group; r.buildingId = emp.buildingId;
+
+  if (action === 'in') {
+    if (r.in) return { error: 'Already clocked in for today (in='+r.in+')' };
+    r.in = time;
+  } else {
+    if (!r.in) return { error: 'No clock-in recorded yet for today — clock in first' };
+    if (r.out) return { error: 'Already clocked out (out='+r.out+')' };
+    r.out = time;
+    // Compute hours
+    const [ih, im] = r.in.split(':').map(Number);
+    const [oh, om] = r.out.split(':').map(Number);
+    let mins = (oh*60 + (om||0)) - (ih*60 + (im||0));
+    if (mins < 0) mins += 24*60;
+    r.hours = (mins / 60).toFixed(2);
+  }
+  r.status = _classifyPunch(emp, date, r.in, r.out, data.shifts || []);
+  // Append source metadata to a punch-events array on the record (for audit)
+  if (!Array.isArray(r.events)) r.events = [];
+  r.events.push({
+    action, at: ts.toISOString(),
+    source: sourceMeta.source || 'unknown',
+    deviceId: sourceMeta.deviceId || null,
+    gps: sourceMeta.gps || null,
+  });
+  return { ok: true, record: r };
+}
+
+// POST /api/timeclock/punch — in-app mobile or admin-on-behalf punch.
+// Body: { empId?, action: 'in'|'out', timestamp?, gps?: {lat,lng,accuracyM}, selfie?: base64 }
+// Auth: requires JWT cookie; employee can only punch themselves; admin can
+// punch any employee in their building. Geofence enforced for employees.
+app.post('/api/timeclock/punch', requireAuth, async (req, res) => {
+  const data = await loadData();
+  const me = req.user;
+  let { empId, action, timestamp, gps } = req.body || {};
+  // Default empId to caller for employees
+  if (me.role === 'employee') empId = me.id;
+  if (!empId) return res.status(400).json({ error: 'empId is required for non-employee callers' });
+  const emp = (data.employees || []).find(e => e.id === empId);
+  if (!emp) return res.status(404).json({ error: 'Employee not found' });
+  // Authz scoping for non-SA admins
+  if (me.role === 'admin') {
+    const callerBIds = new Set([me.buildingId, ...(me.buildingIds||[])].filter(Boolean));
+    if (!callerBIds.has(emp.buildingId)) return res.status(403).json({ error: 'Out of scope' });
+  }
+  if (me.role === 'employee' && me.id !== empId) return res.status(403).json({ error: 'Employees can only punch themselves' });
+
+  // Geofence check — employees only, only when building has lat/lng configured.
+  if (me.role === 'employee') {
+    const b = (data.buildings || []).find(x => x.id === emp.buildingId);
+    if (b?.lat != null && b?.lng != null) {
+      const radius = b.geofenceRadiusM || 200;
+      if (!gps || gps.lat == null || gps.lng == null) {
+        auditLog('PUNCH_REJECTED_NO_GPS', me, { empId });
+        return res.status(412).json({ error: 'Location required to clock in/out. Allow location access in your browser.' });
+      }
+      const dist = _haversineMeters(b.lat, b.lng, gps.lat, gps.lng);
+      if (dist > radius + (gps.accuracyM || 0)) {
+        auditLog('PUNCH_REJECTED_GEOFENCE', me, { empId, distanceM: Math.round(dist), radius });
+        return res.status(412).json({
+          error: `You're ${Math.round(dist)}m from the facility (max ${radius}m). Are you on site?`,
+        });
+      }
+    }
+  }
+
+  const result = _applyPunch(data, emp, action, timestamp, {
+    source: me.role === 'employee' ? 'mobile' : 'admin',
+    gps: gps ? { lat: gps.lat, lng: gps.lng, accuracyM: gps.accuracyM || null } : null,
+  });
+  if (result.error) return res.status(400).json({ error: result.error });
+  markDirty();
+  auditLog('PUNCH_RECORDED', me, { empId, action, source: me.role === 'employee' ? 'mobile' : 'admin' });
+  res.json({ ok: true, record: result.record });
+});
+
+// POST /api/timeclock/kiosk-punch — punch from the tablet kiosk.
+// Body: { kioskToken, pin, action }
+// Authentication: kiosk JWT (signed with TIMECLOCK_KIOSK_SECRET) carries the
+// buildingId. PIN identifies the employee within that building. Three failed
+// PINs in a 60-second window from the same kiosk locks the kiosk for 5 min.
+const _kioskFailures = new Map();   // kioskId → { count, until }
+app.post('/api/timeclock/kiosk-punch', async (req, res) => {
+  const { kioskToken, pin, action } = req.body || {};
+  if (!kioskToken || !pin || !action) return res.status(400).json({ error: 'kioskToken, pin, action required' });
+  let decoded;
+  try { decoded = jwt.verify(kioskToken, TIMECLOCK_KIOSK_SECRET); }
+  catch { return res.status(401).json({ error: 'Invalid or expired kiosk token' }); }
+  if (decoded.kind !== 'kiosk' || !decoded.buildingId) return res.status(401).json({ error: 'Bad kiosk token' });
+  const kioskId = decoded.kioskId || decoded.buildingId;
+  const f = _kioskFailures.get(kioskId);
+  if (f && f.until > Date.now()) return res.status(429).json({ error: 'Too many failed PIN attempts. Wait 5 minutes.' });
+
+  const data = await loadData();
+  // Find employee whose pinHash matches AND who's at this building.
+  const candidates = (data.employees || []).filter(e =>
+    e.buildingId === decoded.buildingId && !e.inactive && e.pinHash);
+  let matched = null;
+  for (const e of candidates) {
+    if (await bcrypt.compare(String(pin), e.pinHash)) { matched = e; break; }
+  }
+  if (!matched) {
+    const next = (f?.count || 0) + 1;
+    _kioskFailures.set(kioskId, { count: next, until: next >= 3 ? Date.now() + 5*60*1000 : 0 });
+    auditLog('KIOSK_PUNCH_BAD_PIN', null, { buildingId: decoded.buildingId, kioskId, attempt: next });
+    return res.status(401).json({ error: 'PIN not recognized. Check your 4-digit code or ask your supervisor.' });
+  }
+  _kioskFailures.delete(kioskId);
+
+  const result = _applyPunch(data, matched, action, new Date(), {
+    source: 'kiosk',
+    deviceId: kioskId,
+  });
+  if (result.error) return res.status(400).json({ error: result.error });
+  markDirty();
+  auditLog('PUNCH_RECORDED', null, { empId: matched.id, action, source: 'kiosk', kioskId });
+  res.json({
+    ok: true,
+    employeeName: matched.name,
+    action,
+    timestamp: new Date().toISOString(),
+    todayHours: result.record.hours || null,
+  });
+});
+
+// POST /api/timeclock/kiosk-token — issue a kiosk JWT for a building.
+// Admin-only endpoint. Returns a long-lived token (1 year) that the tablet
+// stores in localStorage; the tablet then hits /api/timeclock/kiosk-punch.
+app.post('/api/timeclock/kiosk-token', requireAuth, requireAdmin, async (req, res) => {
+  const { buildingId } = req.body || {};
+  if (!buildingId) return res.status(400).json({ error: 'buildingId required' });
+  const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds||[])].filter(Boolean));
+  if (req.user.role !== 'superadmin' && !callerBIds.has(buildingId)) {
+    return res.status(403).json({ error: 'Out of scope' });
+  }
+  const kioskId = 'k_' + crypto.randomBytes(8).toString('hex');
+  const token = jwt.sign({
+    kind: 'kiosk', buildingId, kioskId, issuedBy: req.user.email,
+  }, TIMECLOCK_KIOSK_SECRET, { expiresIn: '365d' });
+  auditLog('KIOSK_TOKEN_ISSUED', req.user, { buildingId, kioskId });
+  res.json({ ok: true, kioskToken: token, kioskId });
+});
+
+// POST /api/timeclock/set-pin — admin sets/resets an employee's kiosk PIN.
+// Body: { empId, pin } — pin must be 4-6 digits. PIN is bcrypt-hashed.
+app.post('/api/timeclock/set-pin', requireAuth, requireAdmin, async (req, res) => {
+  const { empId, pin } = req.body || {};
+  if (!empId || !pin) return res.status(400).json({ error: 'empId and pin required' });
+  if (!/^\d{4,6}$/.test(String(pin))) return res.status(400).json({ error: 'PIN must be 4–6 digits' });
+  const data = await loadData();
+  const emp = (data.employees || []).find(e => e.id === empId);
+  if (!emp) return res.status(404).json({ error: 'Employee not found' });
+  const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds||[])].filter(Boolean));
+  if (req.user.role !== 'superadmin' && !callerBIds.has(emp.buildingId)) {
+    return res.status(403).json({ error: 'Out of scope' });
+  }
+  // Reject PIN collisions within the building (so kiosk can match by PIN alone).
+  for (const e of (data.employees || [])) {
+    if (e.id === emp.id || e.buildingId !== emp.buildingId || !e.pinHash) continue;
+    if (await bcrypt.compare(String(pin), e.pinHash)) {
+      return res.status(409).json({ error: 'PIN already in use at this building. Pick a different code.' });
+    }
+  }
+  emp.pinHash = await bcrypt.hash(String(pin), 12);
+  emp.pinSetAt = new Date().toISOString();
+  markDirty();
+  auditLog('TIMECLOCK_PIN_SET', req.user, { empId });
+  res.json({ ok: true });
+});
+
+// PATCH /api/timeclock/punch — admin correction.
+// Body: { empId, date, in?, out?, note? }
+app.patch('/api/timeclock/punch', requireAuth, requireAdmin, async (req, res) => {
+  const { empId, date, in: inTime, out: outTime, note } = req.body || {};
+  if (!empId || !date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'empId, date (YYYY-MM-DD) required' });
+  const data = await loadData();
+  const emp = (data.employees || []).find(e => e.id === empId);
+  if (!emp) return res.status(404).json({ error: 'Employee not found' });
+  const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds||[])].filter(Boolean));
+  if (req.user.role !== 'superadmin' && !callerBIds.has(emp.buildingId)) {
+    return res.status(403).json({ error: 'Out of scope' });
+  }
+  const r = _findOrCreatePunch(data, empId, date);
+  const before = { in: r.in, out: r.out };
+  if (inTime  !== undefined) r.in  = String(inTime  || '').slice(0,5);
+  if (outTime !== undefined) r.out = String(outTime || '').slice(0,5);
+  // Recompute hours + status if we have both
+  if (r.in && r.out) {
+    const [ih, im] = r.in.split(':').map(Number);
+    const [oh, om] = r.out.split(':').map(Number);
+    let mins = (oh*60 + (om||0)) - (ih*60 + (im||0));
+    if (mins < 0) mins += 24*60;
+    r.hours = (mins / 60).toFixed(2);
+  } else { r.hours = ''; }
+  r.status = _classifyPunch(emp, date, r.in, r.out, data.shifts || []);
+  r.name = emp.name; r.role = emp.group; r.buildingId = emp.buildingId;
+  if (!Array.isArray(r.events)) r.events = [];
+  r.events.push({
+    action: 'admin-edit', at: new Date().toISOString(),
+    source: 'admin', editor: req.user.email,
+    before, after: { in: r.in, out: r.out },
+    note: (note || '').slice(0, 500),
+  });
+  markDirty();
+  auditLog('PUNCH_EDITED', req.user, { empId, date, before, after: { in: r.in, out: r.out } });
+  res.json({ ok: true, record: r });
+});
+
+// GET /kiosk/:buildingId — serves the standalone tablet kiosk HTML page.
+// The page is locked to one building (token embedded server-side). No SPA
+// shell, no nav. Tablet can be left running 24/7 at the nurse station.
+app.get('/kiosk/:buildingId', async (req, res) => {
+  const buildingId = req.params.buildingId;
+  const data = await loadData();
+  const b = (data.buildings || []).find(x => x.id === buildingId);
+  if (!b) return res.status(404).type('text').send('Building not found');
+  // Issue a kiosk token for this device session. Long-lived (1 year) so the
+  // tablet doesn't need to re-authenticate. To revoke, change KIOSK_SECRET
+  // env var which invalidates all kiosk tokens system-wide.
+  const kioskId = 'k_' + crypto.randomBytes(8).toString('hex');
+  const kioskToken = jwt.sign({
+    kind: 'kiosk', buildingId, kioskId, autoIssued: true,
+  }, TIMECLOCK_KIOSK_SECRET, { expiresIn: '365d' });
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(_kioskHtml(b, kioskToken));
+});
+
+function _kioskHtml(building, kioskToken) {
+  const safeName = String(building.name || '').replace(/[<>"'&]/g, c => ({'<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','&':'&amp;'}[c]));
+  return `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Clock In / Out — ${safeName}</title>
+<style>
+  *,*::before,*::after { box-sizing:border-box }
+  html,body { height:100%; margin:0; font-family:'DM Sans',-apple-system,Segoe UI,sans-serif; background:#0f172a; color:#fff; -webkit-user-select:none; user-select:none; overscroll-behavior:none }
+  .wrap { max-width:540px; margin:0 auto; height:100%; display:flex; flex-direction:column; padding:24px 20px }
+  header { text-align:center; padding:20px 0 24px }
+  header .name { font-size:18px; font-weight:600; color:#94a3b8; letter-spacing:.04em; text-transform:uppercase }
+  header .clock { font-size:64px; font-weight:800; margin:8px 0; font-variant-numeric:tabular-nums; color:#fff }
+  header .date { font-size:16px; color:#94a3b8 }
+  .pad { background:#1e293b; border-radius:24px; padding:24px; margin-top:8px; box-shadow:0 8px 32px rgba(0,0,0,.4) }
+  .pin-display { font-size:48px; text-align:center; letter-spacing:24px; padding:16px 0 24px; font-variant-numeric:tabular-nums; min-height:80px; color:#6B9E7A; font-weight:800 }
+  .pin-display.empty { color:#475569; letter-spacing:8px; font-size:18px; font-weight:500 }
+  .keys { display:grid; grid-template-columns:repeat(3,1fr); gap:12px }
+  button { font-family:inherit; font-size:28px; font-weight:700; background:#334155; color:#fff; border:none; border-radius:16px; padding:24px 0; cursor:pointer; transition:transform .05s, background .15s; touch-action:manipulation }
+  button:active { transform:scale(0.95); background:#475569 }
+  button.action { font-size:18px; padding:18px 0 }
+  button.in  { background:#16a34a }
+  button.in:active { background:#15803d }
+  button.out { background:#dc2626 }
+  button.out:active { background:#991b1b }
+  button.del { background:#475569; font-size:20px }
+  button.clr { background:#475569; font-size:14px }
+  .actions { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:16px }
+  .toast { position:fixed; left:50%; top:24px; transform:translateX(-50%); background:#1e293b; border:1px solid #334155; padding:14px 22px; border-radius:12px; max-width:90%; text-align:center; font-size:16px; font-weight:600; box-shadow:0 12px 36px rgba(0,0,0,.6); transition:opacity .25s, transform .25s; opacity:0; pointer-events:none; z-index:10 }
+  .toast.show { opacity:1; transform:translateX(-50%) translateY(0) }
+  .toast.ok { border-color:#16a34a }
+  .toast.err { border-color:#dc2626 }
+  .toast .who { color:#94a3b8; font-size:13px; font-weight:500; margin-top:2px }
+  footer { padding:18px 0; text-align:center; color:#475569; font-size:12px }
+</style></head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="name">${safeName}</div>
+    <div class="clock" id="clock">--:--</div>
+    <div class="date" id="date">—</div>
+  </header>
+  <div class="pad">
+    <div class="pin-display empty" id="pin">Enter PIN</div>
+    <div class="keys">
+      <button onclick="press('1')">1</button>
+      <button onclick="press('2')">2</button>
+      <button onclick="press('3')">3</button>
+      <button onclick="press('4')">4</button>
+      <button onclick="press('5')">5</button>
+      <button onclick="press('6')">6</button>
+      <button onclick="press('7')">7</button>
+      <button onclick="press('8')">8</button>
+      <button onclick="press('9')">9</button>
+      <button class="clr" onclick="clearPin()">Clear</button>
+      <button onclick="press('0')">0</button>
+      <button class="del" onclick="del()">⌫</button>
+    </div>
+    <div class="actions">
+      <button class="action in"  onclick="punch('in')">CLOCK IN</button>
+      <button class="action out" onclick="punch('out')">CLOCK OUT</button>
+    </div>
+  </div>
+  <footer>Tablet kiosk · Punches recorded immediately</footer>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const KIOSK_TOKEN = ${JSON.stringify(kioskToken)};
+let pinBuf = '';
+function $(id){return document.getElementById(id)}
+function refreshPin(){
+  const el = $('pin');
+  if (!pinBuf) { el.textContent = 'Enter PIN'; el.classList.add('empty'); return; }
+  el.textContent = '•'.repeat(pinBuf.length);
+  el.classList.remove('empty');
+}
+function press(d){ if (pinBuf.length < 6) { pinBuf += d; refreshPin(); } }
+function del(){ pinBuf = pinBuf.slice(0, -1); refreshPin(); }
+function clearPin(){ pinBuf=''; refreshPin(); }
+function showToast(msg, who, kind){
+  const t = $('toast');
+  t.className = 'toast show ' + (kind||'ok');
+  t.innerHTML = msg + (who?'<div class="who">'+who+'</div>':'');
+  setTimeout(()=>{ t.className='toast '+(kind||''); }, 4000);
+}
+async function punch(action){
+  if (pinBuf.length < 4) { showToast('Enter your 4-digit PIN','','err'); return; }
+  const pin = pinBuf;
+  try {
+    const r = await fetch('/api/timeclock/kiosk-punch', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ kioskToken: KIOSK_TOKEN, pin, action }),
+    });
+    const data = await r.json();
+    if (!r.ok) { showToast(data.error || 'Punch failed', '', 'err'); pinBuf=''; refreshPin(); return; }
+    const verb = action === 'in' ? 'Clocked in' : 'Clocked out';
+    showToast('✓ ' + verb, data.employeeName + (data.todayHours ? ' · ' + data.todayHours + ' hrs today' : ''), 'ok');
+    pinBuf=''; refreshPin();
+  } catch (e) {
+    showToast('Network error — try again', '', 'err');
+  }
+}
+function tick(){
+  const d = new Date();
+  $('clock').textContent = d.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' });
+  $('date').textContent = d.toLocaleDateString([], { weekday:'long', month:'long', day:'numeric' });
+}
+tick(); setInterval(tick, 1000);
+// Disable context menu and pull-to-refresh on tablet
+document.addEventListener('contextmenu', e => e.preventDefault());
+</script>
+</body></html>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // LOGIN
 // ─────────────────────────────────────────────────────────────────────────────
 // Body: { email, password, totp?, totpSetupCode? }
