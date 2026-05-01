@@ -4087,6 +4087,54 @@ app.patch('/api/timeclock/punch', requireAuth, requireAdmin, async (req, res) =>
   res.json({ ok: true, record: r });
 });
 
+// ── NOTIFICATIONS ────────────────────────────────────────────────────────────
+// Lightweight in-app inbox. Items are written by _notify(); each has a
+// toAccountId (or toEmail fallback). Caller sees only their own items.
+// Limit: 200 most recent unread → unread first, capped to keep responses small.
+app.get('/api/notifications', requireAuth, async (req, res) => {
+  const data  = await loadData();
+  const all   = (data.notifications || []);
+  const myId  = req.user.id;
+  const myEmail = (req.user.email || '').toLowerCase();
+  const mine = all.filter(n =>
+    (n.toAccountId && n.toAccountId === myId) ||
+    (!n.toAccountId && n.toEmail && n.toEmail.toLowerCase() === myEmail)
+  );
+  // Already sorted newest-first by _notify() (unshift).
+  const unreadCount = mine.filter(n => !n.readAt).length;
+  res.json({
+    items: mine.slice(0, 200),
+    unreadCount,
+  });
+});
+
+app.post('/api/notifications/:id/read', requireAuth, async (req, res) => {
+  const data = await loadData();
+  const n = (data.notifications || []).find(x => x.id === req.params.id);
+  if (!n) return res.status(404).json({ error: 'Notification not found' });
+  // Only the owner can mark their own notification read.
+  const myEmail = (req.user.email || '').toLowerCase();
+  const owns = (n.toAccountId && n.toAccountId === req.user.id) ||
+               (!n.toAccountId && n.toEmail && n.toEmail.toLowerCase() === myEmail);
+  if (!owns) return res.status(403).json({ error: 'Not your notification' });
+  if (!n.readAt) { n.readAt = new Date().toISOString(); markDirty(); }
+  res.json({ ok: true });
+});
+
+app.post('/api/notifications/read-all', requireAuth, async (req, res) => {
+  const data = await loadData();
+  const myEmail = (req.user.email || '').toLowerCase();
+  let count = 0;
+  const now = new Date().toISOString();
+  for (const n of (data.notifications || [])) {
+    const owns = (n.toAccountId && n.toAccountId === req.user.id) ||
+                 (!n.toAccountId && n.toEmail && n.toEmail.toLowerCase() === myEmail);
+    if (owns && !n.readAt) { n.readAt = now; count++; }
+  }
+  if (count > 0) markDirty();
+  res.json({ ok: true, marked: count });
+});
+
 // GET /api/timeclock/punch/pending — list pending HR-Admin punch edits
 // scoped to caller's buildings.
 app.get('/api/timeclock/punch/pending', requireAuth, requireAdmin, async (req, res) => {
@@ -4159,12 +4207,31 @@ app.post('/api/timeclock/punch/:editId/decide', requireAuth, requireAdmin, async
         body: `${req.user.email} approved an HR-Admin punch correction for ${pe.empName} on ${pe.date}: ${pe.before.in||'—'}-${pe.before.out||'—'} → ${pe.proposed.in||'—'}-${pe.proposed.out||'—'}.`,
       });
     }
+    // Round-trip back to the HR Admin who requested it so they see the result.
+    _notify(data, {
+      kind: 'PUNCH_EDIT_APPROVED_BY_ADMIN',
+      toAccountId: pe.requestedBy.id, toEmail: pe.requestedBy.email,
+      buildingId: pe.buildingId,
+      editId: pe.id, empId: pe.empId, empName: pe.empName, date: pe.date,
+      approvedBy: req.user.email,
+      title: `Your punch correction was approved`,
+      body: `${req.user.email} approved your punch correction for ${pe.empName} on ${pe.date}.`,
+    });
     markDirty();
     auditLog('PUNCH_EDIT_APPROVED', req.user, { editId: pe.id, empId: pe.empId, date: pe.date, before, after: { in: r.in, out: r.out }, requestedBy: pe.requestedBy.email });
     return res.json({ ok: true, status: 'approved', record: r });
   }
 
-  // Reject: just stamp the record; no time-clock change.
+  // Reject: stamp the record + notify the HR Admin so they aren't waiting forever.
+  _notify(data, {
+    kind: 'PUNCH_EDIT_REJECTED',
+    toAccountId: pe.requestedBy.id, toEmail: pe.requestedBy.email,
+    buildingId: pe.buildingId,
+    editId: pe.id, empId: pe.empId, empName: pe.empName, date: pe.date,
+    rejectedBy: req.user.email,
+    title: `Your punch correction was rejected`,
+    body: `${req.user.email} rejected your punch correction for ${pe.empName} on ${pe.date}.${decisionNote ? ' Reason: ' + decisionNote : ''}`,
+  });
   markDirty();
   auditLog('PUNCH_EDIT_REJECTED', req.user, { editId: pe.id, empId: pe.empId, date: pe.date, requestedBy: pe.requestedBy.email });
   res.json({ ok: true, status: 'rejected' });

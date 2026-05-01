@@ -2491,8 +2491,16 @@ const App = {
         ${u.role === 'admin' ? `<button class="btn btn-primary btn-sm" onclick="App.openModal('modal-add-emp')">+ Add Employee</button>` : ''}`;
     }
 
+    // Notifications bell — visible to anyone signed in. Unread count badged.
+    const noteUnread = (this._cachedNotifications || []).filter(n => !n.readAt).length;
+    const noteBell = `<button onclick="App.openNotifications(event)" title="Notifications" style="position:relative;background:transparent;border:none;cursor:pointer;padding:6px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center" onmouseover="this.style.background='var(--g100)'" onmouseout="this.style.background='transparent'">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+      ${noteUnread > 0 ? `<span style="position:absolute;top:1px;right:1px;background:#DC2626;color:#fff;font-size:10px;font-weight:800;min-width:16px;height:16px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px">${noteUnread > 99 ? '99+' : noteUnread}</span>` : ''}
+    </button>`;
+
     document.getElementById('header-actions').innerHTML = `
       ${adminBtns} ${roleBadge}
+      ${noteBell}
       <div class="avatar-menu">
         <div class="avatar">${initials}</div>
         <div class="avatar-dropdown">
@@ -10276,6 +10284,97 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     } catch(e) { this.showToast('Network error','warn'); }
   },
 
+  // ── NOTIFICATIONS BELL ──────────────────────────────────────────────────
+  // Polls /api/notifications every 60s while a privileged user is logged in.
+  // The badge in the header is driven by `this._cachedNotifications`.
+  async _refreshNotifications() {
+    try {
+      const r = await fetch('/api/notifications');
+      if (!r.ok) return;
+      const data = await r.json();
+      this._cachedNotifications = data.items || [];
+      this.renderHeader?.();
+    } catch (e) { /* offline → silent */ }
+  },
+
+  _startNotificationsPoll() {
+    if (this._notePollTimer) return;
+    this._notePollTimer = setInterval(() => this._refreshNotifications(), 60 * 1000);
+  },
+
+  async openNotifications(ev) {
+    try { ev?.stopPropagation?.(); } catch {}
+    await this._refreshNotifications();
+    const items = this._cachedNotifications || [];
+    const fmt = iso => { try { return new Date(iso).toLocaleString(); } catch { return iso; } };
+    const iconFor = kind => {
+      if (kind === 'PUNCH_EDIT_PENDING')          return '⏱';
+      if (kind === 'PUNCH_EDIT_APPROVED' ||
+          kind === 'PUNCH_EDIT_APPROVED_BY_ADMIN') return '✓';
+      if (kind === 'PUNCH_EDIT_REJECTED')         return '✕';
+      return '•';
+    };
+    const colorFor = kind => {
+      if (kind === 'PUNCH_EDIT_PENDING')          return '#7E22CE';
+      if (kind === 'PUNCH_EDIT_APPROVED' ||
+          kind === 'PUNCH_EDIT_APPROVED_BY_ADMIN') return '#047857';
+      if (kind === 'PUNCH_EDIT_REJECTED')         return '#DC2626';
+      return 'var(--g600)';
+    };
+    const rowsHtml = items.length
+      ? items.map(n => {
+          const c = colorFor(n.kind);
+          return `<div onclick="App.markNotificationRead('${n.id}', '${n.kind || ''}')" style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid var(--g100);cursor:pointer;background:${n.readAt ? '#fff' : '#FEF9C3'}" onmouseover="this.style.background='${n.readAt ? 'var(--g50)' : '#FDE68A'}'" onmouseout="this.style.background='${n.readAt ? '#fff' : '#FEF9C3'}'">
+            <div style="width:26px;height:26px;border-radius:50%;background:${c}22;color:${c};display:flex;align-items:center;justify-content:center;font-weight:800;flex-shrink:0">${iconFor(n.kind)}</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:${n.readAt?'500':'700'};color:var(--g900);font-size:13px;line-height:1.3">${sanitize(n.title || n.kind || 'Notification')}</div>
+              <div style="font-size:12px;color:var(--g700);margin-top:3px;line-height:1.4">${sanitize(n.body || '')}</div>
+              <div style="font-size:10px;color:var(--g500);margin-top:4px">${sanitize(fmt(n.createdAt))}</div>
+            </div>
+          </div>`;
+        }).join('')
+      : `<div style="padding:40px 18px;text-align:center;color:var(--g500);font-size:13px">No notifications.</div>`;
+
+    document.getElementById('notif-popover')?.remove();
+    const pop = document.createElement('div');
+    pop.id = 'notif-popover';
+    pop.style.cssText = 'position:fixed;top:54px;right:18px;width:380px;max-height:520px;background:#fff;border:1.5px solid var(--g200);border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.15);z-index:9999;display:flex;flex-direction:column;overflow:hidden';
+    pop.innerHTML = `<div style="padding:12px 14px;border-bottom:1px solid var(--g200);display:flex;align-items:center;justify-content:space-between;background:var(--g50)">
+        <div style="font-weight:800;color:var(--g900);font-size:14px">Notifications</div>
+        ${items.some(n=>!n.readAt) ? `<button onclick="App.markAllNotificationsRead()" style="background:transparent;border:none;color:var(--blue-d);font-size:12px;font-weight:600;cursor:pointer;padding:0">Mark all read</button>` : ''}
+      </div>
+      <div style="overflow-y:auto;flex:1">${rowsHtml}</div>`;
+    document.body.appendChild(pop);
+    // Click anywhere outside to dismiss
+    setTimeout(() => {
+      const off = (e) => { if (!pop.contains(e.target)) { pop.remove(); document.removeEventListener('click', off); } };
+      document.addEventListener('click', off);
+    }, 50);
+  },
+
+  async markNotificationRead(id, kind) {
+    try {
+      await fetch(`/api/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' });
+      const n = (this._cachedNotifications || []).find(x => x.id === id);
+      if (n) n.readAt = new Date().toISOString();
+      this.renderHeader?.();
+      // Deep-link: pending punch alerts route into the inbox modal.
+      if (kind === 'PUNCH_EDIT_PENDING') {
+        document.getElementById('notif-popover')?.remove();
+        this.openPendingPunchInbox();
+      }
+    } catch (e) { /* silent */ }
+  },
+
+  async markAllNotificationsRead() {
+    try {
+      await fetch('/api/notifications/read-all', { method: 'POST' });
+      for (const n of (this._cachedNotifications || [])) n.readAt = n.readAt || new Date().toISOString();
+      document.getElementById('notif-popover')?.remove();
+      this.renderHeader?.();
+    } catch (e) { /* silent */ }
+  },
+
   // ── PENDING PUNCH-EDIT INBOX ────────────────────────────────────────────
   // Surfaced as a header chip "<n> pending" for full Admins. Approving an
   // entry commits the HR-Admin's proposed in/out and fires a notification
@@ -13978,6 +14077,11 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     // so the header chip is accurate before the user navigates anywhere.
     if (this.S.user?.role === 'admin' || this.S.user?.role === 'superadmin') {
       this._refreshPendingPunches?.();
+    }
+    // Notifications bell — visible to anyone signed in.
+    if (this.S.user?.id && IS_SERVER_MODE) {
+      this._refreshNotifications?.();
+      this._startNotificationsPoll?.();
     }
     if (data.hrOnboarding && typeof data.hrOnboarding === 'object') {
       if (data.hrOnboarding.TX && !data.hrOnboarding.co_skyblue) {
