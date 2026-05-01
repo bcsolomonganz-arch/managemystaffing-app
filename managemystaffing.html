@@ -2432,6 +2432,8 @@ const App = {
       ? '<span class="role-badge role-super">Super Admin</span>'
       : u.role === 'admin'
       ? '<span class="role-badge role-admin">Admin</span>'
+      : u.role === 'hradmin'
+      ? '<span class="role-badge" style="background:#FAF5FF;color:#7E22CE;border:1px solid #E9D5FF">HR Admin</span>'
       : u.role === 'regionaladmin'
       ? '<span class="role-badge" style="background:#F0FDF4;color:#166534;border:1px solid #BBF7D0">Regional Admin</span>'
       : u.role === 'hrcandidate'
@@ -2469,17 +2471,24 @@ const App = {
       adminBtns = `
         <button class="btn btn-ghost btn-sm" onclick="App.openAuditLog()" title="HIPAA Audit Log" style="display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg> Audit</button>
         <button class="btn btn-primary btn-sm" onclick="App.openModal('modal-building')">+ Add Building</button>`;
-    } else if (u.role === 'admin') {
+    } else if (u.role === 'admin' || u.role === 'hradmin') {
       const backBtn = this.S._prevUser
         ? `<button class="btn btn-ghost btn-sm" onclick="App.backToPlatform()" style="color:var(--blue-d);border:1.5px solid var(--blue-m)">← Platform</button>`
         : '';
+      // Pending punch-edit count drives an inbox badge for full Admins (the
+      // approvers). HR Admins don't see this — they're the requesters.
+      const pendCount = (u.role === 'admin') ? this._pendingPunchCount() : 0;
+      const pendBadge = pendCount > 0
+        ? `<button class="btn btn-ghost btn-sm" onclick="App.openPendingPunchInbox()" style="display:flex;align-items:center;gap:5px;color:#7E22CE;border:1.5px solid #E9D5FF" title="HR Admin punch corrections waiting on your approval"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg> ${pendCount} pending</button>`
+        : '';
       adminBtns = `
         ${backBtn}
+        ${pendBadge}
         <button class="btn btn-ghost btn-sm" onclick="App.openAuditLog()" style="display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg> Audit</button>
         <button class="btn btn-ghost btn-sm" onclick="App.openRoster()" style="display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg> Roster</button>
         <button class="btn btn-ghost btn-sm" onclick="App.openMassSwapModal()" style="display:flex;align-items:center;gap:5px" title="Mass-reassign one employee's shifts to another (vacation coverage)"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg> Mass Swap</button>
         <button class="btn btn-secondary btn-sm" onclick="App.openAlertModal()" style="display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> Alert</button>
-        <button class="btn btn-primary btn-sm" onclick="App.openModal('modal-add-emp')">+ Add Employee</button>`;
+        ${u.role === 'admin' ? `<button class="btn btn-primary btn-sm" onclick="App.openModal('modal-add-emp')">+ Add Employee</button>` : ''}`;
     }
 
     document.getElementById('header-actions').innerHTML = `
@@ -8928,17 +8937,55 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       </tr>`;
     }).join('') : `<tr><td colspan="4" style="padding:30px;text-align:center;color:var(--g600)">No subscriptions yet. Click <strong>+ New Report</strong> to set one up.</td></tr>`;
 
+    // Default reporting window: trailing 30 days
+    const today = new Date();
+    const end   = today.toISOString().slice(0,10);
+    const startD = new Date(today.getTime() - 29 * 86400000);
+    const start = startD.toISOString().slice(0,10);
+    const defaultBId = (myBuildings[0]?.id) || '';
+    const bldOpts = myBuildings.map(b =>
+      `<option value="${b.id}">${sanitize(b.name)}</option>`).join('');
+
     return `<div style="padding:24px">
       ${this.hrHipaaBar()}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px">
         <div>
           <div class="hr-page-title">Reports</div>
-          <div class="hr-page-sub">Daily email digests · Friday rolls up the week · last day of the month rolls up the month</div>
+          <div class="hr-page-sub">Email digests · live PCC census · CMS quality metrics</div>
         </div>
-        <button class="btn btn-primary" onclick="App.editReport()">+ New Report</button>
+        <button class="btn btn-primary" onclick="App.editReport()">+ New Email Report</button>
       </div>
+
+      <!-- ── PCC Census + Nursing CMS Metrics ─────────────────────────── -->
+      <div style="background:#fff;border:1.5px solid var(--g200);border-radius:10px;padding:16px 18px;margin-bottom:18px">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+          <div>
+            <div style="font-size:15px;font-weight:800;color:var(--g900)">Clinical Reports — PCC Census &amp; CMS Quality</div>
+            <div style="font-size:12px;color:var(--g500);margin-top:2px">UTIs, re-hospitalizations, weight loss, antipsychotics, falls, pressure ulcers, catheter use, C. diff. Pulled live from PointClickCare or your last cached upload.</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:12px">
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Building</label>
+            <select id="clin-bld" style="padding:8px 12px;border:1.5px solid var(--g200);border-radius:8px;font-size:13px;min-width:200px">${bldOpts}</select>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">From</label>
+            <input type="date" id="clin-start" value="${start}" style="padding:8px 12px;border:1.5px solid var(--g200);border-radius:8px;font-size:13px">
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">To</label>
+            <input type="date" id="clin-end" value="${end}" style="padding:8px 12px;border:1.5px solid var(--g200);border-radius:8px;font-size:13px">
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="App.runClinicalReport()" style="margin-bottom:1px">Run Report</button>
+          <button class="btn btn-ghost btn-sm" onclick="App.runCensusReport()" style="margin-bottom:1px">Census Only</button>
+        </div>
+        <div id="clin-results" style="margin-top:12px"></div>
+      </div>
+
+      <!-- ── Email digest subscriptions ────────────────────────────────── -->
       <div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:12px;color:var(--g700)">
-        Reports send at 6am Central daily. Each email contains an inline HTML table — no attachments. The
+        Email reports send at 6am Central daily. Each email contains an inline HTML table — no attachments. The
         previous day's data is included; Fridays add weekly totals and the last day of the month adds month totals.
       </div>
       <table class="admin-table" style="background:#fff;border:1px solid var(--g200);border-radius:8px;overflow:hidden;width:100%">
@@ -8954,6 +9001,114 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       </table>
       <div id="report-edit-modal-host"></div>
     </div>`;
+  },
+
+  async runClinicalReport() {
+    const bId   = document.getElementById('clin-bld')?.value || '';
+    const start = document.getElementById('clin-start')?.value || '';
+    const end   = document.getElementById('clin-end')?.value || '';
+    const host  = document.getElementById('clin-results');
+    if (!host) return;
+    if (!start || !end) { this.showToast('Pick a date range','warn'); return; }
+    host.innerHTML = `<div style="padding:30px;text-align:center;color:var(--g600);font-size:13px">Loading clinical metrics from PCC…</div>`;
+    try {
+      const url = `/api/pcc/clinical?buildingId=${encodeURIComponent(bId)}&start=${start}&end=${end}`;
+      const r = await fetch(url);
+      const data = await r.json();
+      if (!r.ok) { host.innerHTML = `<div style="color:var(--red);padding:14px">${sanitize(data.error || 'Failed')}</div>`; return; }
+      this._renderClinicalResults(host, data);
+    } catch (e) {
+      host.innerHTML = `<div style="color:var(--red);padding:14px">Network error: ${sanitize(e.message)}</div>`;
+    }
+  },
+
+  _renderClinicalResults(host, data) {
+    const m = data.metrics || {};
+    const r = data.ratePer1000 || {};
+    const tile = (label, count, rate, sub) => `<div style="background:var(--g50);border:1.5px solid var(--g200);border-radius:10px;padding:14px">
+      <div style="font-size:11px;color:var(--g600);font-weight:700;text-transform:uppercase;letter-spacing:.04em">${label}</div>
+      <div style="font-size:26px;font-weight:800;color:var(--g900);margin-top:6px">${count ?? '—'}</div>
+      ${rate != null ? `<div style="font-size:11px;color:var(--g500);margin-top:2px">${rate} per 1,000 resident-days</div>` : ''}
+      ${sub ? `<div style="font-size:11px;color:var(--g600);margin-top:4px">${sub}</div>` : ''}
+    </div>`;
+
+    const sourceChip = data.source === 'live'
+      ? `<span style="background:var(--green-l);color:#047857;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700">LIVE FROM PCC</span>`
+      : `<span style="background:#FEF3C7;color:#92400E;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700">CACHED — PCC NOT CONFIGURED</span>`;
+
+    host.innerHTML = `<div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+        <div style="font-size:13px;color:var(--g600)">${sanitize(data.start)} → ${sanitize(data.end)} · ${data.residentDays || 0} resident-days · ${sourceChip}</div>
+        <button class="btn btn-ghost btn-sm" onclick="App.exportClinicalCSV()">Export CSV</button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px">
+        ${tile('UTIs',                       m.utis,                     r.utis)}
+        ${tile('30-day Re-hospitalizations', m.rehospitalizations30d,    r.rehospitalizations30d)}
+        ${tile('Significant Weight Loss',    m.weightLossSignificant,    r.weightLossSignificant, '≥5% in 30d or ≥10% in 180d')}
+        ${tile('Antipsychotic — Long Term',  m.antipsychoticLongTerm,    r.antipsychoticLongTerm, '≥90 days w/o supporting Dx')}
+        ${tile('Falls w/ Major Injury',      m.fallsMajorInjury,         r.fallsMajorInjury)}
+        ${tile('Pressure Ulcers (Stage 2+)', m.pressureUlcersStage2plus, r.pressureUlcersStage2plus)}
+        ${tile('Catheter — Long Stay',       m.catheterLongStay,         r.catheterLongStay, '≥14 days')}
+        ${tile('C. diff infections',         m.cdiffInfections,          r.cdiffInfections)}
+      </div>
+      ${data.note ? `<div style="font-size:11px;color:var(--g500);margin-top:10px;font-style:italic">${sanitize(data.note)}</div>` : ''}
+    </div>`;
+    this._lastClinical = data;
+  },
+
+  exportClinicalCSV() {
+    const d = this._lastClinical;
+    if (!d) { this.showToast('Run a report first','warn'); return; }
+    const m = d.metrics || {}, r = d.ratePer1000 || {};
+    const rows = [
+      ['Metric','Count','Rate per 1,000 resident-days'],
+      ['UTIs',                       m.utis,                     r.utis ?? ''],
+      ['30-day Re-hospitalizations', m.rehospitalizations30d,    r.rehospitalizations30d ?? ''],
+      ['Significant Weight Loss',    m.weightLossSignificant,    r.weightLossSignificant ?? ''],
+      ['Antipsychotic Long-Term',    m.antipsychoticLongTerm,    r.antipsychoticLongTerm ?? ''],
+      ['Falls w/ Major Injury',      m.fallsMajorInjury,         r.fallsMajorInjury ?? ''],
+      ['Pressure Ulcers Stage 2+',   m.pressureUlcersStage2plus, r.pressureUlcersStage2plus ?? ''],
+      ['Catheter Long Stay',         m.catheterLongStay,         r.catheterLongStay ?? ''],
+      ['C. diff infections',         m.cdiffInfections,          r.cdiffInfections ?? ''],
+    ];
+    const csv = rows.map(r => r.map(c => /[,"\n]/.test(String(c||'')) ? `"${String(c).replace(/"/g,'""')}"` : String(c||'')).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `clinical-${d.buildingId||'all'}-${d.start}_${d.end}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+  },
+
+  async runCensusReport() {
+    const bId   = document.getElementById('clin-bld')?.value || '';
+    const start = document.getElementById('clin-start')?.value || '';
+    const end   = document.getElementById('clin-end')?.value || '';
+    const host  = document.getElementById('clin-results');
+    if (!host) return;
+    if (!start || !end) { this.showToast('Pick a date range','warn'); return; }
+    host.innerHTML = `<div style="padding:30px;text-align:center;color:var(--g600);font-size:13px">Loading PCC census range…</div>`;
+    try {
+      const url = `/api/pcc/census/range?start=${start}&end=${end}` + (bId ? `&buildingId=${encodeURIComponent(bId)}` : '');
+      const r = await fetch(url);
+      const data = await r.json();
+      if (!r.ok) { host.innerHTML = `<div style="color:var(--red);padding:14px">${sanitize(data.error || 'Failed')}</div>`; return; }
+      const days = Object.keys(data.census || {}).sort();
+      const total = days.reduce((sum, d) => sum + (Number(data.census[d]) || 0), 0);
+      const avg = days.length ? (total / days.length) : 0;
+      const rows = days.map(d => `<tr style="border-bottom:1px solid var(--g100)"><td style="padding:6px 12px;font-family:ui-monospace,monospace;font-size:12px">${sanitize(d)}</td><td style="padding:6px 12px;text-align:right;font-weight:600">${data.census[d] ?? '—'}</td></tr>`).join('');
+      host.innerHTML = `<div>
+        <div style="display:flex;gap:14px;margin-bottom:12px;flex-wrap:wrap">
+          <div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:8px;padding:10px 14px"><div style="font-size:11px;color:var(--g600);font-weight:700;text-transform:uppercase">Avg Daily Census</div><div style="font-size:22px;font-weight:800;color:var(--blue-d)">${avg.toFixed(1)}</div></div>
+          <div style="background:var(--g50);border:1px solid var(--g200);border-radius:8px;padding:10px 14px"><div style="font-size:11px;color:var(--g600);font-weight:700;text-transform:uppercase">Total Resident-Days</div><div style="font-size:22px;font-weight:800;color:var(--g900)">${total}</div></div>
+        </div>
+        <table style="width:100%;background:#fff;border:1.5px solid var(--g200);border-radius:8px;overflow:hidden">
+          <thead style="background:var(--g50)"><tr><th style="text-align:left;padding:8px 12px;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Date</th><th style="text-align:right;padding:8px 12px;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Census</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+    } catch (e) {
+      host.innerHTML = `<div style="color:var(--red);padding:14px">Network error: ${sanitize(e.message)}</div>`;
+    }
   },
 
   // Open create/edit modal for a subscription. id null = new.
@@ -10103,6 +10258,90 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     } catch(e) { this.showToast('Network error','warn'); }
   },
 
+  // ── PENDING PUNCH-EDIT INBOX ────────────────────────────────────────────
+  // Surfaced as a header chip "<n> pending" for full Admins. Approving an
+  // entry commits the HR-Admin's proposed in/out and fires a notification
+  // to regional admins. Rejecting just drops it.
+  _pendingPunchCount() {
+    return (this._cachedPendingPunches || []).length;
+  },
+
+  async _refreshPendingPunches() {
+    try {
+      const r = await fetch('/api/timeclock/punch/pending');
+      if (!r.ok) return;
+      const data = await r.json();
+      this._cachedPendingPunches = data.items || [];
+      // If the header is on screen, re-render the action bar to update the badge.
+      this.renderHeader?.();
+    } catch (e) { /* offline → silent */ }
+  },
+
+  async openPendingPunchInbox() {
+    await this._refreshPendingPunches();
+    const items = this._cachedPendingPunches || [];
+    const fmt = iso => { try { return new Date(iso).toLocaleString(); } catch { return iso; } };
+    const rows = items.length
+      ? items.map(p => {
+          const before = `${p.before.in||'—'} → ${p.before.out||'—'}`;
+          const after  = `${p.proposed.in||'—'} → ${p.proposed.out||'—'}`;
+          const note = p.note ? `<div style="font-size:12px;color:var(--g600);margin-top:6px;font-style:italic">"${sanitize(p.note)}"</div>` : '';
+          return `<div style="background:#fff;border:1.5px solid var(--g200);border-radius:10px;padding:14px 16px;margin-bottom:10px">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap">
+              <div style="flex:1;min-width:200px">
+                <div style="font-weight:700;color:var(--g900);font-size:14px">${sanitize(p.empName)} · ${sanitize(p.date)}</div>
+                <div style="font-size:11px;color:var(--g500);margin-top:2px">Requested by ${sanitize(p.requestedBy.email)} · ${sanitize(fmt(p.requestedAt))}</div>
+                <div style="font-size:13px;color:var(--g700);margin-top:8px">
+                  <span style="color:var(--g500)">Current:</span> <span style="font-family:ui-monospace,monospace">${sanitize(before)}</span>
+                  &nbsp;&nbsp;<span style="color:#7E22CE">→ proposed:</span> <span style="font-family:ui-monospace,monospace;font-weight:700">${sanitize(after)}</span>
+                </div>
+                ${note}
+              </div>
+              <div style="display:flex;gap:6px;flex-shrink:0">
+                <button class="btn btn-ghost btn-sm" onclick="App.decidePunchEdit('${p.id}','reject')" style="color:var(--red)">Reject</button>
+                <button class="btn btn-primary btn-sm" onclick="App.decidePunchEdit('${p.id}','approve')">Approve</button>
+              </div>
+            </div>
+          </div>`;
+        }).join('')
+      : `<div style="padding:40px;text-align:center;color:var(--g500);font-size:13px">No pending punch corrections.</div>`;
+    const div = document.createElement('div');
+    div.id = 'modal-pending-punches';
+    div.className = 'modal-overlay open';
+    div.innerHTML = `<div class="modal" style="max-width:680px;max-height:80vh;display:flex;flex-direction:column">
+      <div class="modal-header">
+        <span class="modal-title">Punch Corrections — Awaiting Approval</span>
+        <button class="modal-close" onclick="document.getElementById('modal-pending-punches').remove()">✕</button>
+      </div>
+      <div class="modal-body" style="overflow-y:auto;flex:1">
+        <div style="font-size:12px;color:var(--g600);margin-bottom:12px">HR Admins submitted these time-clock corrections. Approving applies the change and notifies regional admin.</div>
+        ${rows}
+      </div>
+    </div>`;
+    document.body.appendChild(div);
+  },
+
+  async decidePunchEdit(editId, action) {
+    let note = '';
+    if (action === 'reject') {
+      note = prompt('Optional reason (shared with HR Admin):') || '';
+    }
+    try {
+      const r = await fetch(`/api/timeclock/punch/${encodeURIComponent(editId)}/decide`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, note }),
+      });
+      const data = await r.json();
+      if (!r.ok) { this.showToast(data.error || 'Failed','warn'); return; }
+      this.showToast(action === 'approve' ? 'Approved · regional admin notified' : 'Rejected');
+      await this._refreshPendingPunches();
+      // Re-open inbox with fresh data
+      document.getElementById('modal-pending-punches')?.remove();
+      this.openPendingPunchInbox();
+    } catch(e) { this.showToast('Network error','warn'); }
+  },
+
   // ── TEXTS (alert log) ───────────────────────────────────────────────────
   _textsUnreadCount() {
     const seen = this.S.textsLastSeen || 0;
@@ -10740,9 +10979,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (!emp.email) { this.showToast('Employee needs an email first','warn'); return; }
     const linked = (this.S.accounts || []).find(a => a.email && a.email.toLowerCase() === emp.email.toLowerCase());
     let current = 'employee';
-    if (linked?.role === 'admin') current = linked.schedulerOnly ? 'scheduler' : 'admin';
+    if (linked?.role === 'admin')         current = linked.schedulerOnly ? 'scheduler' : 'admin';
+    else if (linked?.role === 'hradmin')  current = 'hradmin';
+    else if (linked?.role === 'regionaladmin') current = 'regionaladmin';
     else if (linked?.role === 'superadmin') current = 'superadmin';
     if (current === 'superadmin') { this.showToast('Superadmin access cannot be changed here','warn'); return; }
+    if (current === 'regionaladmin') { this.showToast('Regional admin is set on the Super Admin page','warn'); return; }
     const isMyOwn = linked?.id === this.S.user?.id;
     if (isMyOwn) { this.showToast('You cannot change your own access level — ask another admin','warn'); return; }
 
@@ -10769,6 +11011,9 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         ${opt('admin',     'Full Building Admin',
               'Manages employees, shifts, alerts, AND sees hourly rates / OT / cost / PPD financial data.',
               'var(--blue-d)', 'var(--blue-l)')}
+        ${opt('hradmin',   'HR Admin',
+              'Same access as Full Admin EXCEPT punch corrections require admin approval. Edits route to the building admin first; once approved, regional admin is notified.',
+              '#7E22CE', '#FAF5FF')}
         ${opt('scheduler', 'Scheduler Access (no financials)',
               'Manages employees, shifts, alerts. Does NOT see hourly rates, Cost/Day, Total Daily Cost, or OT panel.',
               '#92400E', '#FEF3C7')}
@@ -10799,7 +11044,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       const dResp = await fetch('/api/data');
       if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
       document.getElementById('modal-access')?.remove();
-      const labels = { employee:'Employee', admin:'Full Admin', scheduler:'Scheduler Access' };
+      const labels = { employee:'Employee', admin:'Full Admin', hradmin:'HR Admin', scheduler:'Scheduler Access' };
       let msg = `Access set to ${labels[sel] || sel}`;
       if (data.inviteSent === false && data.inviteLink) {
         msg += ` — email failed; manual invite link copied to clipboard`;
@@ -13711,6 +13956,11 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (Array.isArray(data.reportSubscriptions)) this.S.reportSubscriptions = data.reportSubscriptions;
     if (Array.isArray(data.directMessages))   this.S.directMessages   = data.directMessages;
     if (Array.isArray(data.prospects))        this.S.prospects        = data.prospects;
+    // After data lands, refresh the pending-punch inbox count for admins
+    // so the header chip is accurate before the user navigates anywhere.
+    if (this.S.user?.role === 'admin' || this.S.user?.role === 'superadmin') {
+      this._refreshPendingPunches?.();
+    }
     if (data.hrOnboarding && typeof data.hrOnboarding === 'object') {
       if (data.hrOnboarding.TX && !data.hrOnboarding.co_skyblue) {
         // migrate old flat format

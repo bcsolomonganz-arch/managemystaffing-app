@@ -97,7 +97,11 @@ const AUDIT_LOG_FILE       = process.env.AUDIT_LOG_FILE || path.join(path.dirnam
 const AUDIT_HMAC_KEY       = process.env.AUDIT_HMAC_KEY || (() => { throw new Error('AUDIT_HMAC_KEY required for tamper-evident audit log'); })();
 const TOTP_ISSUER          = 'ManageMyStaffing';
 
-function isPrivilegedRole(role) { return role === 'admin' || role === 'superadmin'; }
+function isPrivilegedRole(role) {
+  // hradmin and regionaladmin touch admin views (PHI) and so are subject to
+  // the same idle-timeout / TOTP requirements as 'admin'.
+  return role === 'admin' || role === 'superadmin' || role === 'hradmin' || role === 'regionaladmin';
+}
 function jwtTtlFor(role)        { return isPrivilegedRole(role) ? JWT_TTL_SECONDS : EMPLOYEE_JWT_TTL_SECONDS; }
 function idleTtlFor(role)       { return isPrivilegedRole(role) ? IDLE_TIMEOUT_SECONDS : EMPLOYEE_IDLE_TIMEOUT_SECONDS; }
 
@@ -1010,8 +1014,13 @@ async function requireAuth(req, res, next) {
   }
 }
 
+// Privileged roles that can hit admin endpoints. hradmin has the same surface
+// as admin EXCEPT punch corrections — those are intercepted in the punch
+// PATCH handler and routed through an approval flow (admin → regional).
+const ADMIN_ROLES = ['admin', 'superadmin', 'hradmin', 'regionaladmin'];
+
 function requireAdmin(req, res, next) {
-  if (!['admin', 'superadmin'].includes(req.user?.role)) {
+  if (!ADMIN_ROLES.includes(req.user?.role)) {
     return res.status(403).json({ error: 'Insufficient permissions' });
   }
   next();
@@ -1022,6 +1031,12 @@ function requireSuperAdmin(req, res, next) {
     return res.status(403).json({ error: 'Superadmin only' });
   }
   next();
+}
+
+// Caller can finalize / approve operations that require an admin signoff
+// (punch corrections submitted by hradmin, etc.).
+function isApprovingAdmin(user) {
+  return user?.role === 'admin' || user?.role === 'superadmin' || user?.role === 'regionaladmin';
 }
 
 // ── PASSWORD COMPLEXITY (HIPAA §164.308(a)(5)) ───────────────────────────────
@@ -2727,8 +2742,13 @@ app.post('/api/dm/read', requireAuth, async (req, res) => {
 app.post('/api/employees/:id/access', requireAuth, requireAdmin, async (req, res) => {
   const empId = req.params.id;
   const { access } = req.body || {};
-  if (!['employee','admin','scheduler'].includes(access)) {
-    return res.status(400).json({ error: "access must be 'employee', 'admin', or 'scheduler'" });
+  if (!['employee','admin','hradmin','scheduler'].includes(access)) {
+    return res.status(400).json({ error: "access must be 'employee', 'admin', 'hradmin', or 'scheduler'" });
+  }
+  // hradmin can only be assigned by an actual admin/SA — a scheduler-only
+  // admin can't promote someone to a role that has more access than they do.
+  if (access === 'hradmin' && req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Only admin or superadmin can assign HR Admin' });
   }
   const data = await loadData();
   const emp = (data.employees || []).find(e => e.id === empId);
@@ -2749,40 +2769,43 @@ app.post('/api/employees/:id/access', requireAuth, requireAdmin, async (req, res
 
   // ── Demote to employee ─────────────────────────────────────────────────
   if (access === 'employee') {
-    if (!existing || existing.role !== 'admin') {
+    if (!existing || !['admin','hradmin'].includes(existing.role)) {
       // No-op — employee is already employee-tier
       return res.json({ ok: true, message: 'No change needed (already employee)' });
     }
     // Refuse to remove the LAST admin from a building (would lock it out).
+    // hradmin doesn't count — they need an approving admin around.
     const otherAdmins = data.accounts.filter(a =>
       a.role === 'admin' && a.id !== existing.id && a.buildingId === existing.buildingId);
-    if (!otherAdmins.length) {
+    if (!otherAdmins.length && existing.role === 'admin') {
       return res.status(409).json({ error: 'Cannot demote the only admin for this building. Promote someone else first.' });
     }
     // Remove the admin account; employee record remains intact.
     data.accounts = data.accounts.filter(a => a.id !== existing.id);
     markDirty();
-    auditLog('ACCESS_DEMOTED', req.user, { empId, removedAccountId: existing.id, email: emp.email });
+    auditLog('ACCESS_DEMOTED', req.user, { empId, removedAccountId: existing.id, email: emp.email, fromRole: existing.role });
     return res.json({ ok: true, access: 'employee' });
   }
 
-  // ── Promote to admin or scheduler ──────────────────────────────────────
+  // ── Promote to admin / hradmin / scheduler ─────────────────────────────
   const wantSchedulerOnly = access === 'scheduler';
+  const targetRole        = (access === 'hradmin') ? 'hradmin' : 'admin';
   if (existing) {
-    if (existing.role !== 'admin') {
+    if (!['admin','hradmin'].includes(existing.role)) {
       // Edge case: account exists but isn't admin (e.g., regional). Refuse —
       // SA-only operation to handle non-standard role transitions.
       if (req.user.role !== 'superadmin') {
         return res.status(409).json({ error: `An account already exists with role ${existing.role}. Superadmin must adjust.` });
       }
     }
-    existing.role = 'admin';
+    existing.role = targetRole;
     existing.buildingId = emp.buildingId;
     existing.schedulerOnly = wantSchedulerOnly;
     await persistAccountNow(existing);
-    auditLog(wantSchedulerOnly ? 'ACCESS_SET_SCHEDULER' : 'ACCESS_SET_FULL_ADMIN', req.user, {
-      empId, accountId: existing.id, email: emp.email,
-    });
+    const auditAction = targetRole === 'hradmin' ? 'ACCESS_SET_HR_ADMIN'
+                       : wantSchedulerOnly       ? 'ACCESS_SET_SCHEDULER'
+                                                 : 'ACCESS_SET_FULL_ADMIN';
+    auditLog(auditAction, req.user, { empId, accountId: existing.id, email: emp.email });
     return res.json({ ok: true, access, accountId: existing.id });
   }
 
@@ -2792,7 +2815,7 @@ app.post('/api/employees/:id/access', requireAuth, requireAdmin, async (req, res
     id:           'acc_' + Date.now() + crypto.randomBytes(2).toString('hex'),
     name:         emp.name,
     email:        emp.email.toLowerCase(),
-    role:         'admin',
+    role:         targetRole,
     buildingId:   emp.buildingId,
     schedulerOnly: wantSchedulerOnly,
     ph:           null,
@@ -2813,7 +2836,9 @@ app.post('/api/employees/:id/access', requireAuth, requireAdmin, async (req, res
       const ec     = new EmailClient(ACS_CONNECTION_STRING);
       const link   = `${APP_URL}/?invite=${inviteToken}`;
       const escName = escapeHtml(emp.name);
-      const accessLabel = wantSchedulerOnly ? 'Scheduler Access' : 'Full Building Admin';
+      const accessLabel = targetRole === 'hradmin' ? 'HR Admin'
+                        : wantSchedulerOnly        ? 'Scheduler Access'
+                                                   : 'Full Building Admin';
       const poller = await ec.beginSend({
         senderAddress: ACS_FROM_EMAIL,
         recipients: { to: [{ address: emp.email }] },
@@ -2830,7 +2855,10 @@ app.post('/api/employees/:id/access', requireAuth, requireAdmin, async (req, res
   }
 
   markDirty();
-  auditLog(wantSchedulerOnly ? 'ACCESS_SET_SCHEDULER' : 'ACCESS_SET_FULL_ADMIN', req.user, {
+  const newAuditAction = targetRole === 'hradmin' ? 'ACCESS_SET_HR_ADMIN'
+                       : wantSchedulerOnly        ? 'ACCESS_SET_SCHEDULER'
+                                                  : 'ACCESS_SET_FULL_ADMIN';
+  auditLog(newAuditAction, req.user, {
     empId, accountId: newAccount.id, email: emp.email, invited: true,
   });
   res.json({
@@ -3800,8 +3828,44 @@ app.post('/api/timeclock/agency', requireAuth, requireAdmin, async (req, res) =>
   res.json({ ok: true, record, shift });
 });
 
+// Helper: apply punch in/out edits to a record, recompute hours + status.
+function _applyPunchEdit(emp, r, inTime, outTime, data) {
+  if (inTime  !== undefined) r.in  = String(inTime  || '').slice(0,5);
+  if (outTime !== undefined) r.out = String(outTime || '').slice(0,5);
+  if (r.in && r.out) {
+    const [ih, im] = r.in.split(':').map(Number);
+    const [oh, om] = r.out.split(':').map(Number);
+    let mins = (oh*60 + (om||0)) - (ih*60 + (im||0));
+    if (mins < 0) mins += 24*60;
+    r.hours = (mins / 60).toFixed(2);
+  } else { r.hours = ''; }
+  r.status = _classifyPunch(emp, emp ? r.date : null, r.in, r.out, data.shifts || []);
+  r.name = emp.name; r.role = emp.group; r.buildingId = emp.buildingId;
+}
+
+// Helper: drop a notification onto data.notifications[] for a target user/role.
+// Sidebar / inbox UI reads from this array. Each entry is non-PHI metadata
+// only — the punch record reference lets the UI fetch the rest.
+function _notify(data, n) {
+  if (!Array.isArray(data.notifications)) data.notifications = [];
+  data.notifications.unshift({
+    id: 'n_' + crypto.randomBytes(6).toString('hex'),
+    createdAt: new Date().toISOString(),
+    readAt: null,
+    ...n,
+  });
+  // Cap at 5,000 to bound storage
+  if (data.notifications.length > 5000) data.notifications.length = 5000;
+}
+
 // PATCH /api/timeclock/punch — admin correction.
 // Body: { empId, date, in?, out?, note? }
+//
+// Admin / superadmin / regionaladmin: applied immediately (current behavior).
+// HR Admin (`hradmin`): the change is staged into a `pendingPunchEdits[]`
+// queue and a notification is dropped for building admins. The admin then
+// hits /api/timeclock/punch/:editId/approve or /reject. On approve, the edit
+// is applied AND a notification fires to regional admins.
 app.patch('/api/timeclock/punch', requireAuth, requireAdmin, async (req, res) => {
   const { empId, date, in: inTime, out: outTime, note } = req.body || {};
   if (!empId || !date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'empId, date (YYYY-MM-DD) required' });
@@ -3812,20 +3876,54 @@ app.patch('/api/timeclock/punch', requireAuth, requireAdmin, async (req, res) =>
   if (req.user.role !== 'superadmin' && !callerBIds.has(emp.buildingId)) {
     return res.status(403).json({ error: 'Out of scope' });
   }
+
+  // ── HR Admin: stage as pending, alert building admin, do not apply ──
+  if (req.user.role === 'hradmin') {
+    if (!Array.isArray(data.pendingPunchEdits)) data.pendingPunchEdits = [];
+    const r = _findOrCreatePunch(data, empId, date);
+    const before = { in: r.in, out: r.out };
+    const proposed = {
+      in:  inTime  !== undefined ? String(inTime  || '').slice(0,5) : r.in,
+      out: outTime !== undefined ? String(outTime || '').slice(0,5) : r.out,
+    };
+    const editId = 'pe_' + crypto.randomBytes(6).toString('hex');
+    const pe = {
+      id: editId,
+      empId, empName: emp.name, buildingId: emp.buildingId, date,
+      before, proposed,
+      requestedBy: { id: req.user.id, email: req.user.email, name: req.user.name || req.user.email },
+      requestedAt: new Date().toISOString(),
+      note: (note || '').slice(0, 500),
+      status: 'pending',
+      decidedBy: null, decidedAt: null, decisionNote: null,
+    };
+    data.pendingPunchEdits.push(pe);
+
+    // Notify every building admin for this facility.
+    const admins = (data.accounts || []).filter(a =>
+      a.role === 'admin' && (a.buildingId === emp.buildingId
+        || (Array.isArray(a.buildingIds) && a.buildingIds.includes(emp.buildingId)))
+    );
+    for (const ad of admins) {
+      _notify(data, {
+        kind: 'PUNCH_EDIT_PENDING',
+        toAccountId: ad.id, toEmail: ad.email,
+        buildingId: emp.buildingId,
+        editId, empId, empName: emp.name, date,
+        requestedBy: pe.requestedBy.email,
+        title: `Punch edit pending: ${emp.name} · ${date}`,
+        body: `${pe.requestedBy.name} (HR Admin) changed ${date} from ${before.in||'—'}-${before.out||'—'} to ${proposed.in||'—'}-${proposed.out||'—'}. Approve or reject.`,
+      });
+    }
+    markDirty();
+    auditLog('PUNCH_EDIT_REQUESTED', req.user, { editId, empId, date, before, proposed });
+    return res.json({ ok: true, pending: true, editId, message: 'Submitted for admin approval' });
+  }
+
+  // ── Admin / SA / Regional: apply immediately (existing path) ──
   const r = _findOrCreatePunch(data, empId, date);
   const before = { in: r.in, out: r.out };
-  if (inTime  !== undefined) r.in  = String(inTime  || '').slice(0,5);
-  if (outTime !== undefined) r.out = String(outTime || '').slice(0,5);
-  // Recompute hours + status if we have both
-  if (r.in && r.out) {
-    const [ih, im] = r.in.split(':').map(Number);
-    const [oh, om] = r.out.split(':').map(Number);
-    let mins = (oh*60 + (om||0)) - (ih*60 + (im||0));
-    if (mins < 0) mins += 24*60;
-    r.hours = (mins / 60).toFixed(2);
-  } else { r.hours = ''; }
-  r.status = _classifyPunch(emp, date, r.in, r.out, data.shifts || []);
-  r.name = emp.name; r.role = emp.group; r.buildingId = emp.buildingId;
+  _applyPunchEdit(emp, r, inTime, outTime, data);
   if (!Array.isArray(r.events)) r.events = [];
   r.events.push({
     action: 'admin-edit', at: new Date().toISOString(),
@@ -3836,6 +3934,89 @@ app.patch('/api/timeclock/punch', requireAuth, requireAdmin, async (req, res) =>
   markDirty();
   auditLog('PUNCH_EDITED', req.user, { empId, date, before, after: { in: r.in, out: r.out } });
   res.json({ ok: true, record: r });
+});
+
+// GET /api/timeclock/punch/pending — list pending HR-Admin punch edits
+// scoped to caller's buildings.
+app.get('/api/timeclock/punch/pending', requireAuth, requireAdmin, async (req, res) => {
+  const data = await loadData();
+  const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds||[])].filter(Boolean));
+  const all = (data.pendingPunchEdits || []).filter(p => p.status === 'pending');
+  const scoped = req.user.role === 'superadmin'
+    ? all
+    : all.filter(p => callerBIds.has(p.buildingId));
+  res.json({ items: scoped });
+});
+
+// POST /api/timeclock/punch/:editId/approve  — admin/regional/SA only.
+// Applies the staged edit, then notifies regional admins.
+// POST /api/timeclock/punch/:editId/reject   — admin discards the edit.
+app.post('/api/timeclock/punch/:editId/decide', requireAuth, requireAdmin, async (req, res) => {
+  if (!isApprovingAdmin(req.user)) return res.status(403).json({ error: 'Only admin/regional/SA can approve punch edits' });
+  const editId = req.params.editId;
+  const action = String(req.body?.action || '').toLowerCase();         // 'approve' | 'reject'
+  const decisionNote = String(req.body?.note || '').slice(0, 500);
+  if (!['approve','reject'].includes(action)) return res.status(400).json({ error: 'action must be approve|reject' });
+  const data = await loadData();
+  const pe = (data.pendingPunchEdits || []).find(p => p.id === editId);
+  if (!pe) return res.status(404).json({ error: 'Pending edit not found' });
+  if (pe.status !== 'pending') return res.status(409).json({ error: `Already ${pe.status}` });
+
+  const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds||[])].filter(Boolean));
+  if (req.user.role !== 'superadmin' && !callerBIds.has(pe.buildingId)) {
+    return res.status(403).json({ error: 'Out of scope' });
+  }
+
+  pe.status = (action === 'approve') ? 'approved' : 'rejected';
+  pe.decidedBy = { id: req.user.id, email: req.user.email, name: req.user.name || req.user.email, role: req.user.role };
+  pe.decidedAt = new Date().toISOString();
+  pe.decisionNote = decisionNote;
+
+  if (action === 'approve') {
+    const emp = (data.employees || []).find(e => e.id === pe.empId);
+    if (!emp) {
+      pe.status = 'rejected';
+      pe.decisionNote = 'Employee no longer exists; auto-rejected';
+      markDirty();
+      return res.status(409).json({ error: 'Employee no longer exists' });
+    }
+    const r = _findOrCreatePunch(data, pe.empId, pe.date);
+    const before = { in: r.in, out: r.out };
+    _applyPunchEdit(emp, r, pe.proposed.in, pe.proposed.out, data);
+    if (!Array.isArray(r.events)) r.events = [];
+    r.events.push({
+      action: 'admin-edit', at: new Date().toISOString(),
+      source: 'admin-approval-of-hradmin', editor: req.user.email,
+      requestedBy: pe.requestedBy.email,
+      before, after: { in: r.in, out: r.out },
+      note: pe.note, decisionNote,
+    });
+
+    // Notify all regional admins (and superadmins) about the approved change.
+    const escalateTo = (data.accounts || []).filter(a =>
+      a.role === 'regionaladmin' || a.role === 'superadmin'
+    );
+    for (const ra of escalateTo) {
+      _notify(data, {
+        kind: 'PUNCH_EDIT_APPROVED',
+        toAccountId: ra.id, toEmail: ra.email,
+        buildingId: pe.buildingId,
+        editId: pe.id, empId: pe.empId, empName: pe.empName, date: pe.date,
+        requestedBy: pe.requestedBy.email,
+        approvedBy: req.user.email,
+        title: `Punch edit approved: ${pe.empName} · ${pe.date}`,
+        body: `${req.user.email} approved an HR-Admin punch correction for ${pe.empName} on ${pe.date}: ${pe.before.in||'—'}-${pe.before.out||'—'} → ${pe.proposed.in||'—'}-${pe.proposed.out||'—'}.`,
+      });
+    }
+    markDirty();
+    auditLog('PUNCH_EDIT_APPROVED', req.user, { editId: pe.id, empId: pe.empId, date: pe.date, before, after: { in: r.in, out: r.out }, requestedBy: pe.requestedBy.email });
+    return res.json({ ok: true, status: 'approved', record: r });
+  }
+
+  // Reject: just stamp the record; no time-clock change.
+  markDirty();
+  auditLog('PUNCH_EDIT_REJECTED', req.user, { editId: pe.id, empId: pe.empId, date: pe.date, requestedBy: pe.requestedBy.email });
+  res.json({ ok: true, status: 'rejected' });
 });
 
 // GET /kiosk/:buildingId — serves the standalone tablet kiosk HTML page.
@@ -5027,6 +5208,145 @@ app.get('/api/pcc/staffing/range', requireAuth, requireAdmin, async (req, res) =
     logger.error('pcc_staffing_range_parse_failed', { msg: e.message });
     res.status(502).json({ error: 'PCC response could not be parsed' });
   }
+});
+
+// ── GET /api/pcc/clinical ────────────────────────────────────────────────────
+// Pulls the key CMS quality metrics from PCC for a date range:
+//   - UTIs (incident count + rate per 1000 resident-days)
+//   - 30-day re-hospitalizations
+//   - significant weight loss (>=5% in 30d or >=10% in 180d)
+//   - antipsychotic use (residents on long-term antipsychotic w/o supporting dx)
+//   - falls with major injury
+//   - pressure ulcers (Stage II+)
+//   - catheter use (long-stay)
+//   - C. diff infections
+//
+// PCC's clinical APIs are scoped per facility. We aggregate counts from the
+// /clinical/* endpoints and divide by total resident-days from /census to
+// produce the rate. When PCC isn't configured, we return cached values from
+// data.pccClinicalCache (manually uploaded by the admin) so the report still
+// renders. Caller must be admin/superadmin/regional/hradmin and scoped to the
+// requested building.
+app.get('/api/pcc/clinical', requireAuth, requireAdmin, async (req, res) => {
+  const start = String(req.query.start || '').slice(0, 10);
+  const end   = String(req.query.end   || '').slice(0, 10);
+  const buildingId = String(req.query.buildingId || req.user.buildingId || '').slice(0, 64);
+  if (!_isValidIsoDate(start) || !_isValidIsoDate(end)) {
+    return res.status(400).json({ error: 'start and end must be YYYY-MM-DD' });
+  }
+  const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds||[])].filter(Boolean));
+  if (req.user.role !== 'superadmin' && buildingId && !callerBIds.has(buildingId)) {
+    return res.status(403).json({ error: 'Out of scope' });
+  }
+
+  // Always pull cached fallback first — used when PCC isn't configured or
+  // when a particular metric is missing from the response.
+  const data = await loadData();
+  const cache = (data.pccClinicalCache || []).find(c =>
+    c.buildingId === buildingId && c.start === start && c.end === end
+  );
+
+  // Helper to compute rate per 1000 resident-days from census.
+  const _residentDays = async () => {
+    if (!PCC_CLIENT_ID || !PCC_CLIENT_SECRET || !PCC_FACILITY_ID) return null;
+    const startMs = new Date(start + 'T00:00:00Z').getTime();
+    const endMs   = new Date(end   + 'T00:00:00Z').getTime();
+    if (endMs < startMs) return null;
+    const days = Math.min(31, Math.round((endMs - startMs) / 86400000) + 1);
+    let total = 0;
+    for (let i = 0; i < days; i++) {
+      const d = new Date(startMs + i * 86400000).toISOString().slice(0, 10);
+      const url = `${PCC_BASE}/partner/v1/facilities/${encodeURIComponent(PCC_FACILITY_ID)}/census?censusDate=${d}`;
+      const r = await pccFetch(url);
+      if (r.ok && r.body) {
+        const x = r.body.data || r.body;
+        const c = x.totalCensus ?? x.occupiedBeds ?? x.census ?? 0;
+        total += Number(c) || 0;
+      }
+    }
+    return total;
+  };
+
+  // If PCC isn't configured, just hand back the cache (or zeros).
+  if (!PCC_CLIENT_ID || !PCC_CLIENT_SECRET || !PCC_FACILITY_ID) {
+    return res.json({
+      ok: true, source: 'cache', start, end, buildingId,
+      metrics: cache?.metrics || {
+        utis: 0, rehospitalizations30d: 0, weightLossSignificant: 0,
+        antipsychoticLongTerm: 0, fallsMajorInjury: 0, pressureUlcersStage2plus: 0,
+        catheterLongStay: 0, cdiffInfections: 0,
+      },
+      residentDays: cache?.residentDays || 0,
+      generatedAt: new Date().toISOString(),
+      note: cache ? 'PCC not configured — returning cached upload.' : 'PCC not configured and no cached data — returning zeros.',
+    });
+  }
+
+  // Fan out to PCC clinical endpoints. Each one is best-effort: if PCC errors
+  // on a particular metric, we use the cache value or 0 and continue. Better
+  // to render a partial report with one missing tile than fail the whole call.
+  const fetchCount = async (endpoint, predicate) => {
+    const url = `${PCC_BASE}/partner/v1/facilities/${encodeURIComponent(PCC_FACILITY_ID)}/${endpoint}?startDate=${start}&endDate=${end}`;
+    const r = await pccFetch(url);
+    if (!r.ok || !r.body) return null;
+    const items = r.body.data || r.body.items || r.body || [];
+    return Array.isArray(items) ? items.filter(predicate || (() => true)).length : null;
+  };
+
+  const [
+    utis, rehosp, weightLoss, antipsy, falls, pu, cath, cdiff, residentDays
+  ] = await Promise.all([
+    fetchCount('clinical/uti'),
+    fetchCount('clinical/hospitalReturns', x => Number(x.daysSinceDischarge ?? 99) <= 30),
+    fetchCount('clinical/weightChanges', x =>
+      (Number(x.pctChange30d ?? 0) <= -5) || (Number(x.pctChange180d ?? 0) <= -10)),
+    fetchCount('clinical/medications', x =>
+      /antipsychotic/i.test(String(x.therapeuticClass||x.drugClass||'')) &&
+      Number(x.daysOnMedication ?? 0) >= 90 &&
+      !x.supportingDiagnosis),
+    fetchCount('clinical/falls',  x => /major/i.test(String(x.injuryLevel||''))),
+    fetchCount('clinical/skinIntegrity', x => Number(String(x.stage||'').replace(/\D/g,''))>=2),
+    fetchCount('clinical/catheterUse', x => x.longStay === true || Number(x.daysWithCatheter ?? 0) >= 14),
+    fetchCount('clinical/infections', x => /c\.?\s*diff|clostridi/i.test(String(x.organism||x.infectionType||''))),
+    _residentDays(),
+  ]);
+
+  const v = (live, cacheKey) => {
+    if (live !== null && live !== undefined) return live;
+    return cache?.metrics?.[cacheKey] ?? 0;
+  };
+
+  const metrics = {
+    utis:                     v(utis,        'utis'),
+    rehospitalizations30d:    v(rehosp,      'rehospitalizations30d'),
+    weightLossSignificant:    v(weightLoss,  'weightLossSignificant'),
+    antipsychoticLongTerm:    v(antipsy,     'antipsychoticLongTerm'),
+    fallsMajorInjury:         v(falls,       'fallsMajorInjury'),
+    pressureUlcersStage2plus: v(pu,          'pressureUlcersStage2plus'),
+    catheterLongStay:         v(cath,        'catheterLongStay'),
+    cdiffInfections:          v(cdiff,       'cdiffInfections'),
+  };
+  const rd = residentDays || cache?.residentDays || 0;
+  const ratePer1000 = (n) => rd > 0 ? +((n / rd) * 1000).toFixed(2) : null;
+  const rates = Object.fromEntries(Object.entries(metrics).map(([k,n]) => [k, ratePer1000(n)]));
+
+  // Update cache for the building+range combo so the next call (or a non-
+  // configured environment) can fall back to this snapshot.
+  if (!Array.isArray(data.pccClinicalCache)) data.pccClinicalCache = [];
+  const idx = data.pccClinicalCache.findIndex(c =>
+    c.buildingId === buildingId && c.start === start && c.end === end);
+  const entry = { buildingId, start, end, metrics, residentDays: rd, updatedAt: new Date().toISOString() };
+  if (idx >= 0) data.pccClinicalCache[idx] = entry; else data.pccClinicalCache.push(entry);
+  // Cap cache so it doesn't grow unbounded
+  if (data.pccClinicalCache.length > 5000) data.pccClinicalCache.length = 5000;
+  markDirty();
+  auditLog('PCC_CLINICAL_REPORT', req.user, { buildingId, start, end });
+
+  res.json({
+    ok: true, source: 'live', start, end, buildingId,
+    metrics, ratePer1000: rates, residentDays: rd,
+    generatedAt: new Date().toISOString(),
+  });
 });
 
 // (Duplicate /jobs.xml route removed — see the canonical implementation in
