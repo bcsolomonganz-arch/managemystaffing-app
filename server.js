@@ -506,9 +506,13 @@ async function _ensureBackupDir() {
 }
 
 async function _writeSnapshot() {
-  // Skip when DB is the system of record — Postgres has its own PITR backups,
-  // we don't want to keep duplicate plaintext-ish copies on the app server.
-  if (_useDB) return;
+  // Snapshots run in BOTH file and postgres modes now. Postgres has Azure
+  // PITR (35 days), but PITR alone proved insufficient on 2026-04-30 when
+  // Tanya's Kirkland adds disappeared and SA was locked out — we couldn't
+  // even check the audit table. App-side encrypted snapshots are the
+  // belt-and-suspenders defense: every persistCache call writes a copy of
+  // the whole dataCache to BACKUP_DIR so a Super Admin can restore in one
+  // click without leaving the app.
   const now = Date.now();
   if (now - _lastSnapshotAt < SNAPSHOT_MIN_INTERVAL_MS) return;
   _lastSnapshotAt = now;
@@ -517,14 +521,25 @@ async function _writeSnapshot() {
   const stamp = new Date(now).toISOString().replace(/[:.]/g, '-');
   const file  = path.join(BACKUP_DIR, `${SNAPSHOT_PREFIX}${stamp}.json`);
 
-  // Reuse the encrypted form from disk so we don't re-encrypt the same payload.
-  // If the live DATA_FILE is missing for any reason, fall back to encrypting
-  // dataCache directly.
-  try {
-    await fs.copyFile(DATA_FILE, file);
-  } catch {
-    const encrypted = await encrypt({ ...dataCache, _lastSaved: new Date(now).toISOString() });
-    await fs.writeFile(file, JSON.stringify(encrypted, null, 2), 'utf8');
+  if (_useDB) {
+    // Postgres mode: there's no live encrypted DATA_FILE to copy. Encrypt the
+    // current dataCache directly. Same envelope shape as the file backend so
+    // restores work identically.
+    try {
+      const encrypted = await encrypt({ ...dataCache, _lastSaved: new Date(now).toISOString() });
+      await fs.writeFile(file, JSON.stringify(encrypted, null, 2), 'utf8');
+    } catch (e) {
+      logger.error('snapshot_pg_encrypt_failed', { err: e.message });
+      return;
+    }
+  } else {
+    // File mode: copy the already-encrypted file. Cheaper than re-encrypting.
+    try {
+      await fs.copyFile(DATA_FILE, file);
+    } catch {
+      const encrypted = await encrypt({ ...dataCache, _lastSaved: new Date(now).toISOString() });
+      await fs.writeFile(file, JSON.stringify(encrypted, null, 2), 'utf8');
+    }
   }
 
   await _pruneSnapshots();
