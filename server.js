@@ -1031,6 +1031,8 @@ function _employeeView(user, fullData) {
     schedulePatterns: (fullData.schedulePatterns || []).filter(p => p.empId === user.id),
     accounts:         _scrubSecrets((fullData.accounts || []).filter(a => a.id === user.id)),
     companies:        (fullData.companies || []),
+    // Direct messages: only threads I'm part of
+    directMessages:   (fullData.directMessages || []).filter(m => m.fromId === user.id || m.toId === user.id),
     user: { id: user.id, name: user.name, email: user.email, role: user.role, buildingId: bId },
   };
 }
@@ -1061,6 +1063,10 @@ function getDataForUser(user, fullData) {
     accounts:         (scrubbed.accounts || []).filter(a =>
       a.id === user.id || (a.buildingId && bIds.has(a.buildingId)) || (a.buildingIds||[]).some(id => bIds.has(id))),
     alertLog:         (scrubbed.alertLog || []).filter(e => !e.buildingId || bIds.has(e.buildingId)),
+    // Admin sees DMs in their building scope OR ones they personally sent/received
+    directMessages:   (scrubbed.directMessages || []).filter(m =>
+      m.fromId === user.id || m.toId === user.id ||
+      (m.buildingId && bIds.has(m.buildingId))),
     prospects:        (scrubbed.prospects || []).filter(p => !p.buildingId || bIds.has(p.buildingId)),
   };
   return _canAccessHR(user) ? filtered : _stripHR(filtered);
@@ -2451,6 +2457,93 @@ app.delete('/api/sa/seed-demo-facility', requireAuth, requireSuperAdmin, async (
     removedPunches:   before.punches   - data.hrTimeClock.length,
   });
   res.json({ ok: true });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DIRECT MESSAGES — 1-to-1 admin ↔ employee thread
+// ─────────────────────────────────────────────────────────────────────────────
+// Lightweight chat: every pair (adminAccountId, employeeId) gets a single
+// conversation, persisted on data.directMessages. Distinct from the broadcast
+// alertLog (which is one-to-many SMS/email) — these are app-only messages.
+//
+// Auth model:
+//   - Employee can read/write their OWN thread with anyone in the same building.
+//   - Admin can read/write threads with any employee in their building scope.
+//   - Each message: { id, threadId, fromId, toId, body, sentAt, readAt }
+//   - Thread id is a deterministic string sort of the pair so either side
+//     can compute it: dm:<sortedId1>:<sortedId2>
+
+function _dmThreadId(idA, idB) {
+  const [a, b] = [String(idA), String(idB)].sort();
+  return 'dm:' + a + ':' + b;
+}
+
+// POST /api/dm — send a message
+// Body: { toId, body }
+app.post('/api/dm', requireAuth, async (req, res) => {
+  const { toId, body } = req.body || {};
+  if (!toId || !body) return res.status(400).json({ error: 'toId and body required' });
+  const text = String(body).slice(0, 4000).trim();
+  if (!text) return res.status(400).json({ error: 'Empty message' });
+
+  const data = await loadData();
+  const me = req.user;
+  const myId = me.id;
+  // Resolve participants (one is me, one is the target).
+  const targetEmp = (data.employees || []).find(e => e.id === toId && !e.inactive);
+  const targetAcct = (data.accounts || []).find(a => a.id === toId);
+  const target = targetEmp || targetAcct;
+  if (!target) return res.status(404).json({ error: 'Recipient not found' });
+
+  // Authz: same building required (admin can DM employees in their scope;
+  // employee can DM admins of their own building or other staff at that bldg).
+  const targetBId = targetEmp?.buildingId || targetAcct?.buildingId;
+  const callerBIds = new Set([me.buildingId, ...(me.buildingIds||[])].filter(Boolean));
+  if (me.role !== 'superadmin') {
+    if (me.role === 'employee') {
+      if (targetBId !== me.buildingId) return res.status(403).json({ error: 'Out of scope' });
+    } else if (!callerBIds.has(targetBId)) {
+      return res.status(403).json({ error: 'Out of scope' });
+    }
+  }
+
+  if (!Array.isArray(data.directMessages)) data.directMessages = [];
+  const msg = {
+    id: 'dm_' + Date.now() + crypto.randomBytes(2).toString('hex'),
+    threadId: _dmThreadId(myId, toId),
+    fromId: myId, fromName: me.name || me.email,
+    toId,         toName: targetEmp?.name || targetAcct?.name || '',
+    buildingId:   targetBId || me.buildingId || null,
+    body: text,
+    sentAt: new Date().toISOString(),
+    readAt: null,
+  };
+  data.directMessages.push(msg);
+  if (data.directMessages.length > 5000) data.directMessages = data.directMessages.slice(-5000);
+  markDirty();
+  auditLog('DM_SENT', me, { toId, threadId: msg.threadId, len: text.length });
+  res.json({ ok: true, message: msg });
+});
+
+// POST /api/dm/read — mark a thread as read up to a given timestamp
+app.post('/api/dm/read', requireAuth, async (req, res) => {
+  const { threadId, upTo } = req.body || {};
+  if (!threadId) return res.status(400).json({ error: 'threadId required' });
+  const data = await loadData();
+  const me = req.user;
+  const myId = me.id;
+  const cutoff = upTo ? new Date(upTo).getTime() : Date.now();
+  let marked = 0;
+  for (const m of (data.directMessages || [])) {
+    if (m.threadId !== threadId) continue;
+    if (m.toId !== myId)         continue;
+    if (m.readAt)                continue;
+    if (new Date(m.sentAt).getTime() > cutoff) continue;
+    m.readAt = new Date().toISOString();
+    marked++;
+  }
+  if (marked > 0) markDirty();
+  res.json({ ok: true, marked });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

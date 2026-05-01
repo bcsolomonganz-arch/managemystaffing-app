@@ -3713,6 +3713,15 @@ const App = {
         </div>`;
       })()}
       ${(() => {
+        const unreadDM = this._dmUnreadCount();
+        const bg = unreadDM > 0 ? 'background:#DBEAFE' : '';
+        return `<div class="group-item${this.S.messagesView?' active':''}" onclick="App.openMessages()" style="cursor:pointer;${bg}">
+          <div class="group-icon" style="background:${unreadDM>0?'#3B82F6':'var(--g100)'};color:${unreadDM>0?'#fff':'var(--g600)'}"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H8l-4 3v-3H4a2 2 0 0 1-2-2z"/></svg></div>
+          Messages
+          ${unreadDM > 0 ? `<span class="group-badge" style="background:#1E40AF;color:#fff;margin-left:auto">${unreadDM}</span>` : ''}
+        </div>`;
+      })()}
+      ${(() => {
         const pendingClaims = (this.S.shifts || []).filter(s => s.claimRequest && s.buildingId === effBuildingId);
         const pendingTrades = (this.S.shiftTrades || []).filter(t => t.status === 'pending' && t.buildingId === effBuildingId);
         if (!pendingClaims.length && !pendingTrades.length) return '';
@@ -9769,6 +9778,200 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     </div>`;
   },
 
+  // ── DIRECT MESSAGES (in-app 1-to-1 thread) ─────────────────────────────
+  // Lightweight chat between admins and employees in the same building. No
+  // SMS / email — just persistent app messages stored on data.directMessages.
+  // Unread count drives the sidebar badge.
+  _dmUnreadCount() {
+    const me = this.S.user?.id;
+    if (!me) return 0;
+    return (this.S.directMessages || []).filter(m => m.toId === me && !m.readAt).length;
+  },
+
+  openMessages() {
+    this.S.messagesView = true;
+    this.S.textsView    = false;
+    this.S.eventsView   = false;
+    this.S.ppdView      = false;
+    this.S.rosterView   = false;
+    this.S.panelOpen    = false;
+    document.getElementById('right-panel')?.classList.remove('open');
+    document.getElementById('main')?.classList.remove('panel-open');
+    this.render();
+  },
+
+  closeMessages() { this.S.messagesView = false; this.render(); },
+
+  renderMessages() {
+    const u   = this.S.user;
+    const myId = u.id;
+    const dms = this.S.directMessages || [];
+
+    // Group messages by threadId; pick the latest message per thread, plus
+    // the "other" person for the title.
+    const threads = new Map();
+    for (const m of dms) {
+      const t = threads.get(m.threadId) || { threadId: m.threadId, messages: [], otherId: null, lastAt: 0, unread: 0 };
+      t.messages.push(m);
+      const otherId = m.fromId === myId ? m.toId : m.fromId;
+      t.otherId = otherId;
+      const ms = new Date(m.sentAt).getTime();
+      if (ms > t.lastAt) t.lastAt = ms;
+      if (m.toId === myId && !m.readAt) t.unread++;
+      threads.set(m.threadId, t);
+    }
+    const sortedThreads = [...threads.values()].sort((a,b) => b.lastAt - a.lastAt);
+    // Resolve "other" identity: search employees first, then accounts.
+    const empById   = new Map((this.S.employees || []).map(e => [e.id, e]));
+    const acctById  = new Map((this.S.accounts  || []).map(a => [a.id, a]));
+    const nameOf = (id) => {
+      const e = empById.get(id);  if (e) return { name: e.name, sub: e.group, kind: 'employee' };
+      const a = acctById.get(id); if (a) return { name: a.name, sub: a.role, kind: 'account' };
+      return { name: 'Unknown', sub: '', kind: '?' };
+    };
+    const fmt = iso => {
+      try {
+        const d = new Date(iso);
+        const today = new Date().toISOString().slice(0,10);
+        if (d.toISOString().slice(0,10) === today) return d.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' });
+        return d.toLocaleDateString([], { month:'short', day:'numeric' });
+      } catch { return ''; }
+    };
+
+    // Active thread state — sticks to the last opened in this session.
+    const activeId = this.S._activeThreadId || (sortedThreads[0]?.threadId);
+    const activeThread = activeId ? threads.get(activeId) : null;
+
+    // Sidebar (left): conversation list
+    const list = sortedThreads.map(t => {
+      const o = nameOf(t.otherId);
+      const last = t.messages[t.messages.length - 1];
+      const initials = (o.name || '?').split(' ').map(w => w[0] || '').join('').slice(0,2).toUpperCase();
+      const isActive = t.threadId === activeId;
+      return `<div onclick="App.openThread('${t.threadId}','${t.otherId}')" style="display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--g100);background:${isActive?'var(--blue-l)':'#fff'}">
+        <div style="width:38px;height:38px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0">${sanitize(initials)}</div>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:baseline;justify-content:space-between;gap:6px">
+            <div style="font-weight:${t.unread>0?'800':'600'};font-size:13px;color:var(--g900);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${sanitize(o.name)}</div>
+            <div style="font-size:11px;color:var(--g500);flex-shrink:0">${fmt(last.sentAt)}</div>
+          </div>
+          <div style="font-size:12px;color:${t.unread>0?'var(--g800)':'var(--g500)'};font-weight:${t.unread>0?'600':'400'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${last.fromId===myId?'You: ':''}${sanitize(last.body)}</div>
+        </div>
+        ${t.unread > 0 ? `<span style="background:#1E40AF;color:#fff;font-size:11px;font-weight:700;padding:1px 7px;border-radius:99px;min-width:18px;text-align:center">${t.unread}</span>` : ''}
+      </div>`;
+    }).join('');
+
+    // Right pane: active thread bubbles + composer
+    let pane = '';
+    if (activeThread) {
+      const o = nameOf(activeThread.otherId);
+      const sortedMsgs = activeThread.messages.slice().sort((a,b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime());
+      const bubbles = sortedMsgs.map(m => {
+        const out = m.fromId === myId;
+        const time = fmt(m.sentAt);
+        return `<div style="display:flex;justify-content:${out?'flex-end':'flex-start'};margin-bottom:8px">
+          <div style="max-width:75%;padding:9px 13px;border-radius:16px;background:${out?'var(--green)':'var(--g100)'};color:${out?'#fff':'var(--g800)'};font-size:13px;line-height:1.4;word-break:break-word">
+            ${sanitize(m.body)}
+            <div style="font-size:10px;opacity:.7;margin-top:3px;text-align:${out?'right':'left'}">${time}</div>
+          </div>
+        </div>`;
+      }).join('');
+      pane = `<div style="display:flex;flex-direction:column;height:calc(100vh - 80px)">
+        <div style="padding:14px 18px;border-bottom:1px solid var(--g200);background:#fff;display:flex;align-items:center;gap:12px">
+          <div style="width:40px;height:40px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700">${sanitize((o.name||'?').split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase())}</div>
+          <div>
+            <div style="font-weight:700;color:var(--g900)">${sanitize(o.name)}</div>
+            <div style="font-size:11px;color:var(--g500)">${sanitize(o.sub || '')}</div>
+          </div>
+        </div>
+        <div id="dm-thread-body" style="flex:1;overflow-y:auto;padding:18px;background:var(--g50)">
+          ${bubbles}
+        </div>
+        <div style="padding:12px 16px;background:#fff;border-top:1px solid var(--g200);display:flex;gap:10px;align-items:flex-end">
+          <textarea id="dm-input" rows="2" placeholder="Type a message…" style="flex:1;padding:10px 12px;border:1.5px solid var(--g200);border-radius:10px;font-family:inherit;font-size:13px;resize:none;line-height:1.4"></textarea>
+          <button class="btn btn-primary" onclick="App.sendDM('${activeThread.otherId}')" style="padding:10px 18px;font-weight:700">Send</button>
+        </div>
+      </div>`;
+    } else {
+      pane = `<div style="display:flex;align-items:center;justify-content:center;height:calc(100vh - 80px);color:var(--g600);font-size:14px;text-align:center;padding:20px">
+        ${sortedThreads.length ? 'Pick a conversation on the left.' : 'No conversations yet.<br><br>Use the "+ Message" button on a roster row to start one.'}
+      </div>`;
+    }
+
+    return `<div style="display:flex;height:calc(100vh - 64px)">
+      <div style="width:340px;border-right:1.5px solid var(--g200);overflow-y:auto;background:#fff">
+        <div style="padding:14px 18px;border-bottom:1px solid var(--g200);font-size:14px;font-weight:800;color:var(--g900)">Messages</div>
+        ${list || '<div style="padding:30px 18px;color:var(--g600);font-size:13px">No conversations yet.</div>'}
+      </div>
+      <div style="flex:1;background:#fff">${pane}</div>
+    </div>`;
+  },
+
+  openThread(threadId, otherId) {
+    this.S._activeThreadId = threadId;
+    this.S._activeThreadOtherId = otherId;
+    this.renderMain();
+    // Mark this thread as read up to now
+    fetch('/api/dm/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ threadId, upTo: new Date().toISOString() }),
+    }).then(() => {
+      // Update local state
+      for (const m of (this.S.directMessages || [])) {
+        if (m.threadId === threadId && m.toId === this.S.user.id && !m.readAt) m.readAt = new Date().toISOString();
+      }
+      this.renderSidebar();
+    }).catch(() => {});
+    setTimeout(() => {
+      const el = document.getElementById('dm-thread-body');
+      if (el) el.scrollTop = el.scrollHeight;
+      document.getElementById('dm-input')?.focus();
+    }, 30);
+  },
+
+  // Start a new DM with an employee (called from roster row).
+  startDmWith(empId) {
+    const e = this.S.employees.find(x => x.id === empId);
+    if (!e) return;
+    this.S.messagesView = true;
+    this.S.textsView = false;
+    this.S.eventsView = false;
+    this.S.ppdView = false;
+    this.S.rosterView = false;
+    this.S._activeThreadOtherId = empId;
+    // Compute deterministic threadId same way the server does
+    const ids = [String(this.S.user.id), String(empId)].sort();
+    this.S._activeThreadId = 'dm:' + ids[0] + ':' + ids[1];
+    this.render();
+  },
+
+  async sendDM(toId) {
+    const inp = document.getElementById('dm-input');
+    const body = (inp?.value || '').trim();
+    if (!body) return;
+    try {
+      const r = await fetch('/api/dm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toId, body }),
+      });
+      const data = await r.json();
+      if (!r.ok) { this.showToast(data.error || 'Send failed','warn'); return; }
+      // Append locally so it shows instantly without a full refresh
+      if (!Array.isArray(this.S.directMessages)) this.S.directMessages = [];
+      this.S.directMessages.push(data.message);
+      this.S._activeThreadId = data.message.threadId;
+      if (inp) inp.value = '';
+      this.renderMain();
+      setTimeout(() => {
+        const el = document.getElementById('dm-thread-body');
+        if (el) el.scrollTop = el.scrollHeight;
+        document.getElementById('dm-input')?.focus();
+      }, 30);
+    } catch(e) { this.showToast('Network error','warn'); }
+  },
+
   // ── TEXTS (alert log) ───────────────────────────────────────────────────
   _textsUnreadCount() {
     const seen = this.S.textsLastSeen || 0;
@@ -9958,6 +10161,13 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M7 14h2M7 18h2"/></svg>
           IDs
        </button>` : '';
+      const msgBtn = isActive ? `<button class="btn btn-ghost btn-sm"
+        style="color:var(--blue-d);border:1.5px solid var(--blue-m)"
+        title="Send an in-app direct message"
+        onclick="App.startDmWith('${emp.id}')">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          Message
+       </button>` : '';
       // Access level: derive from any existing account linked to this email.
       const linkedAcct = (this.S.accounts || []).find(a => a.email && emp.email && a.email.toLowerCase() === emp.email.toLowerCase());
       let accessLabel = 'Employee', accessColor = 'var(--g600)', accessBg = 'var(--g100)';
@@ -10000,7 +10210,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         <td>${sanitize(emp.phone||'—')}</td>
         <td><span class="${isActive?'tag-active':'tag-inactive'}">${isActive?'Active':'Inactive'}</span></td>
         <td style="text-align:right;white-space:nowrap">
-          ${accessBtn ? accessBtn + ' ' : ''}${codesBtn ? codesBtn + ' ' : ''}${pinBtn ? pinBtn + ' ' : ''}${actionBtn}
+          ${msgBtn ? msgBtn + ' ' : ''}${accessBtn ? accessBtn + ' ' : ''}${codesBtn ? codesBtn + ' ' : ''}${pinBtn ? pinBtn + ' ' : ''}${actionBtn}
         </td>
       </tr>`;
     };
@@ -11176,6 +11386,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     // ── TEXTS ────────────────────────────────────────────────
     if (this.S.textsView) {
       document.getElementById('main').innerHTML = this.renderTexts();
+      return;
+    }
+
+    // ── MESSAGES (in-app DM) ────────────────────────────────
+    if (this.S.messagesView) {
+      document.getElementById('main').innerHTML = this.renderMessages();
       return;
     }
 
@@ -13243,6 +13459,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       ppdDailyCensus:this.S.ppdDailyCensus,
       staffEvents:this.S.staffEvents,
       shiftTrades:this.S.shiftTrades,
+      directMessages:this.S.directMessages,
       prospects:this.S.prospects,
     };
     if (IS_SERVER_MODE && !this.S.user?.demo) {
@@ -13324,6 +13541,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (Array.isArray(data.alertLog))         this.S.alertLog         = data.alertLog;
     if (Array.isArray(data.shiftTrades))      this.S.shiftTrades      = data.shiftTrades;
     if (Array.isArray(data.reportSubscriptions)) this.S.reportSubscriptions = data.reportSubscriptions;
+    if (Array.isArray(data.directMessages))   this.S.directMessages   = data.directMessages;
     if (Array.isArray(data.prospects))        this.S.prospects        = data.prospects;
     if (data.hrOnboarding && typeof data.hrOnboarding === 'object') {
       if (data.hrOnboarding.TX && !data.hrOnboarding.co_skyblue) {
