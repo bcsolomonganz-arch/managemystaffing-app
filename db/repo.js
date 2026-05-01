@@ -46,6 +46,86 @@ async function ensureSchema() {
   if (!_pool) return;
   await _pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS scheduler_only BOOLEAN NOT NULL DEFAULT false`);
   await _pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS device_trust_epoch BIGINT NOT NULL DEFAULT 0`);
+
+  // ── Persistent migration flags ─────────────────────────────────────────
+  // Records like "_seedStripped" used to be JS-only flags on dataCache and
+  // got reset to undefined on every postgres-mode boot. That meant the
+  // applyMigrations() seed-strip logic could re-run after every restart
+  // (deploy / scaling / host move) and DELETE rows we wanted to keep.
+  // This table makes the flags durable across restarts.
+  await _pool.query(`
+    CREATE TABLE IF NOT EXISTS app_migrations (
+      flag       TEXT PRIMARY KEY,
+      set_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+      set_by     TEXT
+    )
+  `);
+
+  // ── Append-only employee history ───────────────────────────────────────
+  // Every employee insert/update/delete writes a row here. NEVER deleted.
+  // This makes data recovery possible from history alone — if employees
+  // are lost again, we can rebuild from this log.
+  await _pool.query(`
+    CREATE TABLE IF NOT EXISTS employee_history (
+      id           BIGSERIAL PRIMARY KEY,
+      ts           TIMESTAMPTZ NOT NULL DEFAULT now(),
+      op           TEXT NOT NULL,             -- 'insert' | 'update' | 'delete' | 'restore'
+      emp_id       TEXT NOT NULL,
+      building_id  TEXT,
+      actor        TEXT,                      -- account email of whoever triggered
+      before_row   JSONB,                     -- full row before change (null for insert)
+      after_row    JSONB                      -- full row after change (null for delete)
+    )
+  `);
+  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_emp_hist_emp ON employee_history(emp_id, ts DESC)`);
+  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_emp_hist_building ON employee_history(building_id, ts DESC)`);
+  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_emp_hist_ts ON employee_history(ts DESC)`);
+
+  // Postgres trigger that captures every change to employees automatically.
+  // Even if the app code forgets to log, the DB will. Belt and suspenders.
+  await _pool.query(`
+    CREATE OR REPLACE FUNCTION log_employee_change() RETURNS TRIGGER AS $$
+    BEGIN
+      IF TG_OP = 'INSERT' THEN
+        INSERT INTO employee_history (op, emp_id, building_id, after_row)
+          VALUES ('insert', NEW.id, NEW.building_id, to_jsonb(NEW));
+        RETURN NEW;
+      ELSIF TG_OP = 'UPDATE' THEN
+        INSERT INTO employee_history (op, emp_id, building_id, before_row, after_row)
+          VALUES ('update', NEW.id, NEW.building_id, to_jsonb(OLD), to_jsonb(NEW));
+        RETURN NEW;
+      ELSIF TG_OP = 'DELETE' THEN
+        INSERT INTO employee_history (op, emp_id, building_id, before_row)
+          VALUES ('delete', OLD.id, OLD.building_id, to_jsonb(OLD));
+        RETURN OLD;
+      END IF;
+      RETURN NULL;
+    END;
+    $$ LANGUAGE plpgsql;
+  `);
+  // Drop + recreate the trigger so updates to the function take effect
+  await _pool.query(`DROP TRIGGER IF EXISTS trg_employee_history ON employees`);
+  await _pool.query(`
+    CREATE TRIGGER trg_employee_history
+      AFTER INSERT OR UPDATE OR DELETE ON employees
+      FOR EACH ROW EXECUTE FUNCTION log_employee_change()
+  `);
+}
+
+// Read all persistent migration flags into a Set of names.
+// Caller compares against expected flags and skips any that already ran.
+async function loadMigrationFlags() {
+  if (!_pool) return new Set();
+  const r = await _pool.query('SELECT flag FROM app_migrations');
+  return new Set(r.rows.map(x => x.flag));
+}
+
+async function setMigrationFlag(flag, setBy) {
+  if (!_pool) return;
+  await _pool.query(
+    `INSERT INTO app_migrations (flag, set_by) VALUES ($1, $2) ON CONFLICT (flag) DO NOTHING`,
+    [flag, setBy || 'system']
+  );
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -373,9 +453,41 @@ async function _upsertAccountInTx(c, a) {
   ]);
 }
 
-// Save full payload — wraps everything in a single transaction
+// Save full payload — wraps everything in a single transaction.
+//
+// CRITICAL SAFETY: this function is UPSERT-only. It NEVER deletes rows.
+// To reduce the number of rows in a table, use the explicit delete*
+// helpers which require the row id and audit log every operation.
+//
+// Pre-write check: refuse to commit if dataCache.employees is shorter
+// than the count currently in postgres for any building in scope. This
+// is the last line of defense — even if every other tripwire fails, a
+// shrinking employees collection cannot make it through this function.
 async function saveAll(data) {
   return withTx(async (c) => {
+    // ── Shrink guard ───────────────────────────────────────────────────
+    // Compare incoming employees count to what's currently in postgres.
+    // If incoming is shorter — for any building — abort the entire txn.
+    if (Array.isArray(data.employees)) {
+      const incomingByBld = new Map();
+      for (const e of data.employees) {
+        if (!e.building_id && !e.buildingId) continue;
+        const bid = e.building_id || e.buildingId;
+        incomingByBld.set(bid, (incomingByBld.get(bid) || 0) + 1);
+      }
+      const dbCounts = await c.query(`SELECT building_id, COUNT(*)::int AS n FROM employees GROUP BY building_id`);
+      for (const row of dbCounts.rows) {
+        const incoming = incomingByBld.get(row.building_id) || 0;
+        if (incoming < row.n) {
+          throw new Error(
+            `saveAll refused to shrink employees in building ${row.building_id}: ` +
+            `db has ${row.n}, incoming has ${incoming}. ` +
+            `Use the explicit delete helpers if intentional.`
+          );
+        }
+      }
+    }
+
     if (Array.isArray(data.companies)) {
       for (const co of data.companies) {
         await c.query(`INSERT INTO companies (id, name, color) VALUES ($1, $2, $3)
@@ -477,6 +589,7 @@ module.exports = {
   init, isEnabled, close, ensureSchema,
   withTx, setContext,
   loadAll, saveAll,
+  loadMigrationFlags, setMigrationFlag,
   getAccountByEmail, getAccountById, upsertAccount, clearAccountTotp,
   appendAuditEntry,
   ping,

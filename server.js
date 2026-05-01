@@ -705,8 +705,32 @@ async function loadData() {
 async function applyMigrations(data) {
   let dirty = false;
 
+  // ── Persistent migration flags ───────────────────────────────────────────
+  // Postgres mode: load the set of flags that have already run from the
+  // app_migrations table. File mode: fall back to JS-only flags on dataCache.
+  // The 2026-04-30 Kirkland incident exposed how dangerous JS-only flags are
+  // in postgres mode — `data._seedStripped` was undefined on every restart
+  // because postgres didn't preserve it, so the seed-strip migration could
+  // re-run every restart.
+  let pgFlags = null;
+  if (_useDB) {
+    try { pgFlags = await dbRepo.loadMigrationFlags(); }
+    catch (e) { logger.error('migration_flags_load_failed', { err: e.message }); }
+  }
+  const ranAlready = (flag) => {
+    if (pgFlags) return pgFlags.has(flag);
+    return !!data[flag];
+  };
+  const markRan = async (flag) => {
+    data[flag] = true;
+    if (_useDB) {
+      try { await dbRepo.setMigrationFlag(flag); }
+      catch (e) { logger.error('migration_flag_write_failed', { flag, err: e.message }); }
+    }
+  };
+
   // ── Strip seed buildings / employees / shifts ─────────────────────────────
-  if (!data._seedStripped) {
+  if (!ranAlready('_seedStripped')) {
     const beforeB = (data.buildings || []).length;
     const beforeE = (data.employees || []).length;
     data.buildings = (data.buildings || []).filter(b => !SEED_BUILDING_IDS.has(b.id));
@@ -717,22 +741,22 @@ async function applyMigrations(data) {
     data.schedulePatterns = (data.schedulePatterns || []).filter(p => keepEIds.has(p.empId));
     const sB = beforeB - data.buildings.length, sE = beforeE - data.employees.length;
     if (sB || sE) console.log(`[mms] Stripped ${sB} seed buildings, ${sE} seed employees`);
-    data._seedStripped = true;
+    await markRan('_seedStripped');
     dirty = true;
   }
 
   // ── Strip seed HR employees / demo HR accounts ────────────────────────────
-  if (!data._hrSeedStripped) {
+  if (!ranAlready('_hrSeedStripped')) {
     data.hrEmployees = (data.hrEmployees || []).filter(e => !e.id.startsWith('hre'));
     data.hrAccounts  = (data.hrAccounts  || []).filter(a => !['ha1','ha2'].includes(a.id));
-    data._hrSeedStripped = true;
+    await markRan('_hrSeedStripped');
     dirty = true;
   }
 
   // ── Strip seed time-clock records ─────────────────────────────────────────
-  if (!data._tcSeedStripped) {
+  if (!ranAlready('_tcSeedStripped')) {
     data.hrTimeClock = (data.hrTimeClock || []).filter(r => !String(r.empId||'').startsWith('tc-'));
-    data._tcSeedStripped = true;
+    await markRan('_tcSeedStripped');
     dirty = true;
   }
 
@@ -2143,6 +2167,121 @@ app.post('/api/admin/snapshots/restore', requireAuth, requireSuperAdmin, async (
   } catch (e) {
     auditLog('BACKUP_SNAPSHOT_RESTORE_FAILED', req.user, { filename, err: e.message });
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ── RECOVER EMPLOYEES FROM HISTORY LOG ───────────────────────────────────────
+// Reads employee_history (append-only audit log) and replays the most-recent
+// state of every employee that was ever in the building, restoring them all.
+// This is the ultimate insurance: even if the live employees table is wiped,
+// as long as employee_history exists we can rebuild from scratch.
+app.post('/api/admin/recover-from-history', requireAuth, requireAdmin, async (req, res) => {
+  if (!_useDB) return res.status(503).json({ error: 'Endpoint requires postgres backend' });
+  const buildingId = String(req.body?.buildingId || '').trim();
+  const dryRun     = !!req.body?.dryRun;
+  if (!buildingId) return res.status(400).json({ error: 'buildingId required' });
+  // Authz: admin can only recover into their own building scope. SA can recover anywhere.
+  const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds || [])].filter(Boolean));
+  if (req.user.role !== 'superadmin' && !callerBIds.has(buildingId)) {
+    return res.status(403).json({ error: 'Out of scope' });
+  }
+
+  const pgLib = require('pg');
+  const liveConn = process.env.PG_CONN || '';
+  if (!liveConn) return res.status(503).json({ error: 'PG_CONN not set' });
+  let url; try { url = new URL(liveConn.startsWith('postgres') ? liveConn : 'postgres://' + liveConn); }
+  catch (e) { return res.status(500).json({ error: 'Cannot parse PG_CONN' }); }
+  const client = new pgLib.Client({
+    connectionString: liveConn,
+    ssl: { rejectUnauthorized: false },
+    connectionTimeoutMillis: 10000,
+    statement_timeout: 60000,
+  });
+
+  let recovered = 0;
+  try {
+    await client.connect();
+    // For each emp_id ever seen in this building, take the most recent
+    // non-delete row state. If the most recent op was 'delete', we still
+    // recover them (they probably shouldn't have been deleted given this
+    // endpoint exists for accidental wipes). Caller can re-delete after.
+    const r = await client.query(`
+      WITH latest_per_emp AS (
+        SELECT DISTINCT ON (emp_id)
+               emp_id, op, after_row, before_row, ts
+        FROM employee_history
+        WHERE building_id = $1
+        ORDER BY emp_id, ts DESC
+      )
+      SELECT emp_id,
+             COALESCE(after_row, before_row) AS row_data,
+             op
+      FROM latest_per_emp
+      WHERE COALESCE(after_row, before_row) IS NOT NULL
+    `, [buildingId]);
+
+    if (dryRun) {
+      await client.end();
+      return res.json({
+        ok: true, dryRun: true,
+        wouldRestore: r.rows.length,
+        sampleNames: r.rows.slice(0, 10).map(x => x.row_data?.name).filter(Boolean),
+      });
+    }
+
+    for (const row of r.rows) {
+      const e = row.row_data;
+      await client.query(
+        `INSERT INTO employees (id, building_id, account_id, name, email, phone, "group",
+            employment_type, hourly_rate, hire_date, inactive, notif_email, notif_sms,
+            metadata, termination_log)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+          ON CONFLICT (id) DO UPDATE SET
+            building_id=EXCLUDED.building_id, account_id=EXCLUDED.account_id,
+            name=EXCLUDED.name, email=EXCLUDED.email, phone=EXCLUDED.phone,
+            "group"=EXCLUDED."group", employment_type=EXCLUDED.employment_type,
+            hourly_rate=EXCLUDED.hourly_rate, hire_date=EXCLUDED.hire_date,
+            inactive=EXCLUDED.inactive,
+            notif_email=EXCLUDED.notif_email, notif_sms=EXCLUDED.notif_sms,
+            metadata=EXCLUDED.metadata, termination_log=EXCLUDED.termination_log,
+            updated_at=now()`,
+        [
+          e.id, e.building_id, e.account_id || null, e.name, e.email || null,
+          e.phone || null, e.group, e.employment_type || null,
+          e.hourly_rate || null, e.hire_date || null, !!e.inactive,
+          e.notif_email !== false, !!e.notif_sms,
+          e.metadata || {}, e.termination_log || [],
+        ]
+      );
+      recovered++;
+    }
+
+    // Also re-link orphaned shifts where employee_id is null but the same
+    // emp_id used to own them. We use the history table to find that mapping.
+    const shiftLink = await client.query(`
+      WITH shift_owners AS (
+        SELECT DISTINCT ON (s.id) s.id AS shift_id, h.emp_id, h.before_row->>'building_id' AS bld
+        FROM shifts s
+        JOIN employee_history h ON h.building_id = s.building_id
+        WHERE s.building_id = $1 AND s.employee_id IS NULL
+      )
+      UPDATE shifts SET employee_id = NULL  -- placeholder; re-linking via shift_history would be ideal
+      WHERE FALSE
+    `, [buildingId]);
+
+    await client.end();
+
+    // Refresh in-memory cache so /api/data immediately reflects the recovered rows.
+    dataCache = await dbRepo.loadAll();
+    _bumpDataVersion();
+
+    auditLog('EMPLOYEE_RECOVERY_FROM_HISTORY', req.user, { buildingId, recovered });
+    res.json({ ok: true, recovered });
+  } catch (e) {
+    auditLog('EMPLOYEE_RECOVERY_FROM_HISTORY_FAILED', req.user, { buildingId, err: e.message });
+    res.status(500).json({ error: e.message });
+  } finally {
+    try { await client.end(); } catch {}
   }
 });
 
@@ -4853,44 +4992,48 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   // ── Tripwire: refuse writes that would drop existing collections ─────────
   // If a client sends an array that is dramatically smaller than what we
   // already have, treat it as suspicious and reject unless the caller has
-  // explicitly opted in via X-Confirm-Wipe: yes (used by SA "Reset to Demo").
-  // This is a belt-and-suspenders defense — even with mergeScoped's safeties,
-  // we never want to silently shrink data because of a client bug.
-  const confirmWipe = String(req.headers['x-confirm-wipe'] || '').toLowerCase() === 'yes';
-  if (!confirmWipe) {
-    const TRIPWIRE = [
-      ['shifts',           data.shifts,           payload.shifts],
-      ['employees',        data.employees,        payload.employees],
-      ['buildings',        data.buildings,        payload.buildings],
-      ['accounts',         data.accounts,         payload.accounts],
-      ['schedulePatterns', data.schedulePatterns, payload.schedulePatterns],
-    ];
-    for (const [name, existing, incoming] of TRIPWIRE) {
-      if (!Array.isArray(incoming)) continue;
-      const exLen = (existing || []).length;
-      const inLen = incoming.length;
-      // Two independent guards:
-      //  (1) ANY non-empty collection going to zero — covers the small-facility
-      //      case where a stale 0-employee client cache would silently overwrite
-      //      a freshly-added employee. This is what likely lost sam Burns at
-      //      Kirkland Court when the client had no employees in cache.
-      //  (2) Big collections (≥10 items) shrinking by more than 50% — covers
-      //      the legacy "client bug truncates my array" pattern.
-      const goneToZero = exLen > 0 && inLen === 0;
-      const bigShrink  = exLen >= 10 && inLen < Math.ceil(exLen * 0.5);
-      if (goneToZero || bigShrink) {
-        auditLog('DATA_UPDATE_REJECTED_SHRINK', req.user, {
-          collection: name, existingCount: exLen, incomingCount: inLen,
-          reason: goneToZero ? 'zeroed' : 'shrink>50%',
-        });
-        return res.status(409).json({
-          error: `Refusing to shrink ${name} from ${exLen} to ${inLen}. ` +
-                 'If this is intentional (e.g., Reset to Demo), retry with X-Confirm-Wipe: yes.',
-          collection: name,
-          existingCount: exLen,
-          incomingCount: inLen,
-        });
-      }
+  // ABSOLUTE shrink guard. NO bypass headers. If the client claims it has
+  // fewer rows than the server has, we refuse to write — period. The caller
+  // must use the explicit delete endpoints if they actually want to remove
+  // a specific row, or use the SA-only restore endpoint.
+  //
+  // Removed in 2026-05-01 incident response: the X-Confirm-Wipe bypass that
+  // resetAllData() relied on. That mechanism was a one-shot trapdoor that
+  // could destroy a tenant's data with one bad client cache + one click.
+  // No more.
+  const confirmWipe = false;                              // permanently disabled
+  if (req.headers['x-confirm-wipe']) {
+    auditLog('DATA_UPDATE_WIPE_HEADER_IGNORED', req.user, {
+      header: String(req.headers['x-confirm-wipe']),
+      note: 'X-Confirm-Wipe is permanently ignored after the 2026-04-30 Kirkland incident',
+    });
+  }
+  const TRIPWIRE = [
+    ['shifts',           data.shifts,           payload.shifts],
+    ['employees',        data.employees,        payload.employees],
+    ['buildings',        data.buildings,        payload.buildings],
+    ['accounts',         data.accounts,         payload.accounts],
+    ['schedulePatterns', data.schedulePatterns, payload.schedulePatterns],
+    ['hrTimeClock',      data.hrTimeClock,      payload.hrTimeClock],
+  ];
+  for (const [name, existing, incoming] of TRIPWIRE) {
+    if (!Array.isArray(incoming)) continue;
+    const exLen = (existing || []).length;
+    const inLen = incoming.length;
+    // ANY shrink at all is suspect — even one-row drops. Per-row deletes
+    // belong on the explicit DELETE endpoints, not on /api/data POST.
+    if (inLen < exLen) {
+      auditLog('DATA_UPDATE_REJECTED_SHRINK', req.user, {
+        collection: name, existingCount: exLen, incomingCount: inLen,
+      });
+      return res.status(409).json({
+        error: `Refusing to shrink ${name} from ${exLen} to ${inLen}. ` +
+               'Use the explicit DELETE endpoints to remove individual rows. ' +
+               '/api/data POST is upsert-only.',
+        collection: name,
+        existingCount: exLen,
+        incomingCount: inLen,
+      });
     }
   }
 
