@@ -35,3 +35,7 @@ mms-deploy*.zip
 *.docx
 *.pdf
 ManageMyStaffing Hipaa/
+
+# SmartLinx export and generated import artifacts (contain PII)
+smartlinx-import-manifest.json
+smartlinx-import.sql
