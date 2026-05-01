@@ -46,6 +46,12 @@ async function ensureSchema() {
   if (!_pool) return;
   await _pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS scheduler_only BOOLEAN NOT NULL DEFAULT false`);
   await _pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS device_trust_epoch BIGINT NOT NULL DEFAULT 0`);
+  // Nursing license tracking. The expiry date drives a visible countdown
+  // on the roster card and an automatic flag on every scheduled shift
+  // where the assigned employee's license has lapsed.
+  await _pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS license_number TEXT`);
+  await _pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS license_expires_at DATE`);
+  await _pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS license_state TEXT`);
 
   // ── Persistent migration flags ─────────────────────────────────────────
   // Records like "_seedStripped" used to be JS-only flags on dataCache and
@@ -359,6 +365,9 @@ function rowEmployee(r) {
     hireDate: r.hire_date, inactive: r.inactive,
     notifEmail: r.notif_email, notifSMS: r.notif_sms,
     terminationLog: r.termination_log || [],
+    licenseNumber:    r.license_number    || null,
+    licenseExpiresAt: r.license_expires_at instanceof Date ? r.license_expires_at.toISOString().slice(0,10) : (r.license_expires_at || null),
+    licenseState:     r.license_state     || null,
     ...md
   };
 }
@@ -486,18 +495,25 @@ async function saveScopedData(data) {
     }
     if (Array.isArray(data.employees)) {
       for (const e of data.employees) {
-        const md = _strip(e, ['id','buildingId','accountId','name','email','phone','group','employmentType','hourlyRate','hireDate','inactive','notifEmail','notifSMS','terminationLog']);
+        const md = _strip(e, ['id','buildingId','accountId','name','email','phone','group','employmentType','hourlyRate','hireDate','inactive','notifEmail','notifSMS','terminationLog','licenseNumber','licenseExpiresAt','licenseState']);
         await c.query(`INSERT INTO employees (id, building_id, account_id, name, email, phone, "group",
-            employment_type, hourly_rate, hire_date, inactive, notif_email, notif_sms, metadata, termination_log)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+            employment_type, hourly_rate, hire_date, inactive, notif_email, notif_sms,
+            metadata, termination_log,
+            license_number, license_expires_at, license_state)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
           ON CONFLICT (id) DO UPDATE SET
             building_id=$2, account_id=$3, name=$4, email=$5, phone=$6, "group"=$7,
             employment_type=$8, hourly_rate=$9, hire_date=$10, inactive=$11,
-            notif_email=$12, notif_sms=$13, metadata=$14, termination_log=$15, updated_at=now()`,
+            notif_email=$12, notif_sms=$13, metadata=$14, termination_log=$15,
+            license_number = COALESCE(EXCLUDED.license_number, employees.license_number),
+            license_expires_at = COALESCE(EXCLUDED.license_expires_at, employees.license_expires_at),
+            license_state = COALESCE(EXCLUDED.license_state, employees.license_state),
+            updated_at=now()`,
           [e.id, e.buildingId, e.accountId || null, e.name, e.email || null, e.phone || null, e.group,
            e.employmentType || null, e.hourlyRate || null, e.hireDate || null,
            !!e.inactive, e.notifEmail !== false, !!e.notifSMS,
-           JSON.stringify(md), JSON.stringify(e.terminationLog || [])]);
+           JSON.stringify(md), JSON.stringify(e.terminationLog || []),
+           e.licenseNumber || null, e.licenseExpiresAt || null, e.licenseState || null]);
       }
     }
     if (Array.isArray(data.shifts)) {
@@ -662,18 +678,25 @@ async function saveAll(data) {
     }
     if (Array.isArray(data.employees)) {
       for (const e of data.employees) {
-        const md = _strip(e, ['id','buildingId','accountId','name','email','phone','group','employmentType','hourlyRate','hireDate','inactive','notifEmail','notifSMS','terminationLog']);
+        const md = _strip(e, ['id','buildingId','accountId','name','email','phone','group','employmentType','hourlyRate','hireDate','inactive','notifEmail','notifSMS','terminationLog','licenseNumber','licenseExpiresAt','licenseState']);
         await c.query(`INSERT INTO employees (id, building_id, account_id, name, email, phone, "group",
-            employment_type, hourly_rate, hire_date, inactive, notif_email, notif_sms, metadata, termination_log)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+            employment_type, hourly_rate, hire_date, inactive, notif_email, notif_sms,
+            metadata, termination_log,
+            license_number, license_expires_at, license_state)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
           ON CONFLICT (id) DO UPDATE SET
             building_id=$2, account_id=$3, name=$4, email=$5, phone=$6, "group"=$7,
             employment_type=$8, hourly_rate=$9, hire_date=$10, inactive=$11,
-            notif_email=$12, notif_sms=$13, metadata=$14, termination_log=$15, updated_at=now()`,
+            notif_email=$12, notif_sms=$13, metadata=$14, termination_log=$15,
+            license_number = COALESCE(EXCLUDED.license_number, employees.license_number),
+            license_expires_at = COALESCE(EXCLUDED.license_expires_at, employees.license_expires_at),
+            license_state = COALESCE(EXCLUDED.license_state, employees.license_state),
+            updated_at=now()`,
           [e.id, e.buildingId, e.accountId || null, e.name, e.email || null, e.phone || null, e.group,
            e.employmentType || null, e.hourlyRate || null, e.hireDate || null,
            !!e.inactive, e.notifEmail !== false, !!e.notifSMS,
-           JSON.stringify(md), JSON.stringify(e.terminationLog || [])]);
+           JSON.stringify(md), JSON.stringify(e.terminationLog || []),
+           e.licenseNumber || null, e.licenseExpiresAt || null, e.licenseState || null]);
       }
     }
     if (Array.isArray(data.shifts)) {

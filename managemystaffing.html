@@ -697,7 +697,7 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
     <div class="modal-body">
       <div class="form-group"><label>Full Name</label><input type="text" id="emp-name" placeholder="Jane Smith"></div>
       <div class="form-group"><label>Position</label>
-        <select id="emp-position">
+        <select id="emp-position" onchange="App.toggleEmpLicenseSection()">
           <option value="">Select position...</option>
           <option>Nurse Management</option><option>Charge Nurse</option><option>CNA</option><option>CMA</option>
           <option>Housekeeping</option><option>Laundry</option><option>Cook</option><option>Dietary Aid</option>
@@ -744,6 +744,26 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
         <input type="date" id="emp-dob">
         <div style="font-size:11px;color:var(--g500);margin-top:3px">Shown on Staff Events calendar as a birthday.</div>
       </div>
+
+      <!-- Nursing License — auto-shown for nursing roles only.
+           See toggleEmpAccessRow() in App which un-hides #emp-license-section
+           when the selected position is RN/LPN/CNA/CMA/Charge Nurse/Nurse Mgmt. -->
+      <div id="emp-license-section" style="display:none;background:#FAF5FF;border:1px solid #E9D5FF;border-radius:8px;padding:12px 14px;margin-bottom:12px">
+        <div style="font-size:13px;font-weight:700;color:#7E22CE;margin-bottom:8px">Nursing License</div>
+        <div class="grid-2">
+          <div class="form-group"><label>License Number</label>
+            <input type="text" id="emp-license-number" placeholder="e.g. RN-1234567" maxlength="40">
+          </div>
+          <div class="form-group"><label>Issuing State</label>
+            <input type="text" id="emp-license-state" placeholder="TX" maxlength="3" style="text-transform:uppercase">
+          </div>
+        </div>
+        <div class="form-group"><label>License Expires</label>
+          <input type="date" id="emp-license-expires">
+          <div style="font-size:11px;color:var(--g500);margin-top:3px">Roster shows a 90/60/30-day countdown. Schedule cells flag any shift assigned to a staff member with an expired license.</div>
+        </div>
+      </div>
+
       <div class="section-label">Alert Timing &amp; Channels</div>
       <div class="notif-timing-group">
         <!-- Immediately -->
@@ -1077,6 +1097,10 @@ const DISPLAY_GROUPS = ['Nurse Management','Charge Nurse','CNA','CMA','Housekeep
 const GROUP_MAP = {'Dietary':['Cook','Dietary Aid']};
 const getActualGroups = g => GROUP_MAP[g] || [g];
 const CLINICAL = ['Nurse Management','Charge Nurse','CNA','CMA'];
+// Positions where state-board licensing applies. Drives the License section
+// in the Add/Edit Employee form, the roster expiration badge, and the
+// "expired license" flag on schedule cells.
+const NURSING_POSITIONS = new Set(['Nurse Management','Charge Nurse','CNA','CMA']);
 const G_ICONS = {
   'Nurse Management': `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M6 20v-2a6 6 0 0 1 12 0v2"/><path d="M12 12v3"/><path d="M9.5 15.5l2.5 2.5 2.5-2.5"/></svg>`,
   'Charge Nurse': `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v7a7 7 0 0 0 14 0V3"/><path d="M5 3h3M16 3h3"/><path d="M12 17v2"/><circle cx="12" cy="21" r="1.5" fill="currentColor" stroke="none"/></svg>`,
@@ -3647,6 +3671,54 @@ const App = {
     const role = document.getElementById('emp-role')?.value;
     const row  = document.getElementById('emp-admin-access-row');
     if (row) row.style.display = role === 'admin' ? '' : 'none';
+  },
+
+  // Show the License section only for nursing positions where state-board
+  // licensing applies (RN, LPN/Charge Nurse, CNA, CMA, Nurse Management).
+  // Housekeeping/dietary/maintenance/etc. don't have licenses, so we keep
+  // the form short for them.
+  toggleEmpLicenseSection() {
+    const pos = document.getElementById('emp-position')?.value || '';
+    const sec = document.getElementById('emp-license-section');
+    if (!sec) return;
+    sec.style.display = NURSING_POSITIONS.has(pos) ? '' : 'none';
+  },
+
+  // ── License helpers ─────────────────────────────────────────────────────
+  // Returns one of: 'expired' | 'expiringSoon' | 'ok' | 'missing'.
+  // 'expiringSoon' = within 30 days. Drives both roster badge and shift flag.
+  _licenseStatus(emp) {
+    if (!emp) return 'missing';
+    if (!NURSING_POSITIONS.has(emp.group)) return 'ok';   // not applicable
+    const exp = emp.licenseExpiresAt;
+    if (!exp) return 'missing';
+    const today = new Date(); today.setHours(0,0,0,0);
+    const expDate = new Date(exp + 'T00:00:00');
+    const days = Math.floor((expDate.getTime() - today.getTime()) / (24*60*60*1000));
+    if (days < 0) return 'expired';
+    if (days <= 30) return 'expiringSoon';
+    return 'ok';
+  },
+  _daysToLicenseExpiry(emp) {
+    if (!emp?.licenseExpiresAt) return null;
+    const today = new Date(); today.setHours(0,0,0,0);
+    const expDate = new Date(emp.licenseExpiresAt + 'T00:00:00');
+    return Math.floor((expDate.getTime() - today.getTime()) / (24*60*60*1000));
+  },
+  _licenseBadge(emp) {
+    if (!NURSING_POSITIONS.has(emp.group)) return '';
+    const status = this._licenseStatus(emp);
+    if (status === 'ok') return '';
+    if (status === 'missing') return '<span title="License # / expiration not on file" style="background:#FEE2E2;color:#991B1B;padding:1px 6px;border-radius:99px;font-size:10px;font-weight:700;margin-left:4px">LICENSE ★</span>';
+    if (status === 'expired') {
+      const d = this._daysToLicenseExpiry(emp);
+      return `<span title="License expired ${Math.abs(d)} days ago" style="background:#DC2626;color:#fff;padding:1px 6px;border-radius:99px;font-size:10px;font-weight:700;margin-left:4px">EXPIRED</span>`;
+    }
+    if (status === 'expiringSoon') {
+      const d = this._daysToLicenseExpiry(emp);
+      return `<span title="License expires in ${d} days" style="background:#FEF3C7;color:#92400E;padding:1px 6px;border-radius:99px;font-size:10px;font-weight:700;margin-left:4px">EXPIRES IN ${d}D</span>`;
+    }
+    return '';
   },
 
   // ── SIDEBAR ─────────────────────────────────────────────────
@@ -10732,7 +10804,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           <div style="display:flex;align-items:center;gap:10px">
             <div class="roster-row-avatar" style="background:${isActive?col:'var(--g300)'}">${sanitize(emp.initials)}</div>
             <div style="flex:1;min-width:0">
-              <div style="font-weight:600;color:${isActive?'var(--g900)':'var(--g500)'}">${sanitize(emp.name)}${missing(emp.email)||missing(emp.phone)||missing(emp.hireDate)||missing(emp.dob)||missing(emp.hourlyRate)?RED_STAR:''}</div>
+              <div style="font-weight:600;color:${isActive?'var(--g900)':'var(--g500)'}">${sanitize(emp.name)}${missing(emp.email)||missing(emp.phone)||missing(emp.hireDate)||missing(emp.dob)||missing(emp.hourlyRate)?RED_STAR:''}${this._licenseBadge(emp)}</div>
               <div style="font-size:11px;color:var(--g600);margin-top:1px">${missing(emp.email) ? `<span style="color:#DC2626;font-style:italic">no email ${RED_STAR}</span>` : sanitize(emp.email)}</div>
               ${termHtml}
               ${dropdownToggle}
@@ -12867,16 +12939,35 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         const allFull    = req > 0 && numEmpty === 0;
 
         let cell = '';
-        // Filled slots — full name + avatar
+        // Filled slots — full name + avatar.
+        // Shift cells turn red-bordered with an EXPIRED LICENSE banner if the
+        // assigned nursing employee's license has lapsed; yellow-bordered if
+        // it's expiring within 30 days; standard green if all good or N/A.
         scheduled.forEach(slot => {
           const emp = this.S.employees.find(e => e.id === slot.employeeId);
-          if (emp) cell += `<div class="emp-slot" style="margin-bottom:6px;border:1px solid #DCFCE7;border-radius:8px;padding:6px 8px;background:#F0FDF4">
-            <div class="emp-slot-avatar" style="background:${G_COLORS[g]}">${sanitize(emp.initials)}</div>
-            <div>
-              <div style="font-size:12px;font-weight:700;color:var(--g900)">${sanitize(emp.name)}</div>
-              <div style="font-size:10px;color:var(--g500)">${sanitize(emp.group)}</div>
-            </div>
-          </div>`;
+          if (emp) {
+            const licStatus = this._licenseStatus(emp);
+            const cellStyle = licStatus === 'expired'
+              ? 'border:2px solid #DC2626;border-radius:8px;padding:6px 8px;background:#FEF2F2'
+              : licStatus === 'expiringSoon'
+              ? 'border:1.5px solid #F59E0B;border-radius:8px;padding:6px 8px;background:#FFFBEB'
+              : licStatus === 'missing'
+              ? 'border:1.5px solid #DC2626;border-radius:8px;padding:6px 8px;background:#FEF2F2'
+              : 'border:1px solid #DCFCE7;border-radius:8px;padding:6px 8px;background:#F0FDF4';
+            const flag = (licStatus === 'expired' || licStatus === 'missing')
+              ? `<div style="background:#DC2626;color:#fff;font-size:9px;font-weight:800;padding:2px 6px;border-radius:99px;letter-spacing:.04em;margin-bottom:3px;display:inline-block">${licStatus === 'expired' ? '⚠ EXPIRED LICENSE' : '⚠ NO LICENSE ON FILE'}</div>`
+              : licStatus === 'expiringSoon'
+              ? `<div style="background:#F59E0B;color:#fff;font-size:9px;font-weight:800;padding:2px 6px;border-radius:99px;letter-spacing:.04em;margin-bottom:3px;display:inline-block">⚠ EXPIRES IN ${this._daysToLicenseExpiry(emp)}D</div>`
+              : '';
+            cell += `<div class="emp-slot" style="margin-bottom:6px;${cellStyle}">
+              <div class="emp-slot-avatar" style="background:${G_COLORS[g]}">${sanitize(emp.initials)}</div>
+              <div>
+                ${flag}
+                <div style="font-size:12px;font-weight:700;color:var(--g900)">${sanitize(emp.name)}</div>
+                <div style="font-size:10px;color:var(--g500)">${sanitize(emp.group)}</div>
+              </div>
+            </div>`;
+          }
         });
         // Empty slot placeholders
         for (let i = 0; i < numEmpty; i++) {
@@ -13711,6 +13802,13 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const hireDate = document.getElementById('emp-hire-date')?.value || null;
     const dob      = document.getElementById('emp-dob')?.value || null;
     const adminAccess = document.getElementById('emp-admin-access')?.value || 'full';
+    // Nursing license fields — only relevant for licensed positions but the
+    // form shows them dynamically (toggleEmpLicenseSection). For non-nursing
+    // positions the inputs are hidden so any leftover values are ignored.
+    const isLicensedRole = NURSING_POSITIONS.has(pos);
+    const licenseNumber    = isLicensedRole ? sanitizeInput((document.getElementById('emp-license-number')?.value || '').trim(), 40)        : null;
+    const licenseState     = isLicensedRole ? sanitizeInput((document.getElementById('emp-license-state')?.value  || '').trim().toUpperCase(), 3) : null;
+    const licenseExpiresAt = isLicensedRole ? (document.getElementById('emp-license-expires')?.value || null)                                : null;
     if(!name||!pos||!email){this.showToast('Name, position, and email are required','warn');return;}
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){this.showToast('Invalid email address','warn');return;}
     if(!GROUPS.includes(pos)){this.showToast('Invalid position','warn');return;}
@@ -13783,7 +13881,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           this.persistData();
           this.closeModal('modal-add-emp');
           this.showToast(`${sanitize(name)} reactivated — prior history preserved`);
-          ['emp-name','emp-email','emp-phone','emp-hourly-rate','emp-hire-date','emp-dob'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+          ['emp-name','emp-email','emp-phone','emp-hourly-rate','emp-hire-date','emp-dob','emp-license-number','emp-license-state','emp-license-expires'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
           document.getElementById('emp-position').value='';
           this.render();
           return;
@@ -13801,6 +13899,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         notifEmail,notifSMS,notifPrefs:prefs,notifChannels,initials,
         terminationLog:termLog,inactive:false,employmentType,
         hourlyRate, hireDate, dob,
+        licenseNumber, licenseExpiresAt, licenseState,
         disciplinary: [],
       });
     }
