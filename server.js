@@ -2454,6 +2454,136 @@ app.delete('/api/sa/seed-demo-facility', requireAuth, requireSuperAdmin, async (
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// EMPLOYEE ACCESS LEVEL — promote/demote between employee and admin tiers
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin can change a roster member's access level in three ways:
+//   employee  → just an employee (no admin account exists)
+//   admin     → Building Admin with Full access (sees financials)
+//   scheduler → Building Admin with Scheduler-only access (hides $)
+//
+// Promoting to admin creates an `accounts` record linked by email + emits
+// an invite token so the employee can set their own password. Demoting
+// removes the account (the employee record + login email is preserved).
+// Authorization: building admin can only change access for employees in
+// their own building; superadmin can change anyone's.
+app.post('/api/employees/:id/access', requireAuth, requireAdmin, async (req, res) => {
+  const empId = req.params.id;
+  const { access } = req.body || {};
+  if (!['employee','admin','scheduler'].includes(access)) {
+    return res.status(400).json({ error: "access must be 'employee', 'admin', or 'scheduler'" });
+  }
+  const data = await loadData();
+  const emp = (data.employees || []).find(e => e.id === empId);
+  if (!emp) return res.status(404).json({ error: 'Employee not found' });
+  if (!emp.email) return res.status(400).json({ error: 'Employee has no email — add an email before changing access' });
+  // Authz: building admin can only modify employees in their own building.
+  const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds||[])].filter(Boolean));
+  if (req.user.role !== 'superadmin' && !callerBIds.has(emp.buildingId)) {
+    return res.status(403).json({ error: 'Out of scope' });
+  }
+  // Caller can't change their own access (would let an admin demote themselves
+  // and lock the building out).
+  if (!Array.isArray(data.accounts)) data.accounts = [];
+  const existing = data.accounts.find(a => a.email && a.email.toLowerCase() === emp.email.toLowerCase());
+  if (existing && existing.id === req.user.id) {
+    return res.status(400).json({ error: 'You cannot change your own access level — ask another admin or superadmin' });
+  }
+
+  // ── Demote to employee ─────────────────────────────────────────────────
+  if (access === 'employee') {
+    if (!existing || existing.role !== 'admin') {
+      // No-op — employee is already employee-tier
+      return res.json({ ok: true, message: 'No change needed (already employee)' });
+    }
+    // Refuse to remove the LAST admin from a building (would lock it out).
+    const otherAdmins = data.accounts.filter(a =>
+      a.role === 'admin' && a.id !== existing.id && a.buildingId === existing.buildingId);
+    if (!otherAdmins.length) {
+      return res.status(409).json({ error: 'Cannot demote the only admin for this building. Promote someone else first.' });
+    }
+    // Remove the admin account; employee record remains intact.
+    data.accounts = data.accounts.filter(a => a.id !== existing.id);
+    markDirty();
+    auditLog('ACCESS_DEMOTED', req.user, { empId, removedAccountId: existing.id, email: emp.email });
+    return res.json({ ok: true, access: 'employee' });
+  }
+
+  // ── Promote to admin or scheduler ──────────────────────────────────────
+  const wantSchedulerOnly = access === 'scheduler';
+  if (existing) {
+    if (existing.role !== 'admin') {
+      // Edge case: account exists but isn't admin (e.g., regional). Refuse —
+      // SA-only operation to handle non-standard role transitions.
+      if (req.user.role !== 'superadmin') {
+        return res.status(409).json({ error: `An account already exists with role ${existing.role}. Superadmin must adjust.` });
+      }
+    }
+    existing.role = 'admin';
+    existing.buildingId = emp.buildingId;
+    existing.schedulerOnly = wantSchedulerOnly;
+    await persistAccountNow(existing);
+    auditLog(wantSchedulerOnly ? 'ACCESS_SET_SCHEDULER' : 'ACCESS_SET_FULL_ADMIN', req.user, {
+      empId, accountId: existing.id, email: emp.email,
+    });
+    return res.json({ ok: true, access, accountId: existing.id });
+  }
+
+  // No existing account → create + send invite.
+  const inviteToken = crypto.randomBytes(24).toString('hex');
+  const newAccount = {
+    id:           'acc_' + Date.now() + crypto.randomBytes(2).toString('hex'),
+    name:         emp.name,
+    email:        emp.email.toLowerCase(),
+    role:         'admin',
+    buildingId:   emp.buildingId,
+    schedulerOnly: wantSchedulerOnly,
+    ph:           null,
+    inviteToken,
+    inviteExpiry: Date.now() + 7 * 24 * 60 * 60 * 1000,
+    invitedBy:    req.user.email,
+    invitedAt:    new Date().toISOString(),
+    promotedFromEmployeeId: emp.id,
+  };
+  data.accounts.push(newAccount);
+  await persistAccountNow(newAccount);
+
+  // Best-effort invite email — failure is non-blocking, admin can resend.
+  let emailWarning = null;
+  if (ACS_CONNECTION_STRING) {
+    try {
+      const { EmailClient } = require('@azure/communication-email');
+      const ec     = new EmailClient(ACS_CONNECTION_STRING);
+      const link   = `${APP_URL}/?invite=${inviteToken}`;
+      const escName = escapeHtml(emp.name);
+      const accessLabel = wantSchedulerOnly ? 'Scheduler Access' : 'Full Building Admin';
+      const poller = await ec.beginSend({
+        senderAddress: ACS_FROM_EMAIL,
+        recipients: { to: [{ address: emp.email }] },
+        content: {
+          subject: `You've been promoted to ${accessLabel} on ManageMyStaffing`,
+          plainText: `Hi ${emp.name},\n\nYou now have ${accessLabel} access on ManageMyStaffing. Set your password using the link below:\n${link}\n\n— ManageMyStaffing`,
+          html: `<div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#f9fafb"><div style="background:#fff;border-radius:12px;padding:32px;border:1px solid #e5e7eb"><h2 style="font-size:20px;font-weight:700;color:#111827;margin:0 0 8px">Welcome aboard, ${escName}!</h2><p style="color:#6b7280;font-size:14px;margin:0 0 20px">You now have <strong>${accessLabel}</strong> access on ManageMyStaffing. Set your password to sign in:</p><a href="${link}" style="display:inline-block;background:#6B9E7A;color:#fff;font-weight:700;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px">Set password →</a><p style="color:#9ca3af;font-size:12px;margin:20px 0 0">Link expires in 7 days.</p></div></div>`,
+        },
+      });
+      await Promise.race([ poller.pollUntilDone(), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 30000)) ]);
+    } catch (e) {
+      emailWarning = e.message;
+    }
+  }
+
+  markDirty();
+  auditLog(wantSchedulerOnly ? 'ACCESS_SET_SCHEDULER' : 'ACCESS_SET_FULL_ADMIN', req.user, {
+    empId, accountId: newAccount.id, email: emp.email, invited: true,
+  });
+  res.json({
+    ok: true, access, accountId: newAccount.id,
+    inviteSent: !emailWarning,
+    inviteLink: emailWarning ? `${APP_URL}/?invite=${inviteToken}` : undefined,
+    emailWarning,
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SHIFT TRADE REQUESTS
 // ─────────────────────────────────────────────────────────────────────────────
 // Employee A wants to swap one of their scheduled shifts with employee B's

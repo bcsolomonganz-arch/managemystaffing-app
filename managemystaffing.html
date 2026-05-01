@@ -9958,6 +9958,22 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M7 14h2M7 18h2"/></svg>
           IDs
        </button>` : '';
+      // Access level: derive from any existing account linked to this email.
+      const linkedAcct = (this.S.accounts || []).find(a => a.email && emp.email && a.email.toLowerCase() === emp.email.toLowerCase());
+      let accessLabel = 'Employee', accessColor = 'var(--g600)', accessBg = 'var(--g100)';
+      if (linkedAcct?.role === 'admin') {
+        if (linkedAcct.schedulerOnly) { accessLabel = 'Scheduler'; accessColor = '#92400E'; accessBg = '#FEF3C7'; }
+        else                          { accessLabel = 'Admin';     accessColor = 'var(--blue-d)'; accessBg = 'var(--blue-l)'; }
+      } else if (linkedAcct?.role === 'superadmin') {
+        accessLabel = 'Super Admin'; accessColor = '#6D28D9'; accessBg = '#EDE9FE';
+      }
+      const accessBtn = isActive && emp.email ? `<button class="btn btn-ghost btn-sm"
+        style="color:${accessColor};border:1.5px solid ${accessBg};background:${accessBg}"
+        title="Change this person's access level"
+        onclick="App.openAccessEditor('${emp.id}')">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="7" r="4"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/><circle cx="18" cy="6" r="3" fill="currentColor"/></svg>
+          ${accessLabel}
+       </button>` : '';
       const actionBtn = isActive
         ? `<button class="btn btn-ghost btn-sm" style="color:var(--red);border:1.5px solid var(--g200)" onclick="App.showInactivateForm('${emp.id}')">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> Inactivate
@@ -9984,7 +10000,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         <td>${sanitize(emp.phone||'—')}</td>
         <td><span class="${isActive?'tag-active':'tag-inactive'}">${isActive?'Active':'Inactive'}</span></td>
         <td style="text-align:right;white-space:nowrap">
-          ${codesBtn ? codesBtn + ' ' : ''}${pinBtn ? pinBtn + ' ' : ''}${actionBtn}
+          ${accessBtn ? accessBtn + ' ' : ''}${codesBtn ? codesBtn + ' ' : ''}${pinBtn ? pinBtn + ' ' : ''}${actionBtn}
         </td>
       </tr>`;
     };
@@ -10337,6 +10353,90 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     document.getElementById('modal-mass-swap')?.remove();
     this.showToast(`${moved} shift${moved===1?'':'s'} reassigned to ${m.to.name}${m.conflicts.length?` · ${m.conflicts.length} skipped`:''}`);
     this.renderMain();
+  },
+
+  // ── Access level editor — promote/demote roster members ───────────────
+  // Three options: Employee (default), Building Admin (Full), Building Admin
+  // (Scheduler — no $ data). Promoting auto-creates an account + invite
+  // email; demoting removes the linked admin account but preserves the
+  // employee record. The button is gated on emp.email being set since the
+  // account is keyed by email.
+  openAccessEditor(empId) {
+    const emp = this.S.employees.find(e => e.id === empId);
+    if (!emp) return;
+    if (!emp.email) { this.showToast('Employee needs an email first','warn'); return; }
+    const linked = (this.S.accounts || []).find(a => a.email && a.email.toLowerCase() === emp.email.toLowerCase());
+    let current = 'employee';
+    if (linked?.role === 'admin') current = linked.schedulerOnly ? 'scheduler' : 'admin';
+    else if (linked?.role === 'superadmin') current = 'superadmin';
+    if (current === 'superadmin') { this.showToast('Superadmin access cannot be changed here','warn'); return; }
+    const isMyOwn = linked?.id === this.S.user?.id;
+    if (isMyOwn) { this.showToast('You cannot change your own access level — ask another admin','warn'); return; }
+
+    const opt = (val, title, sub, color, bg) => `<label style="display:flex;align-items:flex-start;gap:10px;padding:14px;border:2px solid ${current===val?color:'var(--g200)'};border-radius:10px;cursor:pointer;background:${current===val?bg:'#fff'};margin-bottom:8px">
+      <input type="radio" name="access-level" value="${val}" ${current===val?'checked':''} style="margin-top:3px;flex-shrink:0">
+      <div style="flex:1">
+        <div style="font-weight:700;color:${current===val?color:'var(--g900)'};font-size:14px">${title}</div>
+        <div style="font-size:12px;color:var(--g600);margin-top:3px">${sub}</div>
+      </div>
+    </label>`;
+    const div = document.createElement('div');
+    div.id = 'modal-access';
+    div.className = 'modal-overlay open';
+    div.innerHTML = `<div class="modal" style="max-width:480px">
+      <div class="modal-header">
+        <span class="modal-title">Access Level — ${sanitize(emp.name)}</span>
+        <button class="modal-close" onclick="document.getElementById('modal-access').remove()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size:12px;color:var(--g600);margin-bottom:12px">Pick the level of access for ${sanitize(emp.name)} on ${sanitize(emp.email)}.</div>
+        ${opt('employee',  'Employee',
+              'Sees their own schedule and shifts only. No admin tools. Default for most staff.',
+              'var(--g700)', 'var(--g50)')}
+        ${opt('admin',     'Full Building Admin',
+              'Manages employees, shifts, alerts, AND sees hourly rates / OT / cost / PPD financial data.',
+              'var(--blue-d)', 'var(--blue-l)')}
+        ${opt('scheduler', 'Scheduler Access (no financials)',
+              'Manages employees, shifts, alerts. Does NOT see hourly rates, Cost/Day, Total Daily Cost, or OT panel.',
+              '#92400E', '#FEF3C7')}
+        ${linked ? `<div style="background:var(--g50);border:1px solid var(--g200);border-radius:6px;padding:10px 12px;font-size:11px;color:var(--g700);margin-top:10px">An admin account is linked at ${sanitize(linked.email)}. Demoting to Employee removes the login.</div>`
+                 : `<div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:6px;padding:10px 12px;font-size:11px;color:var(--g700);margin-top:10px">Promoting to admin will send an invite email so they can set a password.</div>`}
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="document.getElementById('modal-access').remove()">Cancel</button>
+        <button class="btn btn-primary" onclick="App.saveAccessChange('${empId}','${current}')">Save</button>
+      </div>
+    </div>`;
+    document.body.appendChild(div);
+  },
+
+  async saveAccessChange(empId, currentValue) {
+    const sel = document.querySelector('input[name="access-level"]:checked')?.value;
+    if (!sel) { this.showToast('Pick an access level','warn'); return; }
+    if (sel === currentValue) { document.getElementById('modal-access')?.remove(); return; }
+    try {
+      const r = await fetch(`/api/employees/${encodeURIComponent(empId)}/access`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ access: sel }),
+      });
+      const data = await r.json();
+      if (!r.ok) { this.showToast(data.error || 'Save failed','warn'); return; }
+      // Refresh /api/data so the linked account flows back into S.accounts
+      const dResp = await fetch('/api/data');
+      if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
+      document.getElementById('modal-access')?.remove();
+      const labels = { employee:'Employee', admin:'Full Admin', scheduler:'Scheduler Access' };
+      let msg = `Access set to ${labels[sel] || sel}`;
+      if (data.inviteSent === false && data.inviteLink) {
+        msg += ` — email failed; manual invite link copied to clipboard`;
+        try { await navigator.clipboard.writeText(data.inviteLink); } catch(e) {}
+      } else if (sel !== 'employee' && data.inviteSent !== false) {
+        msg += ` — invite email sent`;
+      }
+      this.showToast(msg);
+      this.renderMain();
+    } catch(e) { this.showToast('Network error','warn'); }
   },
 
   // Edit the per-employee badge ID (used by SmartLinx + other physical
