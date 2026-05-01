@@ -2259,32 +2259,11 @@ function _haversineMeters(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-// Punch status classifier. Cross-references the scheduled shift for this
-// (empId, date) to detect late arrivals, missed clock-outs, and >15-minute
-// early arrivals.
-function _classifyPunch(emp, date, inTime, outTime, shifts) {
-  const sched = (shifts || []).find(s =>
-    s.employeeId === emp.id && s.date === date && s.status === 'scheduled');
-  if (!inTime) return 'missed';
-  if (!outTime) return 'no-out';
-  const toMin = t => { if(!t) return null; const [h,m]=String(t).trim().split(':').map(Number); return h*60+(m||0); };
-  const inMin = toMin(inTime);
-  const schedIn = toMin(sched?.start);
-  if (schedIn != null && inMin != null && (inMin - schedIn) > 7) return 'late';
-  if (schedIn != null && inMin != null && (schedIn - inMin) > 15) return 'early';
-  return 'normal';
-}
-
-// Find an existing punch record for (empId, date) — punches dedupe per day.
-function _findOrCreatePunch(data, empId, date) {
-  if (!Array.isArray(data.hrTimeClock)) data.hrTimeClock = [];
-  let r = data.hrTimeClock.find(x => x.empId === empId && x.date === date);
-  if (!r) {
-    r = { empId, date, in: '', out: '', hours: '', status: 'normal' };
-    data.hrTimeClock.push(r);
-  }
-  return r;
-}
+// Punch helpers live in lib/punch.js so node --test can exercise them
+// without booting the full Express + JWT stack.
+const _punchLib = require('./lib/punch');
+const _classifyPunch     = _punchLib.classifyPunch;
+const _findOrCreatePunch = _punchLib.findOrCreatePunch;
 
 // Apply a single punch event (action: 'in' | 'out') to data.hrTimeClock.
 // Returns { ok, record } or { error }.
@@ -2653,10 +2632,7 @@ app.delete('/api/sa/seed-demo-facility', requireAuth, requireSuperAdmin, async (
 //   - Thread id is a deterministic string sort of the pair so either side
 //     can compute it: dm:<sortedId1>:<sortedId2>
 
-function _dmThreadId(idA, idB) {
-  const [a, b] = [String(idA), String(idB)].sort();
-  return 'dm:' + a + ':' + b;
-}
+const _dmThreadId = _punchLib.dmThreadId;
 
 // POST /api/dm — send a message
 // Body: { toId, body }
@@ -3979,35 +3955,8 @@ app.post('/api/timeclock/agency', requireAuth, requireAdmin, async (req, res) =>
   res.json({ ok: true, record, shift });
 });
 
-// Helper: apply punch in/out edits to a record, recompute hours + status.
-function _applyPunchEdit(emp, r, inTime, outTime, data) {
-  if (inTime  !== undefined) r.in  = String(inTime  || '').slice(0,5);
-  if (outTime !== undefined) r.out = String(outTime || '').slice(0,5);
-  if (r.in && r.out) {
-    const [ih, im] = r.in.split(':').map(Number);
-    const [oh, om] = r.out.split(':').map(Number);
-    let mins = (oh*60 + (om||0)) - (ih*60 + (im||0));
-    if (mins < 0) mins += 24*60;
-    r.hours = (mins / 60).toFixed(2);
-  } else { r.hours = ''; }
-  r.status = _classifyPunch(emp, emp ? r.date : null, r.in, r.out, data.shifts || []);
-  r.name = emp.name; r.role = emp.group; r.buildingId = emp.buildingId;
-}
-
-// Helper: drop a notification onto data.notifications[] for a target user/role.
-// Sidebar / inbox UI reads from this array. Each entry is non-PHI metadata
-// only — the punch record reference lets the UI fetch the rest.
-function _notify(data, n) {
-  if (!Array.isArray(data.notifications)) data.notifications = [];
-  data.notifications.unshift({
-    id: 'n_' + crypto.randomBytes(6).toString('hex'),
-    createdAt: new Date().toISOString(),
-    readAt: null,
-    ...n,
-  });
-  // Cap at 5,000 to bound storage
-  if (data.notifications.length > 5000) data.notifications.length = 5000;
-}
+const _applyPunchEdit = _punchLib.applyPunchEdit;
+const _notify         = _punchLib.notify;
 
 // PATCH /api/timeclock/punch — admin correction.
 // Body: { empId, date, in?, out?, note? }
