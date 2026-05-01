@@ -12,6 +12,11 @@
 <title>ManageMyStaffing — HIPAA Compliant</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg viewBox='0 0 100 92' xmlns='http://www.w3.org/2000/svg'><rect x='70' y='2' width='14' height='26' rx='5' fill='%236B9E7A'/><path d='M50 5 L0 52 Q0 56 4 56 L96 56 Q100 56 100 52 Z' fill='%236B9E7A'/><rect x='3' y='50' width='94' height='42' rx='6' fill='%236B9E7A'/><rect x='38' y='20' width='9' height='9' rx='2' fill='white'/><rect x='52' y='20' width='9' height='9' rx='2' fill='white'/><rect x='38' y='32' width='9' height='9' rx='2' fill='white'/><rect x='52' y='32' width='9' height='9' rx='2' fill='white'/><rect x='63' y='57' width='10' height='9' rx='2' fill='white'/><rect x='76' y='57' width='10' height='9' rx='2' fill='white'/><rect x='63' y='69' width='10' height='9' rx='2' fill='white'/><rect x='76' y='69' width='10' height='9' rx='2' fill='white'/><rect x='7' y='71' width='26' height='8' rx='4' fill='white'/><rect x='16' y='62' width='8' height='26' rx='4' fill='white'/><rect x='41' y='70' width='18' height='22' rx='3' fill='white'/></svg>">
 <link rel="apple-touch-icon" href="data:image/svg+xml,<svg viewBox='0 0 100 92' xmlns='http://www.w3.org/2000/svg'><rect width='100' height='100' rx='20' fill='%23F0F7F3'/><rect x='70' y='2' width='14' height='26' rx='5' fill='%236B9E7A'/><path d='M50 5 L0 52 Q0 56 4 56 L96 56 Q100 56 100 52 Z' fill='%236B9E7A'/><rect x='3' y='50' width='94' height='42' rx='6' fill='%236B9E7A'/><rect x='38' y='20' width='9' height='9' rx='2' fill='white'/><rect x='52' y='20' width='9' height='9' rx='2' fill='white'/><rect x='38' y='32' width='9' height='9' rx='2' fill='white'/><rect x='52' y='32' width='9' height='9' rx='2' fill='white'/><rect x='63' y='57' width='10' height='9' rx='2' fill='white'/><rect x='76' y='57' width='10' height='9' rx='2' fill='white'/><rect x='63' y='69' width='10' height='9' rx='2' fill='white'/><rect x='76' y='69' width='10' height='9' rx='2' fill='white'/><rect x='7' y='71' width='26' height='8' rx='4' fill='white'/><rect x='16' y='62' width='8' height='26' rx='4' fill='white'/><rect x='41' y='70' width='18' height='22' rx='3' fill='white'/></svg>">
+<link rel="manifest" href="/manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="ManageMyStaffing">
+<meta name="theme-color" content="#6B9E7A">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -3709,16 +3714,62 @@ const App = {
       })()}
       ${(() => {
         const pendingClaims = (this.S.shifts || []).filter(s => s.claimRequest && s.buildingId === effBuildingId);
-        if (!pendingClaims.length) return '';
-        return `<div class="sidebar-divider"></div>
-        <div class="sidebar-section-title">Notifications</div>
-        <div class="group-item" onclick="App.openPendingClaims()" style="cursor:pointer;background:#FFFBEB">
-          <div class="group-icon" style="background:#FEF3C7;color:#D97706"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1l1.5 3 3.5.5-2.5 2.5.5 3.5L8 9l-3 1.5.5-3.5L3 4.5l3.5-.5z"/></svg></div>
-          Shift Claims
-          <span class="group-badge" style="background:#D97706;color:#fff;margin-left:auto">${pendingClaims.length}</span>
-        </div>`;
+        const pendingTrades = (this.S.shiftTrades || []).filter(t => t.status === 'pending' && t.buildingId === effBuildingId);
+        if (!pendingClaims.length && !pendingTrades.length) return '';
+        let html = `<div class="sidebar-divider"></div><div class="sidebar-section-title">Notifications</div>`;
+        if (pendingClaims.length) {
+          html += `<div class="group-item" onclick="App.openPendingClaims()" style="cursor:pointer;background:#FFFBEB">
+            <div class="group-icon" style="background:#FEF3C7;color:#D97706"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1l1.5 3 3.5.5-2.5 2.5.5 3.5L8 9l-3 1.5.5-3.5L3 4.5l3.5-.5z"/></svg></div>
+            Shift Claims
+            <span class="group-badge" style="background:#D97706;color:#fff;margin-left:auto">${pendingClaims.length}</span>
+          </div>`;
+        }
+        if (pendingTrades.length) {
+          html += `<div class="group-item" onclick="App.openPendingTrades()" style="cursor:pointer;background:#EFF6FF">
+            <div class="group-icon" style="background:#DBEAFE;color:#1E40AF"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2l3 3-3 3"/><path d="M2 7V5.5a2.5 2.5 0 0 1 2.5-2.5H14"/><path d="M5 14l-3-3 3-3"/><path d="M14 9v1.5a2.5 2.5 0 0 1-2.5 2.5H2"/></svg></div>
+            Shift Trades
+            <span class="group-badge" style="background:#1E40AF;color:#fff;margin-left:auto">${pendingTrades.length}</span>
+          </div>`;
+        }
+        return html;
       })()}
     `;
+  },
+
+  // Admin queue for pending shift trades. Reuses the right-panel slot.
+  openPendingTrades() {
+    const u = this.S.user;
+    const bId = this.S.activeBuildingId || u.buildingId || 'b1';
+    const trades = (this.S.shiftTrades || []).filter(t => t.status === 'pending' && t.buildingId === bId);
+    const empById = new Map((this.S.employees || []).map(e => [e.id, e]));
+    const shiftById = new Map((this.S.shifts || []).map(s => [s.id, s]));
+    const rows = trades.length ? trades.map(t => {
+      const fromS = shiftById.get(t.fromShiftId);
+      const toS   = shiftById.get(t.toShiftId);
+      const fromE = fromS ? empById.get(fromS.employeeId) : null;
+      const toE   = toS   ? empById.get(toS.employeeId)   : null;
+      return `<div style="background:#fff;border:1px solid var(--g200);border-radius:10px;padding:14px;margin-bottom:10px">
+        <div style="font-size:11px;color:var(--g500);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Trade requested ${new Date(t.requestedAt).toLocaleString()}</div>
+        <div style="display:flex;align-items:center;gap:10px;font-size:13px;color:var(--g900);margin-bottom:6px">
+          <span><strong>${sanitize(fromE?.name || '?')}</strong>'s ${sanitize(fromS?.date || '?')} ${sanitize(fromS?.type || '')}</span>
+          <span style="color:var(--blue)">↔</span>
+          <span><strong>${sanitize(toE?.name || '?')}</strong>'s ${sanitize(toS?.date || '?')} ${sanitize(toS?.type || '')}</span>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn btn-primary btn-sm" onclick="App.decideTrade('${t.id}','approve')">Approve</button>
+          <button class="btn btn-secondary btn-sm" style="color:var(--red)" onclick="App.decideTrade('${t.id}','reject')">Reject</button>
+        </div>
+      </div>`;
+    }).join('') : `<div style="padding:30px;text-align:center;color:var(--g600)">No pending trades</div>`;
+    this.S.panelOpen = true;
+    document.getElementById('main').classList.add('panel-open');
+    document.getElementById('right-panel').classList.add('open');
+    document.getElementById('rp-content').innerHTML = `
+      <div class="rp-header">
+        <div><div class="rp-title">↔ Shift Trades</div><div class="rp-sub">${trades.length} pending</div></div>
+        <button class="rp-close" onclick="App.closePanel()">✕</button>
+      </div>
+      <div class="rp-body">${rows}</div>`;
   },
 
   // HR module is in development — only the SA login can see it for now.
@@ -11680,9 +11731,24 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const shiftTypes = SHIFT_TYPES(u.group);
     const sh = shiftTypes.find(s=>s.type===shift.type);
     const col = G_COLORS[u.group] || 'var(--blue)';
+    // Existing pending trade for this shift?
+    const pendingTrade = (this.S.shiftTrades || []).find(t =>
+      t.status === 'pending' && (t.fromShiftId === shift.id || t.toShiftId === shift.id));
     this.S.panelOpen = true;
     document.getElementById('main').classList.add('panel-open');
     document.getElementById('right-panel').classList.add('open');
+    let tradeHtml = '';
+    if (pendingTrade) {
+      const otherShift = this.S.shifts.find(s => s.id === (pendingTrade.fromShiftId === shift.id ? pendingTrade.toShiftId : pendingTrade.fromShiftId));
+      const otherEmp   = otherShift ? this.S.employees.find(e => e.id === otherShift.employeeId) : null;
+      tradeHtml = `<div style="margin-top:10px;padding:10px 12px;background:#FFF7ED;border:1px solid #FDE68A;border-radius:8px;font-size:12px;color:#92400E">
+        <strong>Trade pending admin approval</strong><br>
+        Swap with ${sanitize(otherEmp?.name || 'another employee')}'s shift on ${sanitize(otherShift?.date || '?')}.
+        ${pendingTrade.requestedBy === u.id ? `<button onclick="App.cancelTrade('${pendingTrade.id}')" style="margin-top:6px;background:none;border:1px solid #D97706;color:#92400E;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">Cancel request</button>` : ''}
+      </div>`;
+    } else if (shift.date >= TODAY) {
+      tradeHtml = `<button onclick="App.openTradeFinder('${shift.id}')" style="margin-top:10px;width:100%;padding:10px;background:var(--blue);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">↔ Request Shift Trade</button>`;
+    }
     document.getElementById('rp-content').innerHTML = `
       <div class="rp-header">
         <div><div class="rp-title">${dl}</div><div class="rp-sub">My Shift</div></div>
@@ -11697,8 +11763,101 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
             <div class="emp-slot-avatar" style="background:${col}">${sanitize(u.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase())}</div>
             <div style="flex:1"><div class="emp-slot-name">${sanitize(u.name)}</div><div style="font-size:11px;color:var(--g600)">${sanitize(u.group)}</div></div>
           </div>
+          ${tradeHtml}
         </div>
       </div>`;
+  },
+
+  // Open a picker showing other employees' upcoming shifts in the same group.
+  // Pick one → POST /api/shifts/trade. Admin approves later.
+  openTradeFinder(myShiftId) {
+    const u = this.S.user;
+    const myShift = this.S.shifts.find(s => s.id === myShiftId);
+    if (!myShift) return;
+    // Candidate shifts: same group + same building + scheduled + future + not mine + no pending trade
+    const pendingShiftIds = new Set((this.S.shiftTrades || [])
+      .filter(t => t.status === 'pending')
+      .flatMap(t => [t.fromShiftId, t.toShiftId]));
+    const candidates = (this.S.shifts || []).filter(s =>
+      s.id !== myShift.id && s.group === myShift.group && s.buildingId === myShift.buildingId &&
+      s.status === 'scheduled' && s.date >= TODAY && s.employeeId !== u.id &&
+      !pendingShiftIds.has(s.id))
+      .sort((a,b) => a.date.localeCompare(b.date));
+    if (!candidates.length) { this.showToast('No tradable shifts found in your group','warn'); return; }
+    const empById = new Map((this.S.employees || []).map(e => [e.id, e]));
+    const rows = candidates.slice(0, 50).map(s => {
+      const e = empById.get(s.employeeId);
+      const dl = new Date(s.date + 'T12:00:00').toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
+      return `<div onclick="App.requestTrade('${myShiftId}','${s.id}')" style="padding:10px 14px;border-bottom:1px solid var(--g100);display:flex;align-items:center;gap:10px;cursor:pointer;transition:background .1s" onmouseover="this.style.background='var(--g50)'" onmouseout="this.style.background='#fff'">
+        <div style="width:32px;height:32px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex-shrink:0">${sanitize((e?.name || '?').split(' ').map(w => w[0] || '').join('').slice(0,2).toUpperCase())}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:13px;color:var(--g900)">${sanitize(e?.name || 'Unknown')}</div>
+          <div style="font-size:11px;color:var(--g500)">${dl} · ${sanitize(s.type)}</div>
+        </div>
+        <span style="font-size:11px;color:var(--blue-d);font-weight:600">↔</span>
+      </div>`;
+    }).join('');
+    const div = document.createElement('div');
+    div.id = 'modal-trade-finder';
+    div.className = 'modal-overlay open';
+    div.innerHTML = `<div class="modal" style="max-width:520px;max-height:80vh;display:flex;flex-direction:column">
+      <div class="modal-header"><span class="modal-title">↔ Request Shift Trade</span>
+        <button class="modal-close" onclick="document.getElementById('modal-trade-finder').remove()">✕</button></div>
+      <div style="background:var(--blue-l);border-bottom:1px solid var(--blue-m);padding:10px 16px;font-size:12px;color:var(--g700)">Pick the shift you want to swap into. Admin will review before the trade is final.</div>
+      <div style="overflow-y:auto;flex:1">${rows}</div>
+    </div>`;
+    document.body.appendChild(div);
+  },
+
+  async requestTrade(fromShiftId, toShiftId) {
+    document.getElementById('modal-trade-finder')?.remove();
+    try {
+      const r = await fetch('/api/shifts/trade', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fromShiftId, toShiftId }),
+      });
+      const data = await r.json();
+      if (!r.ok) { this.showToast(data.error || 'Trade request failed','warn'); return; }
+      // Refresh data
+      const dResp = await fetch('/api/data');
+      if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
+      this.showToast('Trade request submitted — waiting on admin approval');
+      this.closePanel();
+      this.render();
+    } catch(e) { this.showToast('Network error','warn'); }
+  },
+
+  async cancelTrade(tradeId) {
+    if (!confirm('Cancel your trade request?')) return;
+    try {
+      const r = await fetch('/api/shifts/trade/' + tradeId, { method: 'DELETE' });
+      if (!r.ok) { const d = await r.json().catch(()=>({})); this.showToast(d.error || 'Cancel failed','warn'); return; }
+      const dResp = await fetch('/api/data');
+      if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
+      this.showToast('Trade cancelled');
+      this.closePanel();
+      this.render();
+    } catch(e) { this.showToast('Network error','warn'); }
+  },
+
+  // Admin: approve or reject a pending trade.
+  async decideTrade(tradeId, decision) {
+    const verb = decision === 'approve' ? 'approve' : 'reject';
+    if (!confirm(`Are you sure you want to ${verb} this trade?`)) return;
+    try {
+      const r = await fetch(`/api/shifts/trade/${tradeId}/decide`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision }),
+      });
+      const data = await r.json();
+      if (!r.ok) { this.showToast(data.error || 'Failed','warn'); return; }
+      const dResp = await fetch('/api/data');
+      if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
+      this.showToast(`Trade ${decision === 'approve' ? 'approved' : 'rejected'}`);
+      this.render();
+    } catch(e) { this.showToast('Network error','warn'); }
   },
 
   // ── MONTH CALENDAR ──────────────────────────────────────────
@@ -12983,6 +13142,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       buildingShiftTypes:this.S.buildingShiftTypes,
       ppdDailyCensus:this.S.ppdDailyCensus,
       staffEvents:this.S.staffEvents,
+      shiftTrades:this.S.shiftTrades,
       prospects:this.S.prospects,
     };
     if (IS_SERVER_MODE && !this.S.user?.demo) {
@@ -13062,6 +13222,8 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (Array.isArray(data.hrTimeClock))      this.S.hrTimeClock      = data.hrTimeClock;
     if (Array.isArray(data.staffEvents))      this.S.staffEvents      = data.staffEvents;
     if (Array.isArray(data.alertLog))         this.S.alertLog         = data.alertLog;
+    if (Array.isArray(data.shiftTrades))      this.S.shiftTrades      = data.shiftTrades;
+    if (Array.isArray(data.reportSubscriptions)) this.S.reportSubscriptions = data.reportSubscriptions;
     if (Array.isArray(data.prospects))        this.S.prospects        = data.prospects;
     if (data.hrOnboarding && typeof data.hrOnboarding === 'object') {
       if (data.hrOnboarding.TX && !data.hrOnboarding.co_skyblue) {

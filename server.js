@@ -1360,6 +1360,31 @@ app.get('/', (_req, res) => {
   res.sendFile(HTML_FILE);
 });
 
+// PWA manifest — lets users "Add to Home Screen" and launch in a standalone
+// window (no browser chrome). Icons are inline SVG data URLs that match the
+// existing favicon, so no static-file hosting required.
+app.get('/manifest.json', (_req, res) => {
+  const iconSvg = `<svg viewBox="0 0 100 92" xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100" rx="20" fill="%23F0F7F3"/><rect x="70" y="2" width="14" height="26" rx="5" fill="%236B9E7A"/><path d="M50 5 L0 52 Q0 56 4 56 L96 56 Q100 56 100 52 Z" fill="%236B9E7A"/><rect x="3" y="50" width="94" height="42" rx="6" fill="%236B9E7A"/><rect x="38" y="20" width="9" height="9" rx="2" fill="white"/><rect x="52" y="20" width="9" height="9" rx="2" fill="white"/><rect x="38" y="32" width="9" height="9" rx="2" fill="white"/><rect x="52" y="32" width="9" height="9" rx="2" fill="white"/><rect x="63" y="57" width="10" height="9" rx="2" fill="white"/><rect x="76" y="57" width="10" height="9" rx="2" fill="white"/><rect x="63" y="69" width="10" height="9" rx="2" fill="white"/><rect x="76" y="69" width="10" height="9" rx="2" fill="white"/><rect x="7" y="71" width="26" height="8" rx="4" fill="white"/><rect x="16" y="62" width="8" height="26" rx="4" fill="white"/><rect x="41" y="70" width="18" height="22" rx="3" fill="white"/></svg>`;
+  const icon = 'data:image/svg+xml,' + iconSvg;
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.json({
+    name: 'ManageMyStaffing',
+    short_name: 'MMS',
+    description: 'HIPAA-compliant scheduling, recruiting, time clock, and PPD analytics for SNF/LTC operators',
+    start_url: '/',
+    display: 'standalone',
+    orientation: 'any',
+    background_color: '#F0F7F3',
+    theme_color: '#6B9E7A',
+    scope: '/',
+    icons: [
+      { src: icon, sizes: 'any',     type: 'image/svg+xml', purpose: 'any maskable' },
+      { src: icon, sizes: '192x192', type: 'image/svg+xml' },
+      { src: icon, sizes: '512x512', type: 'image/svg+xml' },
+    ],
+  });
+});
+
 // ── RECRUITING ────────────────────────────────────────────────────────────────
 // Public Indeed XML feed. Submit https://www.managemystaffing.com/jobs.xml in
 // your Indeed Employer Dashboard. Indeed crawls this URL periodically and
@@ -2263,6 +2288,278 @@ app.post('/api/timeclock/set-pin', requireAuth, requireAdmin, async (req, res) =
   emp.pinSetAt = new Date().toISOString();
   markDirty();
   auditLog('TIMECLOCK_PIN_SET', req.user, { empId });
+  res.json({ ok: true });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DEMO FACILITY SEED — sales / demo tool
+// ─────────────────────────────────────────────────────────────────────────────
+// SA can spawn a realistic demo facility (~12 employees across roles,
+// 4 weeks of scheduled shifts, daily census, sample punches) so demos
+// don't show empty calendars and zero PPD. Skipped silently if the
+// caller already has a demo facility named "Demo SNF Operations".
+app.post('/api/sa/seed-demo-facility', requireAuth, requireSuperAdmin, async (req, res) => {
+  const data = await loadData();
+  const existing = (data.buildings || []).find(b => b.name === 'Demo SNF Operations');
+  if (existing) return res.status(409).json({ error: 'Demo facility already exists', buildingId: existing.id });
+
+  const bId = 'demo_' + crypto.randomBytes(4).toString('hex');
+  const building = {
+    id: bId, name: 'Demo SNF Operations',
+    address: '500 Cedar Ridge Dr, Tulsa, OK 74133',
+    phone: '(918) 555-0142',
+    beds: 96, color: '#2D6A4F',
+    state: 'OK', stateCode: 'OK', zip: '74133',
+    ccn: '375999',                         // sample CCN, not a real one
+    lat: 36.0844, lng: -95.7864,           // Tulsa metro
+    geofenceRadiusM: 250,
+    isDemo: true,
+  };
+  if (!Array.isArray(data.buildings)) data.buildings = [];
+  data.buildings.push(building);
+
+  // Roster: 12 employees across SNF roles
+  const roster = [
+    { name:'Jennifer Walsh',   group:'Nurse Management', rate:42, em:'jwalsh@demo.local',  phone:'(918) 555-1010' },
+    { name:'Marcus Chen',      group:'Charge Nurse',     rate:32, em:'mchen@demo.local',   phone:'(918) 555-1011' },
+    { name:'Patricia Moore',   group:'CNA',              rate:18, em:'pmoore@demo.local',  phone:'(918) 555-1012' },
+    { name:'Robert Lee',       group:'CNA',              rate:18, em:'rlee@demo.local',    phone:'(918) 555-1013' },
+    { name:'Samantha Torres',  group:'CNA',              rate:18, em:'storres@demo.local', phone:'(918) 555-1014' },
+    { name:'Aisha Johnson',    group:'CMA',              rate:22, em:'ajohnson@demo.local',phone:'(918) 555-1015' },
+    { name:'David Chen',       group:'CMA',              rate:22, em:'dchen@demo.local',   phone:'(918) 555-1016' },
+    { name:'Maria Santos',     group:'Cook',             rate:17, em:'msantos@demo.local', phone:'(918) 555-1017' },
+    { name:'Tom Rivera',       group:'Dietary Aid',      rate:15, em:'trivera@demo.local', phone:'(918) 555-1018' },
+    { name:'Priya Patel',      group:'Housekeeping',     rate:15, em:'ppatel@demo.local',  phone:'(918) 555-1019' },
+    { name:'James Wilson',     group:'Laundry',          rate:14, em:'jwilson@demo.local', phone:'(918) 555-1020' },
+    { name:'Sarah Kim',        group:'Maintenance',      rate:24, em:'skim@demo.local',    phone:'(918) 555-1021' },
+  ];
+  if (!Array.isArray(data.employees)) data.employees = [];
+  const empIds = [];
+  for (const r of roster) {
+    const initials = r.name.split(' ').map(w => w[0] || '').join('').slice(0,2).toUpperCase();
+    const e = {
+      id: 'demo_e_' + crypto.randomBytes(4).toString('hex'),
+      name: r.name, initials, group: r.group, email: r.em, phone: r.phone,
+      buildingId: bId, employmentType: 'full-time',
+      hireDate: new Date(Date.now() - (180 + Math.floor(Math.random()*1100)) * 86400000).toISOString().slice(0,10),
+      hourlyRate: r.rate, inactive: false,
+      notifEmail: true, notifSMS: true, notifPrefs: ['immediate','day'],
+      notifChannels: { immediate:{email:true,sms:true}, day:{email:true,sms:false}, week:{email:true,sms:false}, daily:{email:false,sms:false} },
+      isDemo: true,
+    };
+    data.employees.push(e);
+    empIds.push(e.id);
+  }
+
+  // Shifts: next 28 days, daily 7am Day shift coverage for clinical roles
+  if (!Array.isArray(data.shifts)) data.shifts = [];
+  const today = new Date(); today.setUTCHours(0,0,0,0);
+  for (let d = 0; d < 28; d++) {
+    const dt = new Date(today.getTime() + d * 86400000);
+    const ds = dt.toISOString().slice(0,10);
+    // Round-robin clinical staff to Day shift, rotate to keep numbers realistic
+    const dayShift = (group, count, start, end) => {
+      const eligible = data.employees.filter(e => e.buildingId === bId && e.group === group);
+      for (let s = 0; s < count; s++) {
+        const emp = eligible[(d + s) % eligible.length];
+        data.shifts.push({
+          id: 'demo_sh_' + crypto.randomBytes(4).toString('hex'),
+          date: ds, group, type: 'Day', start, end,
+          status: 'scheduled', buildingId: bId,
+          employeeId: emp.id, isDemo: true,
+        });
+      }
+    };
+    dayShift('Charge Nurse',     1, '7:00 AM', '3:00 PM');
+    dayShift('CNA',              3, '7:00 AM', '3:00 PM');
+    dayShift('CMA',              1, '7:00 AM', '3:00 PM');
+    if (d % 2 === 0) dayShift('Cook',  1, '6:00 AM', '2:00 PM');
+    if (d % 3 === 0) dayShift('Housekeeping', 1, '8:00 AM', '4:00 PM');
+  }
+
+  // Census: random 75–88 per day for the past 14 days + next 28 days
+  if (!data.ppdDailyCensus || typeof data.ppdDailyCensus !== 'object') data.ppdDailyCensus = {};
+  for (let d = -14; d < 28; d++) {
+    const dt = new Date(today.getTime() + d * 86400000);
+    const ds = dt.toISOString().slice(0,10);
+    data.ppdDailyCensus[ds] = 75 + Math.floor(Math.random() * 14);
+  }
+
+  // Time clock: past 14 days of punches for clinical staff (mostly normal,
+  // a few late and one missed)
+  if (!Array.isArray(data.hrTimeClock)) data.hrTimeClock = [];
+  for (let d = -14; d < 0; d++) {
+    const dt = new Date(today.getTime() + d * 86400000);
+    const ds = dt.toISOString().slice(0,10);
+    const todaysShifts = data.shifts.filter(s => s.date === ds && s.buildingId === bId);
+    for (const s of todaysShifts) {
+      if (Math.random() < 0.05) continue;       // 5% no-show
+      const emp = data.employees.find(e => e.id === s.employeeId);
+      const lateMin = Math.random() < 0.12 ? Math.floor(Math.random() * 18) + 8 : Math.floor(Math.random() * 6);
+      const inHr = 7;
+      const inMin = lateMin;
+      const inStr = String(inHr).padStart(2,'0') + ':' + String(inMin).padStart(2,'0');
+      const outHr = 15; const outMin = Math.floor(Math.random()*30);
+      const outStr = String(outHr).padStart(2,'0') + ':' + String(outMin).padStart(2,'0');
+      const hours = (8 - inMin/60 + outMin/60).toFixed(2);
+      const status = lateMin > 7 ? 'late' : 'normal';
+      data.hrTimeClock.push({
+        empId: emp.id, name: emp.name, role: emp.group, buildingId: bId,
+        date: ds, in: inStr, out: outStr, hours, status,
+        events: [{ action:'in', at: dt.toISOString(), source:'demo' }],
+        isDemo: true,
+      });
+    }
+  }
+
+  markDirty();
+  auditLog('DEMO_FACILITY_SEEDED', req.user, {
+    buildingId: bId, employees: empIds.length,
+    shifts: data.shifts.filter(s => s.buildingId === bId).length,
+    punches: data.hrTimeClock.filter(p => p.buildingId === bId).length,
+  });
+  res.json({
+    ok: true,
+    buildingId: bId,
+    counts: {
+      employees: empIds.length,
+      shifts: data.shifts.filter(s => s.buildingId === bId).length,
+      punches: data.hrTimeClock.filter(p => p.buildingId === bId).length,
+      censusDays: 42,
+    },
+  });
+});
+
+// SA-only: tear down the demo facility (and everything tagged isDemo:true).
+app.delete('/api/sa/seed-demo-facility', requireAuth, requireSuperAdmin, async (req, res) => {
+  const data = await loadData();
+  const before = {
+    buildings: (data.buildings || []).length,
+    employees: (data.employees || []).length,
+    shifts:    (data.shifts    || []).length,
+    punches:   (data.hrTimeClock || []).length,
+  };
+  data.buildings   = (data.buildings || []).filter(b => !b.isDemo);
+  data.employees   = (data.employees || []).filter(e => !e.isDemo);
+  data.shifts      = (data.shifts    || []).filter(s => !s.isDemo);
+  data.hrTimeClock = (data.hrTimeClock || []).filter(r => !r.isDemo);
+  markDirty();
+  auditLog('DEMO_FACILITY_REMOVED', req.user, {
+    removedBuildings: before.buildings - data.buildings.length,
+    removedEmployees: before.employees - data.employees.length,
+    removedShifts:    before.shifts    - data.shifts.length,
+    removedPunches:   before.punches   - data.hrTimeClock.length,
+  });
+  res.json({ ok: true });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SHIFT TRADE REQUESTS
+// ─────────────────────────────────────────────────────────────────────────────
+// Employee A wants to swap one of their scheduled shifts with employee B's
+// scheduled shift. Goes through admin approval. Same-group only (a CNA shift
+// can't be swapped with a Cook shift). Stored on data.shiftTrades.
+//
+// Lifecycle:
+//   pending  — A submitted, B has accepted? optional, awaiting admin
+//   accepted — B agreed (if A targeted B specifically)
+//   approved — admin approved, employeeIds swapped on both shifts
+//   rejected — admin rejected, no change
+//   cancelled — A withdrew before admin decision
+
+// POST /api/shifts/trade — employee submits a trade request
+// Body: { fromShiftId, toShiftId }
+app.post('/api/shifts/trade', requireAuth, async (req, res) => {
+  const { fromShiftId, toShiftId } = req.body || {};
+  if (!fromShiftId || !toShiftId) return res.status(400).json({ error: 'fromShiftId and toShiftId required' });
+  if (fromShiftId === toShiftId)   return res.status(400).json({ error: 'Cannot trade a shift with itself' });
+  const data = await loadData();
+  const fromShift = (data.shifts || []).find(s => s.id === fromShiftId);
+  const toShift   = (data.shifts || []).find(s => s.id === toShiftId);
+  if (!fromShift || !toShift) return res.status(404).json({ error: 'Shift not found' });
+  if (fromShift.status !== 'scheduled' || toShift.status !== 'scheduled') return res.status(400).json({ error: 'Both shifts must be scheduled' });
+  if (fromShift.group !== toShift.group) return res.status(400).json({ error: 'Same staff group only' });
+  if (fromShift.buildingId !== toShift.buildingId) return res.status(400).json({ error: 'Same building only' });
+  // Auth: employee can only initiate trades for their own shifts; admin can
+  // initiate any trade in their building (used for inline shift-swap by admin).
+  const me = req.user;
+  if (me.role === 'employee' && fromShift.employeeId !== me.id) return res.status(403).json({ error: 'You can only trade your own shifts' });
+  if (me.role === 'admin') {
+    const callerBIds = new Set([me.buildingId, ...(me.buildingIds||[])].filter(Boolean));
+    if (!callerBIds.has(fromShift.buildingId)) return res.status(403).json({ error: 'Out of scope' });
+  }
+  // Reject duplicate-pending trades on either shift.
+  if (!Array.isArray(data.shiftTrades)) data.shiftTrades = [];
+  const dupe = data.shiftTrades.find(t => (t.fromShiftId === fromShiftId || t.toShiftId === toShiftId) && t.status === 'pending');
+  if (dupe) return res.status(409).json({ error: 'A pending trade already exists for one of these shifts' });
+  const trade = {
+    id: 'tr_' + Date.now() + Math.random().toString(36).slice(2,6),
+    fromShiftId, toShiftId,
+    fromEmpId: fromShift.employeeId,
+    toEmpId:   toShift.employeeId,
+    buildingId: fromShift.buildingId,
+    requestedBy: me.id,
+    requestedAt: new Date().toISOString(),
+    status: 'pending',
+  };
+  data.shiftTrades.push(trade);
+  if (data.shiftTrades.length > 1000) data.shiftTrades = data.shiftTrades.slice(-1000);
+  markDirty();
+  auditLog('SHIFT_TRADE_REQUESTED', me, { tradeId: trade.id, fromShiftId, toShiftId });
+  res.json({ ok: true, trade });
+});
+
+// POST /api/shifts/trade/:id/decide — admin approves or rejects
+// Body: { decision: 'approve'|'reject', note? }
+app.post('/api/shifts/trade/:id/decide', requireAuth, requireAdmin, async (req, res) => {
+  const { decision, note } = req.body || {};
+  if (!['approve','reject'].includes(decision)) return res.status(400).json({ error: 'decision must be approve or reject' });
+  const data = await loadData();
+  const trade = (data.shiftTrades || []).find(t => t.id === req.params.id);
+  if (!trade) return res.status(404).json({ error: 'Trade not found' });
+  if (trade.status !== 'pending') return res.status(409).json({ error: `Trade already ${trade.status}` });
+  // Authz scope
+  const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds||[])].filter(Boolean));
+  if (req.user.role !== 'superadmin' && !callerBIds.has(trade.buildingId)) return res.status(403).json({ error: 'Out of scope' });
+  trade.decidedBy = req.user.email;
+  trade.decidedAt = new Date().toISOString();
+  trade.note = (note || '').slice(0, 500);
+  if (decision === 'reject') {
+    trade.status = 'rejected';
+    markDirty();
+    auditLog('SHIFT_TRADE_REJECTED', req.user, { tradeId: trade.id });
+    return res.json({ ok: true, trade });
+  }
+  // Approve: swap employeeIds atomically.
+  const fromShift = data.shifts.find(s => s.id === trade.fromShiftId);
+  const toShift   = data.shifts.find(s => s.id === trade.toShiftId);
+  if (!fromShift || !toShift)     return res.status(404).json({ error: 'One or both shifts no longer exist' });
+  if (fromShift.status !== 'scheduled' || toShift.status !== 'scheduled') return res.status(409).json({ error: 'A shift state changed since the request — reject and ask employees to redo' });
+  const tmp = fromShift.employeeId;
+  fromShift.employeeId = toShift.employeeId;
+  toShift.employeeId   = tmp;
+  trade.status = 'approved';
+  markDirty();
+  auditLog('SHIFT_TRADE_APPROVED', req.user, { tradeId: trade.id, fromShiftId: trade.fromShiftId, toShiftId: trade.toShiftId });
+  res.json({ ok: true, trade });
+});
+
+// DELETE /api/shifts/trade/:id — initiator cancels (only while pending)
+app.delete('/api/shifts/trade/:id', requireAuth, async (req, res) => {
+  const data = await loadData();
+  const trade = (data.shiftTrades || []).find(t => t.id === req.params.id);
+  if (!trade) return res.status(404).json({ error: 'Trade not found' });
+  if (trade.status !== 'pending') return res.status(409).json({ error: `Trade already ${trade.status}` });
+  // Initiator OR admin in scope can cancel.
+  const me = req.user;
+  const callerBIds = new Set([me.buildingId, ...(me.buildingIds||[])].filter(Boolean));
+  const inScope = me.role === 'superadmin' || callerBIds.has(trade.buildingId);
+  if (trade.requestedBy !== me.id && !inScope) return res.status(403).json({ error: 'Not your trade' });
+  trade.status = 'cancelled';
+  trade.decidedAt = new Date().toISOString();
+  trade.decidedBy = me.email;
+  markDirty();
+  auditLog('SHIFT_TRADE_CANCELLED', me, { tradeId: trade.id });
   res.json({ ok: true });
 });
 
@@ -3541,17 +3838,23 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
       if (!Array.isArray(incoming)) continue;
       const exLen = (existing || []).length;
       const inLen = incoming.length;
-      // Reject if existing collection had ≥10 items and the incoming write
-      // would drop it by more than 50% (tunable). The threshold trades a tiny
-      // bit of legitimate-bulk-delete friction for absolute protection
-      // against silent wipes.
-      if (exLen >= 10 && inLen < Math.ceil(exLen * 0.5)) {
+      // Two independent guards:
+      //  (1) ANY non-empty collection going to zero — covers the small-facility
+      //      case where a stale 0-employee client cache would silently overwrite
+      //      a freshly-added employee. This is what likely lost sam Burns at
+      //      Kirkland Court when the client had no employees in cache.
+      //  (2) Big collections (≥10 items) shrinking by more than 50% — covers
+      //      the legacy "client bug truncates my array" pattern.
+      const goneToZero = exLen > 0 && inLen === 0;
+      const bigShrink  = exLen >= 10 && inLen < Math.ceil(exLen * 0.5);
+      if (goneToZero || bigShrink) {
         auditLog('DATA_UPDATE_REJECTED_SHRINK', req.user, {
           collection: name, existingCount: exLen, incomingCount: inLen,
+          reason: goneToZero ? 'zeroed' : 'shrink>50%',
         });
         return res.status(409).json({
           error: `Refusing to shrink ${name} from ${exLen} to ${inLen}. ` +
-                 'If this is intentional, retry with X-Confirm-Wipe: yes.',
+                 'If this is intentional (e.g., Reset to Demo), retry with X-Confirm-Wipe: yes.',
           collection: name,
           existingCount: exLen,
           incomingCount: inLen,
