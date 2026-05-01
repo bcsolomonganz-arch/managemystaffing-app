@@ -10006,7 +10006,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
 
   renderStaffEvents() {
-    const bId = this.S.user.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user.buildingId || 'b1';
     const monthKey = this.S.eventsCalMonth || (this.S.eventsCalMonth = TODAY.slice(0,7));
     const [y,m]   = monthKey.split('-').map(Number);
     const firstDow = new Date(y, m-1, 1).getDay();
@@ -10591,7 +10591,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
 
   renderRoster() {
     const u = this.S.user;
-    const bId = u.buildingId || 'b1';
+    // Respect the active-building switcher for SA / regional / multi-building
+    // admins. Without this fallback the Roster shows employees from u.buildingId
+    // (or hardcoded 'b1') even after the user has switched to a different
+    // facility — breaks the "you see what Tanya sees" expectation when an SA
+    // enters a building that isn't their default.
+    const bId = this.S.activeBuildingId || u.buildingId || 'b1';
     const building = this.S.buildings.find(b => b.id === bId);
     const allEmps = this.S.employees.filter(e => e.buildingId === bId);
 
@@ -11624,7 +11629,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   loadPPDDate() {
     const date = document.getElementById('ppd-date')?.value || TODAY;
     this.S.ppdDate = date;
-    const bId = this.S.user.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user.buildingId || 'b1';
     const dayShifts = this.S.shifts.filter(s => s.date === date && s.status === 'scheduled' && (s.buildingId===bId||!s.buildingId));
     const hrsFor = (grp) => dayShifts.filter(s=>s.group===grp).length * 8;
     const setField = (id, val) => { const el=document.getElementById(id); if(el) el.value=val; };
@@ -12009,7 +12014,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
 
   // ── PPD CALCULATOR ──────────────────────────────────────────
   renderPPDCalc() {
-    const bId = this.S.user.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user.buildingId || 'b1';
     const building = this.S.buildings.find(b=>b.id===bId);
     const census = this.S.ppdCensus || '';
     const date = this.S.ppdDate || TODAY;
@@ -12900,7 +12905,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const shiftDefs = SHIFT_TYPES(g);
     const col = G_COLORS[g] || 'var(--blue)';
     const u = this.S.user;
-    const bId = u.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || u.buildingId || 'b1';
 
     // Determine start of 14-day window — default to Monday of current week
     let startDate;
@@ -13104,7 +13109,8 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (patStartEl) patStartEl.value = TODAY;
     const emp = this.S.employees.find(e=>e.id===empId);
     const sel = document.getElementById('pat-emp');
-    const allEmps = this.S.employees.filter(e=>e.buildingId===(this.S.user.buildingId||'b1'));
+    const _bId = this.S.activeBuildingId || this.S.user.buildingId || 'b1';
+    const allEmps = this.S.employees.filter(e=>e.buildingId===_bId);
     sel.innerHTML = allEmps.map(e=>`<option value="${e.id}" ${e.id===empId?'selected':''}>${sanitize(e.name)} (${sanitize(e.group)})</option>`).join('');
 
     const shiftSel = document.getElementById('pat-shift');
@@ -13131,7 +13137,8 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.S.patDuration = 1;
     const patStartEl = document.getElementById('pat-start');
     if (patStartEl) patStartEl.value = TODAY;
-    const allEmps = this.S.employees.filter(e=>e.buildingId===(this.S.user.buildingId||'b1'));
+    const _bId = this.S.activeBuildingId || this.S.user.buildingId || 'b1';
+    const allEmps = this.S.employees.filter(e=>e.buildingId===_bId);
     const sel = document.getElementById('pat-emp');
     sel.innerHTML = allEmps.map(e=>`<option value="${e.id}">${sanitize(e.name)} (${sanitize(e.group)})</option>`).join('');
     const first = allEmps[0];
