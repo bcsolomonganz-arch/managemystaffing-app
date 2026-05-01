@@ -2146,6 +2146,170 @@ app.post('/api/admin/snapshots/restore', requireAuth, requireSuperAdmin, async (
   }
 });
 
+// ── PITR CROSS-SERVER RECOVERY ───────────────────────────────────────────────
+// Pulls employees / schedule_patterns / shift→employee links from a separate
+// PG server (typically an Azure PITR clone like mms-pg-restore) and writes
+// them back into the live db. Used to recover after a wipe when normal
+// snapshots aren't available (the 2026-04-30 Kirkland incident).
+//
+// Auth: admin (scoped to caller's building) or superadmin (any building).
+// Body:
+//   restoredHost  — e.g. 'mms-pg-restore.postgres.database.azure.com'
+//   buildingId    — the building whose rows we want to recover
+//   dryRun        — when true, returns counts without writing
+//
+// The restored server must accept connections from this App Service. PITR
+// inherits firewall rules from the source by default, so this just works
+// in the standard Azure setup.
+app.post('/api/admin/recover-from-pitr', requireAuth, requireAdmin, async (req, res) => {
+  if (!_useDB) return res.status(503).json({ error: 'Endpoint requires postgres backend' });
+  const restoredHost = String(req.body?.restoredHost || '').trim();
+  const buildingId   = String(req.body?.buildingId   || '').trim();
+  const dryRun       = !!req.body?.dryRun;
+  if (!restoredHost || !buildingId) {
+    return res.status(400).json({ error: 'restoredHost and buildingId required' });
+  }
+  // Defense-in-depth: the host must be a public Azure-PG hostname; refuse
+  // anything else so this can't be misused as an exfiltration tool.
+  if (!/^[a-z0-9][a-z0-9-]{0,62}\.postgres\.database\.azure\.com$/i.test(restoredHost)) {
+    return res.status(400).json({ error: 'restoredHost must be an *.postgres.database.azure.com hostname' });
+  }
+  // Authz: admin can only recover into their own building scope. SA can recover anywhere.
+  const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds || [])].filter(Boolean));
+  if (req.user.role !== 'superadmin' && !callerBIds.has(buildingId)) {
+    return res.status(403).json({ error: 'Out of scope: cannot recover into a building outside your access' });
+  }
+
+  // Build a connection string for the restored server using the same
+  // credentials we use for the live server. Azure PITR preserves admin login,
+  // so the existing PG_CONN password is the right one.
+  const liveConn = process.env.PG_CONN || '';
+  if (!liveConn) return res.status(503).json({ error: 'PG_CONN not set' });
+  let url;
+  try { url = new URL(liveConn.startsWith('postgres') ? liveConn : 'postgres://' + liveConn); }
+  catch (e) { return res.status(500).json({ error: 'Cannot parse PG_CONN' }); }
+  const pgLib = require('pg');
+  const restoredClient = new pgLib.Client({
+    host: restoredHost,
+    port: parseInt(url.port || '5432', 10),
+    user: decodeURIComponent(url.username),
+    password: decodeURIComponent(url.password),
+    database: url.pathname.replace(/^\//, '') || 'mms',
+    ssl: { rejectUnauthorized: false },
+    connectionTimeoutMillis: 10000,
+    statement_timeout: 30000,
+  });
+
+  let recovered = { employees: 0, patterns: 0, shiftsRelinked: 0 };
+  try {
+    await restoredClient.connect();
+
+    // Pull rows from the restored server.
+    const empRes = await restoredClient.query(
+      `SELECT id, building_id, account_id, name, email, phone, "group",
+              employment_type, hourly_rate, hire_date, inactive,
+              notif_email, notif_sms, metadata, termination_log
+       FROM employees
+       WHERE building_id = $1`,
+      [buildingId]
+    );
+    const patRes = await restoredClient.query(
+      `SELECT id, building_id, emp_id, shift_type, "group", pattern,
+              start_date, end_date, active
+       FROM schedule_patterns
+       WHERE building_id = $1`,
+      [buildingId]
+    );
+    // Pull the shift -> employee mapping that EXISTED at restore time, so we
+    // can re-link the orphaned shifts in live.
+    const shiftRes = await restoredClient.query(
+      `SELECT id, employee_id, status
+       FROM shifts
+       WHERE building_id = $1 AND employee_id IS NOT NULL`,
+      [buildingId]
+    );
+
+    if (dryRun) {
+      await restoredClient.end();
+      return res.json({
+        ok: true, dryRun: true,
+        wouldRestore: {
+          employees: empRes.rows.length,
+          patterns:  patRes.rows.length,
+          shiftLinks: shiftRes.rows.length,
+        },
+        sampleEmployees: empRes.rows.slice(0, 5).map(r => ({ id: r.id, name: r.name, group: r.group })),
+      });
+    }
+
+    // Write back to the live db in a single transaction.
+    const dbRepoLib = require('./db/repo');
+    await dbRepoLib.withTx(async (c) => {
+      for (const e of empRes.rows) {
+        await c.query(
+          `INSERT INTO employees (id, building_id, account_id, name, email, phone, "group",
+              employment_type, hourly_rate, hire_date, inactive, notif_email, notif_sms,
+              metadata, termination_log)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+            ON CONFLICT (id) DO UPDATE SET
+              building_id=EXCLUDED.building_id, account_id=EXCLUDED.account_id,
+              name=EXCLUDED.name, email=EXCLUDED.email, phone=EXCLUDED.phone,
+              "group"=EXCLUDED."group", employment_type=EXCLUDED.employment_type,
+              hourly_rate=EXCLUDED.hourly_rate, hire_date=EXCLUDED.hire_date,
+              inactive=EXCLUDED.inactive,
+              notif_email=EXCLUDED.notif_email, notif_sms=EXCLUDED.notif_sms,
+              metadata=EXCLUDED.metadata, termination_log=EXCLUDED.termination_log,
+              updated_at=now()`,
+          [
+            e.id, e.building_id, e.account_id, e.name, e.email, e.phone, e.group,
+            e.employment_type, e.hourly_rate, e.hire_date, e.inactive,
+            e.notif_email, e.notif_sms,
+            e.metadata, e.termination_log,
+          ]
+        );
+        recovered.employees++;
+      }
+      for (const p of patRes.rows) {
+        await c.query(
+          `INSERT INTO schedule_patterns (id, building_id, emp_id, shift_type, "group",
+              pattern, start_date, end_date, active)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+            ON CONFLICT (id) DO UPDATE SET
+              shift_type=EXCLUDED.shift_type, "group"=EXCLUDED."group",
+              pattern=EXCLUDED.pattern, start_date=EXCLUDED.start_date,
+              end_date=EXCLUDED.end_date, active=EXCLUDED.active`,
+          [p.id, p.building_id, p.emp_id, p.shift_type, p.group,
+           p.pattern, p.start_date, p.end_date, p.active]
+        );
+        recovered.patterns++;
+      }
+      // Re-link shifts. UPDATE only — we don't re-create rows, just heal.
+      for (const s of shiftRes.rows) {
+        const r = await c.query(
+          `UPDATE shifts SET employee_id = $1, status = $2, updated_at = now()
+           WHERE id = $3 AND building_id = $4 AND employee_id IS NULL`,
+          [s.employee_id, s.status, s.id, buildingId]
+        );
+        recovered.shiftsRelinked += r.rowCount;
+      }
+    });
+
+    // Refresh dataCache so subsequent /api/data calls see the recovered rows.
+    dataCache = await dbRepoLib.loadAll();
+    _bumpDataVersion();
+
+    auditLog('PITR_RECOVERY_PERFORMED', req.user, {
+      restoredHost, buildingId, ...recovered,
+    });
+    res.json({ ok: true, recovered });
+  } catch (e) {
+    auditLog('PITR_RECOVERY_FAILED', req.user, { restoredHost, buildingId, err: e.message });
+    res.status(500).json({ error: e.message });
+  } finally {
+    try { await restoredClient.end(); } catch {}
+  }
+});
+
 // POST /api/buildings/:id/provision-sms
 //   Body (optional): { areaCode: "918" }   — overrides ZIP-derived area code
 // Returns: { ok, phoneNumber, monthlyCost, areaCode } on success.
