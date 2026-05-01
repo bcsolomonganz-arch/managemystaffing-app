@@ -5,9 +5,14 @@ on:
     branches: [master, main]
   workflow_dispatch:
 
+# Replaces the previous deploy.yml that targeted mms-app-248457 with a
+# staging-slot swap. The actual production resource is the App Service
+# named 'managemystaffing' (no staging slot). Every push since the rename
+# silently failed because the old workflow referenced resources that
+# didn't exist. The 2026-05-01 audit caught it.
+
 env:
-  AZURE_WEBAPP_NAME: mms-app-248457
-  STAGING_HOST: mms-app-248457-staging.azurewebsites.net
+  AZURE_WEBAPP_NAME: managemystaffing
   PRODUCTION_HOST: www.managemystaffing.com
   NODE_VERSION: '20.x'
 
@@ -22,7 +27,6 @@ jobs:
           cache: 'npm'
       - run: npm ci
 
-      # ─── Tests against an ephemeral local server ───────────────────
       - name: Generate ephemeral test secrets
         run: |
           mkdir -p /tmp/mms-secure
@@ -38,6 +42,7 @@ jobs:
 
       - name: Start server
         run: |
+          set -a; . /tmp/mms-secure/.env; set +a
           MMS_SECURE_DIR=/tmp/mms-secure node server.js &
           echo $! > /tmp/server.pid
           for i in {1..30}; do
@@ -47,6 +52,9 @@ jobs:
 
       - name: Run smoke tests
         run: npm test
+
+      - name: Run unit tests (lib/punch)
+        run: node --test tests/punch.test.js
 
       - name: Stop test server
         if: always()
@@ -63,51 +71,27 @@ jobs:
           cache: 'npm'
       - run: npm ci --omit=dev
 
-      # ─── Step 1: Deploy to STAGING slot ────────────────────────────
-      - name: Deploy to staging slot
+      - name: Deploy to App Service
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
-          slot-name: staging
-          publish-profile: ${{ secrets.AZURE_WEBAPP_STAGING_PUBLISH_PROFILE }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
           package: .
 
-      # ─── Step 2: Smoke-test STAGING before swapping ─────────────────
-      - name: Smoke-test staging
+      - name: Wait for app to come up
         run: |
           for i in {1..40}; do
-            if curl -sf https://${{ env.STAGING_HOST }}/health > /dev/null; then echo "staging /health OK"; break; fi
+            if curl -sf https://${{ env.PRODUCTION_HOST }}/health > /dev/null; then
+              echo "Live at attempt $i"
+              exit 0
+            fi
             sleep 5
           done
-          # Deep readiness probe — verifies audit chain + Key Vault refs + ACS
-          ready=$(curl -s https://${{ env.STAGING_HOST }}/health/ready)
+          echo "::error::Production did not respond at /health within 200s"
+          exit 1
+
+      - name: Verify /health/ready (deep check)
+        run: |
+          ready=$(curl -s https://${{ env.PRODUCTION_HOST }}/health/ready)
           echo "ready: $ready"
-          echo "$ready" | grep -q '"ok":true' || (echo "STAGING NOT READY"; exit 1)
-
-      # ─── Step 3: Azure CLI login (for the swap) ────────────────────
-      - name: Azure login
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      # ─── Step 4: Swap staging ↔ production (atomic, zero-downtime) ─
-      - name: Swap staging into production
-        run: |
-          az webapp deployment slot swap \
-            --name ${{ env.AZURE_WEBAPP_NAME }} \
-            --resource-group managecensus-prod \
-            --slot staging \
-            --target-slot production
-
-      # ─── Step 5: Verify production is healthy after swap ───────────
-      - name: Verify production
-        run: |
-          for i in {1..30}; do
-            if curl -sf https://${{ env.PRODUCTION_HOST }}/health > /dev/null; then echo "Live!"; exit 0; fi
-            sleep 5
-          done
-          echo "Production did not become healthy after swap"; exit 1
-
-      - name: Azure logout
-        if: always()
-        run: az logout
+          echo "$ready" | grep -q '"ok":true' || (echo "::error::/health/ready returned not ok"; exit 1)
