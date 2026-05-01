@@ -2170,6 +2170,70 @@ app.post('/api/admin/snapshots/restore', requireAuth, requireSuperAdmin, async (
   }
 });
 
+// ── DATA INTEGRITY HEALTH ────────────────────────────────────────────────────
+// Compares LIVE row counts to the all-time-max (row_high_water) per building.
+// If anything is below max, that's a data loss event in progress. Caller can
+// poll this endpoint from monitoring (or set up an alert).
+app.get('/api/admin/data-integrity', requireAuth, requireAdmin, async (req, res) => {
+  if (!_useDB) return res.status(503).json({ error: 'Endpoint requires postgres backend' });
+  try {
+    const pgLib = require('pg');
+    const client = new pgLib.Client({
+      connectionString: process.env.PG_CONN,
+      ssl: { rejectUnauthorized: false },
+    });
+    await client.connect();
+    try {
+      const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds || [])].filter(Boolean));
+      const isSA = req.user.role === 'superadmin';
+      const [empCounts, hwm, history] = await Promise.all([
+        client.query(`SELECT building_id, COUNT(*)::int AS n FROM employees GROUP BY building_id`),
+        client.query(`SELECT scope, max_count, observed_at FROM row_high_water WHERE scope LIKE 'employees:%'`),
+        client.query(`
+          SELECT building_id, COUNT(*) FILTER (WHERE op = 'delete')::int AS deletes_24h,
+                 COUNT(*) FILTER (WHERE op = 'insert')::int AS inserts_24h
+          FROM employee_history
+          WHERE ts > now() - interval '24 hours'
+          GROUP BY building_id
+        `),
+      ]);
+
+      const liveByBld = new Map(empCounts.rows.map(r => [r.building_id, r.n]));
+      const hwmByBld  = new Map(hwm.rows.map(r => [r.scope.replace(/^employees:/, ''), r.max_count]));
+      const histByBld = new Map(history.rows.map(r => [r.building_id, { deletes: r.deletes_24h, inserts: r.inserts_24h }]));
+
+      const allBlds = new Set([...liveByBld.keys(), ...hwmByBld.keys(), ...histByBld.keys()]);
+      const buildings = [];
+      let alertCount = 0;
+      for (const bid of allBlds) {
+        if (!isSA && !callerBIds.has(bid)) continue;
+        const live = liveByBld.get(bid) || 0;
+        const max  = hwmByBld.get(bid) || 0;
+        const hist = histByBld.get(bid) || { deletes: 0, inserts: 0 };
+        const lossPct = max > 0 ? Math.round(((max - live) / max) * 100) : 0;
+        const status = (live < max) ? (lossPct >= 50 ? 'CRITICAL' : 'WARN') : 'OK';
+        if (status !== 'OK') alertCount++;
+        buildings.push({
+          buildingId: bid,
+          liveEmployees: live,
+          allTimeMax: max,
+          lossPercent: lossPct,
+          status,
+          last24h: hist,
+        });
+      }
+      res.json({
+        ok: alertCount === 0,
+        alerts: alertCount,
+        buildings: buildings.sort((a, b) => a.buildingId.localeCompare(b.buildingId)),
+        checkedAt: new Date().toISOString(),
+      });
+    } finally { await client.end(); }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── RECOVER EMPLOYEES FROM HISTORY LOG ───────────────────────────────────────
 // Reads employee_history (append-only audit log) and replays the most-recent
 // state of every employee that was ever in the building, restoring them all.

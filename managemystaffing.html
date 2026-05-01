@@ -3461,10 +3461,12 @@ const App = {
               <div style="font-size:12px;color:var(--g600);margin-top:1px">You are viewing demo data. Nothing you change here is saved permanently.</div>
             </div>
           </div>
-          <button class="btn btn-ghost btn-sm" style="color:var(--red);border:1.5px solid var(--g200)" onclick="App.resetAllData()">
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>
-            Reset to Demo Data
-          </button>
+          <!-- "Reset to Demo Data" button permanently removed after the
+               2026-04-30 Kirkland incident. The X-Confirm-Wipe bypass it
+               relied on is gone too — see server.js. To restore demo seeds
+               on a fresh tenant, use the SA-only POST /api/sa/seed-demo-facility
+               endpoint which only adds isDemo:true rows; it cannot wipe
+               real customer data. -->
         </div>`}
       </div>`;
   },
@@ -14100,23 +14102,17 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     }
   },
 
-  // Super-admin only: wipe all persisted data and reload with seed data.
-  // Shown in the Super Admin dashboard for testing / initial setup.
+  // PERMANENTLY DISABLED. Was a one-click destroyer of customer data —
+  // after the 2026-04-30 Kirkland incident the entire wipe-to-seed pathway
+  // is forbidden. Removed:
+  //   - The button that called this (renderSADataInfo)
+  //   - The X-Confirm-Wipe header bypass on the server
+  //   - The seed-data overwrite of S.employees / S.shifts here
+  // To restore demo data on a brand-new tenant, use POST /api/sa/seed-demo-facility
+  // which is purely additive (isDemo:true rows) and cannot remove real data.
   resetAllData() {
-    if (this.S.user?.role !== 'superadmin') return;
-    if (!confirm('Reset ALL facility data to demo seed? This will erase all employees, buildings, and shifts entered by admins. This cannot be undone.')) return;
-    localStorage.removeItem(SEC.DATA_KEY);
-    // Re-seed
-    this.S.companies        = [...SEED_COMPANIES];
-    this.S.buildings        = [...SEED_BUILDINGS];
-    this.S.accounts         = [...SEED_ACCOUNTS];
-    this.S.employees        = [...SEED_EMPLOYEES];
-    this.S.schedulePatterns = [];
-    this.S.shifts           = generateShifts(this.S.employees);
-    this.persistData({ confirmWipe: true });
-    Audit.log('DATA_RESET', 'All facility data reset to seed by super admin', this.S.user?.id, 'high');
-    this.showToast('Data reset to demo defaults');
-    this.render();
+    this.showToast('Reset to Demo Data is permanently disabled', 'warn');
+    return;
   },
 
   // WCAG 2.1.2 / 2.4.3 — modal focus management

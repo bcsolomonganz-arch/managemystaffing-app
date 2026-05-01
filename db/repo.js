@@ -110,6 +110,137 @@ async function ensureSchema() {
       AFTER INSERT OR UPDATE OR DELETE ON employees
       FOR EACH ROW EXECUTE FUNCTION log_employee_change()
   `);
+
+  // ── Append-only history for accounts, buildings, schedule_patterns ─────
+  // Same protection employees got. Login records, building config, and
+  // shift rotations are all critical-recovery data.
+  await _pool.query(`
+    CREATE TABLE IF NOT EXISTS account_history (
+      id BIGSERIAL PRIMARY KEY,
+      ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+      op TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      email TEXT,
+      role TEXT,
+      before_row JSONB, after_row JSONB
+    )
+  `);
+  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_acct_hist_acct ON account_history(account_id, ts DESC)`);
+  await _pool.query(`
+    CREATE OR REPLACE FUNCTION log_account_change() RETURNS TRIGGER AS $$
+    BEGIN
+      IF TG_OP = 'INSERT' THEN
+        INSERT INTO account_history (op, account_id, email, role, after_row)
+          VALUES ('insert', NEW.id, NEW.email, NEW.role, to_jsonb(NEW));
+        RETURN NEW;
+      ELSIF TG_OP = 'UPDATE' THEN
+        INSERT INTO account_history (op, account_id, email, role, before_row, after_row)
+          VALUES ('update', NEW.id, NEW.email, NEW.role, to_jsonb(OLD), to_jsonb(NEW));
+        RETURN NEW;
+      ELSIF TG_OP = 'DELETE' THEN
+        INSERT INTO account_history (op, account_id, email, role, before_row)
+          VALUES ('delete', OLD.id, OLD.email, OLD.role, to_jsonb(OLD));
+        RETURN OLD;
+      END IF;
+      RETURN NULL;
+    END;
+    $$ LANGUAGE plpgsql;
+  `);
+  await _pool.query(`DROP TRIGGER IF EXISTS trg_account_history ON accounts`);
+  await _pool.query(`
+    CREATE TRIGGER trg_account_history
+      AFTER INSERT OR UPDATE OR DELETE ON accounts
+      FOR EACH ROW EXECUTE FUNCTION log_account_change()
+  `);
+
+  await _pool.query(`
+    CREATE TABLE IF NOT EXISTS building_history (
+      id BIGSERIAL PRIMARY KEY,
+      ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+      op TEXT NOT NULL,
+      building_id TEXT NOT NULL,
+      before_row JSONB, after_row JSONB
+    )
+  `);
+  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_bld_hist_bld ON building_history(building_id, ts DESC)`);
+  await _pool.query(`
+    CREATE OR REPLACE FUNCTION log_building_change() RETURNS TRIGGER AS $$
+    BEGIN
+      IF TG_OP = 'INSERT' THEN
+        INSERT INTO building_history (op, building_id, after_row)
+          VALUES ('insert', NEW.id, to_jsonb(NEW));
+        RETURN NEW;
+      ELSIF TG_OP = 'UPDATE' THEN
+        INSERT INTO building_history (op, building_id, before_row, after_row)
+          VALUES ('update', NEW.id, to_jsonb(OLD), to_jsonb(NEW));
+        RETURN NEW;
+      ELSIF TG_OP = 'DELETE' THEN
+        INSERT INTO building_history (op, building_id, before_row)
+          VALUES ('delete', OLD.id, to_jsonb(OLD));
+        RETURN OLD;
+      END IF;
+      RETURN NULL;
+    END;
+    $$ LANGUAGE plpgsql;
+  `);
+  await _pool.query(`DROP TRIGGER IF EXISTS trg_building_history ON buildings`);
+  await _pool.query(`
+    CREATE TRIGGER trg_building_history
+      AFTER INSERT OR UPDATE OR DELETE ON buildings
+      FOR EACH ROW EXECUTE FUNCTION log_building_change()
+  `);
+
+  await _pool.query(`
+    CREATE TABLE IF NOT EXISTS pattern_history (
+      id BIGSERIAL PRIMARY KEY,
+      ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+      op TEXT NOT NULL,
+      pattern_id TEXT NOT NULL,
+      building_id TEXT,
+      emp_id TEXT,
+      before_row JSONB, after_row JSONB
+    )
+  `);
+  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_pat_hist_emp ON pattern_history(emp_id, ts DESC)`);
+  await _pool.query(`
+    CREATE OR REPLACE FUNCTION log_pattern_change() RETURNS TRIGGER AS $$
+    BEGIN
+      IF TG_OP = 'INSERT' THEN
+        INSERT INTO pattern_history (op, pattern_id, building_id, emp_id, after_row)
+          VALUES ('insert', NEW.id, NEW.building_id, NEW.emp_id, to_jsonb(NEW));
+        RETURN NEW;
+      ELSIF TG_OP = 'UPDATE' THEN
+        INSERT INTO pattern_history (op, pattern_id, building_id, emp_id, before_row, after_row)
+          VALUES ('update', NEW.id, NEW.building_id, NEW.emp_id, to_jsonb(OLD), to_jsonb(NEW));
+        RETURN NEW;
+      ELSIF TG_OP = 'DELETE' THEN
+        INSERT INTO pattern_history (op, pattern_id, building_id, emp_id, before_row)
+          VALUES ('delete', OLD.id, OLD.building_id, OLD.emp_id, to_jsonb(OLD));
+        RETURN OLD;
+      END IF;
+      RETURN NULL;
+    END;
+    $$ LANGUAGE plpgsql;
+  `);
+  await _pool.query(`DROP TRIGGER IF EXISTS trg_pattern_history ON schedule_patterns`);
+  await _pool.query(`
+    CREATE TRIGGER trg_pattern_history
+      AFTER INSERT OR UPDATE OR DELETE ON schedule_patterns
+      FOR EACH ROW EXECUTE FUNCTION log_pattern_change()
+  `);
+
+  // ── High water mark per building ────────────────────────────────────────
+  // Tracks the maximum employee/account/building row counts ever seen per
+  // building. saveAll consults this and refuses to drop below the HWM.
+  // This is the strongest possible defense — even if the in-memory cache,
+  // the HTTP layer, AND the saveAll body all fail, the HWM check catches it.
+  await _pool.query(`
+    CREATE TABLE IF NOT EXISTS row_high_water (
+      scope        TEXT PRIMARY KEY,    -- e.g. 'employees:b1777218436953'
+      max_count    INTEGER NOT NULL,
+      observed_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
 }
 
 // Read all persistent migration flags into a Set of names.
@@ -483,6 +614,28 @@ async function saveAll(data) {
             `saveAll refused to shrink employees in building ${row.building_id}: ` +
             `db has ${row.n}, incoming has ${incoming}. ` +
             `Use the explicit delete helpers if intentional.`
+          );
+        }
+      }
+      // High-water-mark check: refuse to drop below the all-time max ever
+      // observed for this building. Updates HWM upward when incoming exceeds it.
+      for (const [bid, n] of incomingByBld) {
+        const scope = `employees:${bid}`;
+        const hw = await c.query(`SELECT max_count FROM row_high_water WHERE scope = $1`, [scope]);
+        const prev = hw.rows[0]?.max_count || 0;
+        if (n < prev) {
+          throw new Error(
+            `saveAll refused: employees in ${bid} would drop to ${n}, ` +
+            `below all-time-max ${prev}. If you intentionally inactivated ` +
+            `staff, use the explicit DELETE endpoint.`
+          );
+        }
+        if (n > prev) {
+          await c.query(
+            `INSERT INTO row_high_water (scope, max_count) VALUES ($1, $2)
+             ON CONFLICT (scope) DO UPDATE SET max_count = GREATEST(row_high_water.max_count, $2),
+             observed_at = now()`,
+            [scope, n]
           );
         }
       }
