@@ -1,0 +1,121 @@
+# One-off SmartLinx → MMS bulk import.
+#
+# How to run:
+#   1. Add repo secret MMS_PG_CONN with the live db connection string
+#      (postgres://mmsadmin:PASSWORD@mms-pg-248457.postgres.database.azure.com:5432/mms)
+#   2. Paste the contents of smartlinx-import.sql into a NEW SECRET GIST at
+#      https://gist.github.com (set visibility = Secret, NOT Public).
+#   3. Copy the RAW URL of the gist file (the "Raw" button → use that URL).
+#   4. Go to the Actions tab → "SmartLinx Import" → Run workflow → paste raw URL.
+#   5. After it completes (success or fail), DELETE the gist — it has PII.
+#
+# The workflow downloads the SQL, runs it against the live db using psql,
+# wrapped in a single transaction so a failure rolls back the whole import.
+
+name: SmartLinx Import
+
+on:
+  workflow_dispatch:
+    inputs:
+      gist_raw_url:
+        description: 'Raw URL of the gist containing smartlinx-import.sql contents'
+        required: true
+        type: string
+      dry_run:
+        description: 'If true, runs psql --set ON_ERROR_STOP=on and ROLLBACK at the end (no changes committed).'
+        required: false
+        default: 'false'
+        type: string
+
+jobs:
+  run-import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install psql
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Download SQL from gist
+        env:
+          URL: ${{ inputs.gist_raw_url }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$URL" =~ ^https://gist.githubusercontent.com/.*\.sql$ && \
+                ! "$URL" =~ ^https://gist.github.com/.*raw.* ]]; then
+            echo "::error::URL does not look like a gist raw URL: $URL"
+            exit 1
+          fi
+          curl -fsSL "$URL" -o /tmp/import.sql
+          BYTES=$(wc -c < /tmp/import.sql)
+          LINES=$(wc -l < /tmp/import.sql)
+          echo "Downloaded $BYTES bytes / $LINES lines"
+          # Sanity: must contain the marker comment from generate-import-sql.js
+          grep -q 'SmartLinx 6 → ManageMyStaffing bulk import' /tmp/import.sql \
+            || (echo "::error::SQL doesn't look like our generated import script"; exit 1)
+
+      - name: Pre-import row counts
+        env:
+          PGPASSFILE: /tmp/.pgpass
+          MMS_PG_CONN: ${{ secrets.MMS_PG_CONN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$MMS_PG_CONN" ]; then
+            echo "::error::Repo secret MMS_PG_CONN is not set. Add it under Settings → Secrets → Actions."
+            exit 1
+          fi
+          psql "$MMS_PG_CONN" -At -c \
+            "SELECT 'buildings:' || COUNT(*) FROM buildings;
+             SELECT 'employees:' || COUNT(*) FROM employees;
+             SELECT 'companies:' || COUNT(*) FROM companies;"
+
+      - name: Run import
+        env:
+          MMS_PG_CONN: ${{ secrets.MMS_PG_CONN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "DRY RUN — running with ON_ERROR_STOP and rolling back at end"
+            # Wrap the whole script in a savepoint so we can roll back at the end.
+            (
+              echo 'BEGIN;'
+              cat /tmp/import.sql
+              echo 'ROLLBACK;'
+            ) > /tmp/dry.sql
+            psql "$MMS_PG_CONN" --set ON_ERROR_STOP=on -f /tmp/dry.sql
+          else
+            psql "$MMS_PG_CONN" --set ON_ERROR_STOP=on -f /tmp/import.sql
+          fi
+
+      - name: Post-import verification
+        if: ${{ inputs.dry_run != 'true' }}
+        env:
+          MMS_PG_CONN: ${{ secrets.MMS_PG_CONN }}
+        run: |
+          set -euo pipefail
+          echo "Per-building employee counts under SkyBlue Healthcare:"
+          psql "$MMS_PG_CONN" -c "
+            SELECT b.name, COUNT(e.id) AS staff
+            FROM buildings b
+            LEFT JOIN employees e ON e.building_id = b.id AND e.inactive = false
+            WHERE b.company_id = 'co_skyblue'
+            GROUP BY b.name
+            ORDER BY b.name;"
+          echo ""
+          echo "License coverage among nursing staff:"
+          psql "$MMS_PG_CONN" -c "
+            SELECT \"group\",
+                   COUNT(*) AS total,
+                   COUNT(license_number) AS with_license,
+                   COUNT(license_expires_at) AS with_expiry
+            FROM employees
+            WHERE \"group\" IN ('Nurse Management','Charge Nurse','CNA','CMA')
+              AND inactive = false
+            GROUP BY \"group\"
+            ORDER BY \"group\";"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f /tmp/import.sql /tmp/dry.sql /tmp/.pgpass
