@@ -8924,8 +8924,11 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const rows = subs.length ? subs.map(s => {
       const blds = (s.buildingIds || []).map(id =>
         sanitize((allBuildings.find(b => b.id === id) || {}).name || id)).join(', ');
+      const freqChip = s.frequency === 'weekly'
+        ? `<span style="background:#FAF5FF;color:#7E22CE;padding:1px 7px;border-radius:99px;font-size:10px;font-weight:700;margin-left:6px">WEEKLY</span>`
+        : `<span style="background:var(--blue-l);color:var(--blue-d);padding:1px 7px;border-radius:99px;font-size:10px;font-weight:700;margin-left:6px">DAILY</span>`;
       return `<tr style="border-bottom:1px solid var(--g100)">
-        <td style="padding:10px 14px"><strong>${sanitize(s.name)}</strong>
+        <td style="padding:10px 14px"><strong>${sanitize(s.name)}</strong>${freqChip}
           <div style="font-size:11px;color:var(--g500)">${(s.recipients || []).length} recipient${(s.recipients||[]).length===1?'':'s'} · ${(s.metrics || []).join(', ')}</div></td>
         <td style="padding:10px 14px;font-size:12px;color:var(--g700)">${blds || '—'}</td>
         <td style="padding:10px 14px;font-size:12px;color:var(--g600)">${s.lastSentDate || 'Never'}</td>
@@ -9150,6 +9153,19 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
               <label><input type="checkbox" class="rep-met" data-m="cost"   ${metrics.has('cost')?'checked':''}> Daily cost</label>
               <label><input type="checkbox" class="rep-met" data-m="missed" ${metrics.has('missed')?'checked':''}> Missed punches</label>
             </div>
+            <div style="margin-top:10px;padding:10px 12px;background:#FAF5FF;border:1px solid #E9D5FF;border-radius:8px">
+              <label style="font-size:13px;font-weight:600;color:#7E22CE">
+                <input type="checkbox" class="rep-met" data-m="clinical" ${metrics.has('clinical')?'checked':''}> Clinical / CMS quality metrics
+              </label>
+              <div style="font-size:11px;color:var(--g600);margin-top:4px;padding-left:22px">UTIs, rehospitalizations, weight loss, antipsychotic use, falls, pressure ulcers, catheter use, C. diff. Forces weekly cadence.</div>
+            </div>
+          </div>
+          <div class="form-group"><label>Frequency</label>
+            <select id="rep-freq" style="padding:8px 12px;border:1.5px solid var(--g200);border-radius:8px;font-size:13px;width:200px">
+              <option value="daily"  ${(sub?.frequency||'daily')==='daily'?'selected':''}>Daily (6am Central)</option>
+              <option value="weekly" ${sub?.frequency==='weekly'?'selected':''}>Weekly (Monday 6am Central)</option>
+            </select>
+            <div style="font-size:11px;color:var(--g500);margin-top:3px">Clinical reports must be weekly.</div>
           </div>
         </div>
         <div class="modal-footer">
@@ -9165,6 +9181,8 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       .split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
     const buildingIds = [...document.querySelectorAll('.rep-bld:checked')].map(c => c.dataset.id);
     const metrics = [...document.querySelectorAll('.rep-met:checked')].map(c => c.dataset.m);
+    let frequency = document.getElementById('rep-freq')?.value || 'daily';
+    if (metrics.includes('clinical')) frequency = 'weekly';   // forced
     if (!name || !recipients.length || !buildingIds.length || !metrics.length) {
       this.showToast('Name, recipients, buildings, and at least one metric are required','warn'); return;
     }
@@ -9172,7 +9190,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       const r = await fetch('/api/reports/subscriptions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, name, recipients, buildingIds, metrics, enabled: true }),
+        body: JSON.stringify({ id, name, recipients, buildingIds, metrics, frequency, enabled: true }),
       });
       const data = await r.json();
       if (!r.ok) { this.showToast(data.error || 'Save failed','warn'); return; }

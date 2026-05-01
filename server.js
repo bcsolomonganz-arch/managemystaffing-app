@@ -3522,6 +3522,134 @@ function _reportEmailHtml(data, sub, sendDate) {
   </body></html>`;
 }
 
+// Render a clinical / CMS-metrics email body for a weekly subscription.
+// Pulls the same payload as GET /api/pcc/clinical for each building in scope
+// over the trailing 7 days ending yesterday.
+async function _clinicalEmailHtml(data, sub, sendDate) {
+  const today = sendDate || new Date().toISOString().slice(0,10);
+  const yesterday = new Date(new Date(today).getTime() - 86400000).toISOString().slice(0,10);
+  const wkStart   = new Date(new Date(yesterday).getTime() - 6 * 86400000).toISOString().slice(0,10);
+  const buildings = (data.buildings || []).filter(b => sub.buildingIds.includes(b.id));
+  if (!buildings.length) return null;
+
+  // Use a local helper to compute clinical metrics — same logic as the
+  // /api/pcc/clinical endpoint but inline so we don't have to make HTTP
+  // calls back to ourselves.
+  async function computeForBuilding(b) {
+    const cache = (data.pccClinicalCache || []).find(c =>
+      c.buildingId === b.id && c.start === wkStart && c.end === yesterday);
+    // If PCC isn't configured, return cache-or-zero
+    if (!PCC_CLIENT_ID || !PCC_CLIENT_SECRET || !PCC_FACILITY_ID) {
+      return {
+        building: b,
+        metrics: cache?.metrics || {
+          utis:0, rehospitalizations30d:0, weightLossSignificant:0,
+          antipsychoticLongTerm:0, fallsMajorInjury:0, pressureUlcersStage2plus:0,
+          catheterLongStay:0, cdiffInfections:0,
+        },
+        residentDays: cache?.residentDays || 0,
+        source: 'cache',
+      };
+    }
+    const fetchCount = async (endpoint, predicate) => {
+      const url = `${PCC_BASE}/partner/v1/facilities/${encodeURIComponent(PCC_FACILITY_ID)}/${endpoint}?startDate=${wkStart}&endDate=${yesterday}`;
+      const r = await pccFetch(url);
+      if (!r.ok || !r.body) return null;
+      const items = r.body.data || r.body.items || r.body || [];
+      return Array.isArray(items) ? items.filter(predicate || (() => true)).length : null;
+    };
+    let residentDays = 0;
+    const startMs = new Date(wkStart   + 'T00:00:00Z').getTime();
+    const endMs   = new Date(yesterday + 'T00:00:00Z').getTime();
+    const days = Math.round((endMs - startMs) / 86400000) + 1;
+    for (let i = 0; i < days; i++) {
+      const d = new Date(startMs + i * 86400000).toISOString().slice(0,10);
+      const url = `${PCC_BASE}/partner/v1/facilities/${encodeURIComponent(PCC_FACILITY_ID)}/census?censusDate=${d}`;
+      const r = await pccFetch(url);
+      if (r.ok && r.body) {
+        const x = r.body.data || r.body;
+        residentDays += Number(x.totalCensus ?? x.occupiedBeds ?? x.census ?? 0) || 0;
+      }
+    }
+    const [utis, rehosp, weightLoss, antipsy, falls, pu, cath, cdiff] = await Promise.all([
+      fetchCount('clinical/uti'),
+      fetchCount('clinical/hospitalReturns', x => Number(x.daysSinceDischarge ?? 99) <= 30),
+      fetchCount('clinical/weightChanges', x =>
+        (Number(x.pctChange30d ?? 0) <= -5) || (Number(x.pctChange180d ?? 0) <= -10)),
+      fetchCount('clinical/medications', x =>
+        /antipsychotic/i.test(String(x.therapeuticClass||x.drugClass||'')) &&
+        Number(x.daysOnMedication ?? 0) >= 90 && !x.supportingDiagnosis),
+      fetchCount('clinical/falls',  x => /major/i.test(String(x.injuryLevel||''))),
+      fetchCount('clinical/skinIntegrity', x => Number(String(x.stage||'').replace(/\D/g,''))>=2),
+      fetchCount('clinical/catheterUse', x => x.longStay === true || Number(x.daysWithCatheter ?? 0) >= 14),
+      fetchCount('clinical/infections', x => /c\.?\s*diff|clostridi/i.test(String(x.organism||x.infectionType||''))),
+    ]);
+    const v = (live, key) => (live ?? cache?.metrics?.[key] ?? 0);
+    return {
+      building: b,
+      metrics: {
+        utis:                     v(utis,        'utis'),
+        rehospitalizations30d:    v(rehosp,      'rehospitalizations30d'),
+        weightLossSignificant:    v(weightLoss,  'weightLossSignificant'),
+        antipsychoticLongTerm:    v(antipsy,     'antipsychoticLongTerm'),
+        fallsMajorInjury:         v(falls,       'fallsMajorInjury'),
+        pressureUlcersStage2plus: v(pu,          'pressureUlcersStage2plus'),
+        catheterLongStay:         v(cath,        'catheterLongStay'),
+        cdiffInfections:          v(cdiff,       'cdiffInfections'),
+      },
+      residentDays: residentDays || cache?.residentDays || 0,
+      source: 'live',
+    };
+  }
+
+  const perBuilding = [];
+  for (const b of buildings) {
+    try { perBuilding.push(await computeForBuilding(b)); }
+    catch (e) { logger.error('clinical_email_compute_failed', { buildingId: b.id, err: e.message }); }
+  }
+
+  const TH  = `style="background:#1A3C34;color:#fff;text-align:left;padding:10px 14px;font-size:13px;font-weight:700;font-family:Arial,Helvetica,sans-serif"`;
+  const TD  = `style="padding:10px 14px;font-size:13px;color:#1F2937;font-family:Arial,Helvetica,sans-serif;border-bottom:1px solid #E5E7EB"`;
+  const TDR = `style="padding:10px 14px;font-size:13px;color:#1F2937;font-family:Arial,Helvetica,sans-serif;border-bottom:1px solid #E5E7EB;text-align:right;font-variant-numeric:tabular-nums"`;
+  const cols = ['Facility','UTIs','Rehosp 30d','Wt loss','Antipsy LT','Falls MI','PU 2+','Cath LS','C. diff','Resident-days'];
+  const header = `<tr>${cols.map(c => `<th ${TH}>${c}</th>`).join('')}</tr>`;
+  const rows = perBuilding.map(r => `<tr>
+    <td ${TD}><strong>${escapeHtml(r.building.name)}</strong></td>
+    <td ${TDR}>${r.metrics.utis}</td>
+    <td ${TDR}>${r.metrics.rehospitalizations30d}</td>
+    <td ${TDR}>${r.metrics.weightLossSignificant}</td>
+    <td ${TDR}>${r.metrics.antipsychoticLongTerm}</td>
+    <td ${TDR}>${r.metrics.fallsMajorInjury}</td>
+    <td ${TDR}>${r.metrics.pressureUlcersStage2plus}</td>
+    <td ${TDR}>${r.metrics.catheterLongStay}</td>
+    <td ${TDR}>${r.metrics.cdiffInfections}</td>
+    <td ${TDR}>${r.residentDays}</td>
+  </tr>`).join('');
+
+  return `<!doctype html><html><body style="margin:0;padding:24px;background:#F9FAFB;font-family:Arial,Helvetica,sans-serif;color:#1F2937">
+    <div style="max-width:960px;margin:0 auto;background:#fff;border-radius:12px;padding:32px;border:1px solid #E5E7EB">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+        <div style="width:32px;height:32px;background:#6B9E7A;border-radius:7px;color:#fff;font-weight:800;display:inline-flex;align-items:center;justify-content:center;font-size:15px">M</div>
+        <span style="font-size:15px;font-weight:700;color:#1A3C34">ManageMyStaffing</span>
+      </div>
+      <h2 style="margin:0 0 4px;color:#1F2937">${escapeHtml(sub.name || 'Weekly Clinical Report')}</h2>
+      <p style="color:#6B7280;margin:0 0 16px;font-size:13px">CMS quality metrics · ${wkStart} → ${yesterday} · sent ${today}</p>
+      <table cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;width:100%;border:1px solid #E5E7EB;border-radius:8px;overflow:hidden">
+        ${header}${rows}
+      </table>
+      <p style="color:#6B7280;font-size:11px;margin-top:18px">
+        Antipsy LT = long-term (≥90 days) antipsychotic use without a supporting Dx ·
+        Wt loss = ≥5% in 30 days OR ≥10% in 180 days ·
+        PU 2+ = pressure ulcers stage 2 or higher ·
+        Cath LS = catheter in place ≥14 days.
+      </p>
+      <p style="color:#6B7280;font-size:11px;margin-top:14px;border-top:1px solid #E5E7EB;padding-top:14px">
+        Auto-generated weekly by ManageMyStaffing. Manage subscribers in HR → Reports.
+      </p>
+    </div>
+  </body></html>`;
+}
+
 // POST /api/reports/subscriptions — upsert a subscription.
 app.post('/api/reports/subscriptions', requireAuth, requireAdmin, async (req, res) => {
   const { id, name, recipients, buildingIds, metrics, enabled } = req.body || {};
@@ -3552,6 +3680,10 @@ app.post('/api/reports/subscriptions', requireAuth, requireAdmin, async (req, re
   upsert.buildingIds = buildingIds.slice(0, 50);
   upsert.metrics = Array.isArray(metrics) ? metrics : ['ppd','ot','cost','missed'];
   upsert.enabled = enabled !== false;
+  // 'daily' = standard ops digest. 'weekly' = clinical/CMS metrics digest
+  // sent on Monday morning covering trailing 7 days.
+  const freq = String(req.body?.frequency || 'daily').toLowerCase();
+  upsert.frequency = (freq === 'weekly') ? 'weekly' : 'daily';
   if (!sub) data.reportSubscriptions.push(upsert);
   markDirty();
   auditLog('REPORT_SUBSCRIPTION_SAVED', req.user, { id: upsert.id, recipients: upsert.recipients.length, buildings: upsert.buildingIds.length });
@@ -3575,7 +3707,10 @@ app.post('/api/reports/test/:id', requireAuth, requireAdmin, async (req, res) =>
   const data = await loadData();
   const sub = (data.reportSubscriptions || []).find(s => s.id === req.params.id);
   if (!sub) return res.status(404).json({ error: 'Subscription not found' });
-  const html = _reportEmailHtml(data, sub, new Date().toISOString().slice(0,10));
+  const wantClinical = Array.isArray(sub.metrics) && sub.metrics.includes('clinical');
+  const html = wantClinical
+    ? await _clinicalEmailHtml(data, sub, new Date().toISOString().slice(0,10))
+    : _reportEmailHtml(data, sub, new Date().toISOString().slice(0,10));
   if (!html) return res.status(400).json({ error: 'Report has no buildings to render' });
   try {
     const { EmailClient } = require('@azure/communication-email');
@@ -3607,12 +3742,25 @@ async function _maybeSendDueReports() {
     const now = new Date();
     if (now.getUTCHours() !== 12) return;       // only at noon UTC (≈ 6am CT)
     const today = now.toISOString().slice(0,10);
+    const dow   = now.getUTCDay();              // 0=Sun … 1=Mon, etc.
     const data = await loadData();
     const subs = (data.reportSubscriptions || []).filter(s => s.enabled !== false);
     for (const sub of subs) {
       if (sub.lastSentDate === today) continue;
-      const html = _reportEmailHtml(data, sub, today);
+
+      // Frequency gate. 'weekly' subs only fire on Monday morning.
+      const freq = sub.frequency || 'daily';
+      if (freq === 'weekly' && dow !== 1) continue;
+
+      // Pick renderer based on metric set. If 'clinical' is among the metrics,
+      // we emit the clinical email body; otherwise the existing ops digest.
+      const wantClinical = Array.isArray(sub.metrics) && sub.metrics.includes('clinical');
+      const html = wantClinical
+        ? await _clinicalEmailHtml(data, sub, today)
+        : _reportEmailHtml(data, sub, today);
       if (!html) continue;
+
+      const subjectPrefix = wantClinical ? 'Clinical Quality Report' : sub.name;
       try {
         const { EmailClient } = require('@azure/communication-email');
         const ec = new EmailClient(ACS_CONNECTION_STRING);
@@ -3620,7 +3768,7 @@ async function _maybeSendDueReports() {
           senderAddress: ACS_FROM_EMAIL,
           recipients: { to: sub.recipients.map(e => ({ address: e })) },
           content: {
-            subject: `${sub.name} — ${today}`,
+            subject: `${subjectPrefix} — ${today}`,
             plainText: 'Your email client does not support HTML. View in browser.',
             html,
           },
@@ -3628,7 +3776,10 @@ async function _maybeSendDueReports() {
         await poller.pollUntilDone();
         sub.lastSentDate = today;
         markDirty();
-        auditLog('REPORT_SUBSCRIPTION_SENT', null, { id: sub.id, date: today, recipients: sub.recipients.length });
+        auditLog('REPORT_SUBSCRIPTION_SENT', null, {
+          id: sub.id, date: today, recipients: sub.recipients.length,
+          flavor: wantClinical ? 'clinical' : 'ops', frequency: freq,
+        });
       } catch (e) {
         logger.error('report_send_failed', { id: sub.id, msg: e.message });
       }
