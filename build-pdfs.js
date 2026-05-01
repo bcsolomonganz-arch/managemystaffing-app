@@ -404,14 +404,23 @@ function buildInstructionsPdf() {
     '2.  Super Admin platform overview',
     '3.  Entering a facility (and getting back out)',
     '4.  Recruiting — posting to Indeed, ZipRecruiter, and LinkedIn',
-    '5.  Recruiting — managing applicants',
+    '5.  Recruiting — managing applicants + in-app chat',
     '6.  PPD Calculator and PPD Calendar',
     '7.  Staff Events calendar',
     '8.  Texts sidebar (alert log + replies)',
-    '9.  HR module (super-admin-only for now)',
-    '10. Time Clock — CSV import + missed-punch reports',
-    '11. Security and HIPAA features',
-    '12. Glossary',
+    '9.  Direct Messages (in-app 1-to-1 chat)',
+    '10. HR module (super-admin-only for now)',
+    '11. Time Clock — three entry paths (kiosk / mobile / SmartLinx / CSV)',
+    '12. Agency time entry on open shifts',
+    '13. Reports — daily / weekly / monthly email digests',
+    '14. PBJ Reports — quarterly XML export + archive',
+    '15. Shift Trade Requests',
+    '16. Mass Shift Swap',
+    '17. Adding & editing facilities (CCN, geofence, kiosk URL)',
+    '18. Roster — access levels, badges, PINs, IDs',
+    '19. Onboarding → Roster push',
+    '20. Security and HIPAA features',
+    '21. Glossary',
   ];
   doc.font('Helvetica').fontSize(11).fillColor(TEXT);
   for (const s of sections) doc.text(s, { lineGap: 4 });
@@ -600,8 +609,126 @@ function buildInstructionsPdf() {
   bullet(doc, 'The 5-card admin dashboard pulls from the same Time Clock data: Daily PPD, Open Shifts, Missed Punches, Tardiness, Early Sign-In.');
   bullet(doc, 'Click any card to jump to the detailed view (PPD calc, Open Shifts filter, Time Clock missed-punch panel, etc.).');
 
-  // ── 11. SECURITY + HIPAA ───────────────────────────────────────────────
-  h1(doc, '11. Security and HIPAA features');
+  h2(doc, 'Tablet kiosk');
+  bullet(doc, 'URL: https://www.managemystaffing.com/kiosk/<buildingId> — get it from the SA building card "Kiosk URL" button.');
+  bullet(doc, 'Open on a tablet at the nurse station; leave it running 24/7. Auto-issued kiosk JWT lasts a year.');
+  bullet(doc, 'Employees enter their 4-digit PIN, tap Clock In or Clock Out. Confirmations show employee name + today\'s hours.');
+  bullet(doc, 'Three failed PINs in 60s locks the kiosk for 5 minutes.');
+  bullet(doc, 'Set PINs from the Roster — green "Set PIN" button on each row. PINs are bcrypt-hashed, unique within a building.');
+
+  h2(doc, 'Mobile employee punch (geofenced)');
+  bullet(doc, 'Employee opens the app on their phone → My Schedule → "Clock In" button at the top.');
+  bullet(doc, 'Browser asks for location; coords are sent with the punch.');
+  bullet(doc, 'Server verifies coords are within building.geofenceRadiusM (default 200m). No coords on the building → fence skipped.');
+  bullet(doc, 'Optional selfie verification: enable building.requireSelfie on the Edit Facility form. Camera prompt → photo attached to the punch event for HR review.');
+
+  h2(doc, 'SmartLinx / external clock integration');
+  bullet(doc, 'POST /api/timeclock/smartlinx with X-SmartLinx-Secret header (set the SMARTLINX_WEBHOOK_SECRET env var first).');
+  bullet(doc, 'Body: { badgeId, action: \'in\'|\'out\', timestamp, deviceId? } — single punch or { punches: [...] } batch.');
+  bullet(doc, 'Map each employee\'s badge ID via Roster → IDs button.');
+  bullet(doc, 'A small bridge script polls your Slate/Kronos/etc. and POSTs new punches; same _applyPunch pipeline classifies status against scheduled shift.');
+
+  h2(doc, 'Admin punch correction');
+  bullet(doc, 'HR → Time Clock → Edit button on any row.');
+  bullet(doc, 'Three prompts: in time, out time, reason. Edit appended to record.events[] with editor + before/after for audit.');
+
+  // ── 12. AGENCY TIME ────────────────────────────────────────────────────
+  h1(doc, '12. Agency time entry on open shifts');
+  body(doc, 'When an open shift is filled by an agency / contract worker (not a regular employee), admin records the hours here. Hours feed into PBJ + PPD + daily cost as agency-source nursing hours.');
+  bullet(doc, 'Click the yellow "AGENCY" button on any open shift slot.');
+  bullet(doc, 'Modal: worker name, agency, in/out time, hourly rate, license number.');
+  bullet(doc, 'Saves an hrTimeClock record with kind:\'agency\' + flips the shift to status:agency-filled with the agency name displayed inline.');
+  bullet(doc, 'PBJ export tags these entries with payTypeCode=3 (agency) automatically.');
+
+  // ── 13. REPORTS ────────────────────────────────────────────────────────
+  h1(doc, '13. Reports — daily / weekly / monthly email digests');
+  body(doc, 'HR → Reports lets admins set up email subscriptions that send an inline HTML table every morning at 6am Central. No attachments — the table renders directly in the email body.');
+  h2(doc, 'Subscription fields');
+  bullet(doc, 'Recipients (up to 20 emails) — comma-separated.');
+  bullet(doc, 'Buildings — one for a single facility, multiple for a regional admin digest.');
+  bullet(doc, 'Metrics: Daily PPD, OT hours, Daily cost, Missed punches. Pick any combination.');
+  h2(doc, 'Roll-ups');
+  bullet(doc, 'Friday emails add a "Weekly Totals" table covering the past 7 days.');
+  bullet(doc, 'The last day of the month adds a "Monthly Totals" table.');
+  h2(doc, 'Multi-building digests');
+  bullet(doc, 'When more than one building is selected, the table has one row per facility and a "Total" row at the bottom — perfect for regional admins.');
+  bullet(doc, '"Send test now" button verifies setup before the first scheduled run.');
+
+  // ── 14. PBJ REPORTS ────────────────────────────────────────────────────
+  h1(doc, '14. PBJ Reports — quarterly XML export + archive');
+  body(doc, 'CMS Payroll-Based Journal submission for SNF/LTC. The XML pulls staffing hours from the HR Time Clock and the daily census from the PPD Calendar / PCC sync.');
+  h2(doc, 'Generating');
+  bullet(doc, 'HR → PBJ Reports → pick facility, year, quarter.');
+  bullet(doc, '"Preview Summary" shows employee count, punch lines, census days, plus warnings for missing CCN / state code / unmapped roles.');
+  bullet(doc, '"Download XML" returns a CMS-spec file named pbj_<CCN>_<YEAR>Q<N>.xml — upload to CASPER or iQIES.');
+  h2(doc, 'Job-code mapping (default)');
+  bullet(doc, 'Nurse Management → 11 (Director of Nursing)');
+  bullet(doc, 'Charge Nurse → 6 (LPN/LVN)');
+  bullet(doc, 'CNA → 7, CMA → 9');
+  bullet(doc, 'Cook → 26, Dietary Aid → 27');
+  bullet(doc, 'Override per employee in Roster → IDs button when default is wrong.');
+  h2(doc, 'Archive');
+  bullet(doc, 'Every generated XML is auto-saved to Azure Blob storage so you can re-download a previous quarter without regenerating.');
+  bullet(doc, '"Past Quarters" table lists every archive for the selected year, with download links.');
+  bullet(doc, 'Re-running the same quarter overwrites the archive — useful when you correct a missed punch and re-export.');
+
+  // ── 15. SHIFT TRADES ───────────────────────────────────────────────────
+  h1(doc, '15. Shift Trade Requests');
+  body(doc, 'Employee-initiated swap with admin approval.');
+  bullet(doc, 'Employee taps a future shift on My Schedule → "↔ Request Shift Trade" button.');
+  bullet(doc, 'Picker shows other employees\' upcoming shifts in the same group at the same building.');
+  bullet(doc, 'Pick one → request is submitted; both employees see "Trade pending admin approval" on that shift.');
+  bullet(doc, 'Admin sees a "Shift Trades" badge in the sidebar Notifications. Click → queue with Approve / Reject buttons.');
+  bullet(doc, 'On approve, the server atomically swaps employeeIds on both shifts.');
+  bullet(doc, 'Initiator can cancel a pending request. Cross-group / cross-building trades are blocked.');
+
+  // ── 16. MASS SHIFT SWAP ────────────────────────────────────────────────
+  h1(doc, '16. Mass Shift Swap');
+  body(doc, 'Admin tool for vacation / leave coverage. Reassigns all of one employee\'s scheduled shifts in a date range to another employee.');
+  bullet(doc, 'Click "Mass Swap" in the admin header.');
+  bullet(doc, 'Pick From and To employees (same staff group), date range.');
+  bullet(doc, '"Preview" shows how many shifts will move and how many days conflict (target already has a shift).');
+  bullet(doc, '"Execute Swap" performs the reassignment. Skipped conflicts are reported in the success toast.');
+
+  // ── 17. ADD/EDIT FACILITIES ────────────────────────────────────────────
+  h1(doc, '17. Adding & editing facilities (CCN, geofence, kiosk URL)');
+  body(doc, 'SA only. The "+ Add Building" button on the Platform overview creates new facilities. Existing buildings have an "⚙ Edit" button on each card.');
+  h2(doc, 'Add facility form fields');
+  bullet(doc, 'Name, address, phone, beds, state, ZIP, CCN (CMS Certification Number — required for PBJ filing).');
+  bullet(doc, 'Primary admin: name, email, auto-generated temporary password. Invitation emailed on save.');
+  h2(doc, 'Edit facility (operational fields)');
+  bullet(doc, 'CCN, state code — needed for PBJ submissions.');
+  bullet(doc, 'Latitude, longitude — drives the mobile-punch geofence. Click "Geocode from address" to auto-fill from the street address (uses OpenStreetMap).');
+  bullet(doc, 'Geofence radius (meters, default 200) — how far from the facility the mobile punch is accepted.');
+  bullet(doc, '"Activate SMS" — provisions a local-area-code SMS number for this facility (requires 10DLC brand registration first).');
+  bullet(doc, '"📱 Kiosk URL" — copies the per-building kiosk URL to clipboard for tablet setup.');
+
+  // ── 18. ROSTER ─────────────────────────────────────────────────────────
+  h1(doc, '18. Roster — access levels, badges, PINs, IDs');
+  body(doc, 'Per-employee row actions for everything an admin needs to manage one person.');
+  h2(doc, 'Access pill (color-coded by current level)');
+  bullet(doc, 'Grey "Employee" — sees own schedule + open shifts only.');
+  bullet(doc, 'Blue "Admin" — full Building Admin, sees hourly rates / OT / cost / PPD financials.');
+  bullet(doc, 'Amber "Scheduler" — admin without financial visibility.');
+  bullet(doc, 'Click the pill → modal with three radio cards. Promoting auto-creates an account + sends invite email. Demoting removes the linked admin account but preserves the employee record.');
+  bullet(doc, 'Cannot change your own access (would let you lock yourself out). Cannot demote the only admin of a building.');
+  h2(doc, 'Other row buttons');
+  bullet(doc, 'Message — opens the in-app DM thread with this person.');
+  bullet(doc, 'IDs — set badge ID (for SmartLinx), PBJ job-code override, DOB, hire date.');
+  bullet(doc, 'Set/Reset PIN — 4–6 digit kiosk PIN (bcrypt-hashed, unique within building).');
+  bullet(doc, 'Inactivate / Reactivate — soft-delete with a termination log.');
+  h2(doc, 'Discipline notes');
+  bullet(doc, 'Each employee row has a Discipline dropdown. Notes carry over for inactive employees: re-adding the same name + DOB pulls the old card back, write-ups intact.');
+
+  // ── 19. ONBOARDING → ROSTER PUSH ───────────────────────────────────────
+  h1(doc, '19. Onboarding → Roster push');
+  body(doc, 'Promote a finished onboardee directly to the active staff roster.');
+  bullet(doc, 'HR → Doc Review → green "+ Push to Roster" button on each pending row.');
+  bullet(doc, 'Confirms, prompts for hourly rate if missing, then maps onboarding fields → employees row (name, role, email, phone, DOB, hire date, hourly rate).');
+  bullet(doc, 'Original HR record is marked status:active and linked back via onboardingHrId.');
+
+  // ── 20. SECURITY + HIPAA ───────────────────────────────────────────────
+  h1(doc, '20. Security and HIPAA features');
   body(doc, 'A summary of the HIPAA §164.312 (technical safeguards) controls in place. For the full self-attested posture, hit /api/healthz/deep at any time.');
 
   h2(doc, 'Authentication and access');

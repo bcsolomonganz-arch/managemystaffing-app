@@ -473,9 +473,132 @@ async function persistCache() {
       await fs.rename(tmp, DATA_FILE);
       logger.info('data_saved', { backend: 'file' });
     }
+    // Fire-and-forget snapshot. Restore window: every-save for 24h, hourly
+    // for 30d, daily for 365d. Lets a Super Admin recover from a bad edit
+    // or accidental wipe without waiting on infra.
+    _writeSnapshot().catch(e => logger.error('snapshot_failed', { err: e.message }));
   } catch (e) {
     logger.error('save_failed', { err: e.message });
   }
+}
+
+// ── BACKUPS / SNAPSHOTS ──────────────────────────────────────────────────────
+// Encrypted point-in-time copies of the full data cache, kept on disk next to
+// DATA_FILE. Filename pattern: mms-snapshot-<ISO>.json (encrypted payload,
+// safe to ship to blob storage). Retention is sliding so we don't fill the
+// disk:
+//   - All snapshots from the last 24h
+//   - One snapshot per hour for the last 30 days
+//   - One snapshot per day for the last 365 days
+// Older than that → pruned. Restore is exposed via POST /api/admin/restore-snapshot
+// (Super Admin only).
+const BACKUP_DIR = process.env.BACKUP_DIR || path.join(path.dirname(DATA_FILE), 'mms-backups');
+const SNAPSHOT_PREFIX = 'mms-snapshot-';
+let _lastSnapshotAt = 0;
+const SNAPSHOT_MIN_INTERVAL_MS = 30 * 1000;        // throttle: at most one snapshot per 30s
+
+async function _ensureBackupDir() {
+  try { await fs.mkdir(BACKUP_DIR, { recursive: true }); } catch {}
+}
+
+async function _writeSnapshot() {
+  // Skip when DB is the system of record — Postgres has its own PITR backups,
+  // we don't want to keep duplicate plaintext-ish copies on the app server.
+  if (_useDB) return;
+  const now = Date.now();
+  if (now - _lastSnapshotAt < SNAPSHOT_MIN_INTERVAL_MS) return;
+  _lastSnapshotAt = now;
+
+  await _ensureBackupDir();
+  const stamp = new Date(now).toISOString().replace(/[:.]/g, '-');
+  const file  = path.join(BACKUP_DIR, `${SNAPSHOT_PREFIX}${stamp}.json`);
+
+  // Reuse the encrypted form from disk so we don't re-encrypt the same payload.
+  // If the live DATA_FILE is missing for any reason, fall back to encrypting
+  // dataCache directly.
+  try {
+    await fs.copyFile(DATA_FILE, file);
+  } catch {
+    const encrypted = await encrypt({ ...dataCache, _lastSaved: new Date(now).toISOString() });
+    await fs.writeFile(file, JSON.stringify(encrypted, null, 2), 'utf8');
+  }
+
+  await _pruneSnapshots();
+}
+
+async function _listSnapshotFiles() {
+  await _ensureBackupDir();
+  const entries = await fs.readdir(BACKUP_DIR);
+  return entries
+    .filter(n => n.startsWith(SNAPSHOT_PREFIX) && n.endsWith('.json'))
+    .map(n => {
+      // Decode timestamp from filename
+      const iso = n.slice(SNAPSHOT_PREFIX.length, -'.json'.length)
+                   .replace(/-/g, ':')
+                   .replace(/^([0-9]{4}):([0-9]{2}):([0-9]{2})T/, '$1-$2-$3T') // restore date-part dashes
+                   .replace(/:([0-9]{3})Z$/, '.$1Z');                          // restore millis dot
+      const ts = Date.parse(iso);
+      return { name: n, ts: Number.isFinite(ts) ? ts : 0 };
+    })
+    .filter(x => x.ts > 0)
+    .sort((a,b) => b.ts - a.ts);
+}
+
+async function _pruneSnapshots() {
+  const now = Date.now();
+  const all = await _listSnapshotFiles();
+  const keep = new Set();
+  const seenHour = new Set();
+  const seenDay  = new Set();
+  const DAY_MS  = 24 * 60 * 60 * 1000;
+  const HOUR_MS = 60 * 60 * 1000;
+  for (const s of all) {
+    const age = now - s.ts;
+    if (age <= DAY_MS) { keep.add(s.name); continue; }
+    if (age <= 30 * DAY_MS) {
+      const bucket = Math.floor(s.ts / HOUR_MS);
+      if (!seenHour.has(bucket)) { seenHour.add(bucket); keep.add(s.name); }
+      continue;
+    }
+    if (age <= 365 * DAY_MS) {
+      const bucket = Math.floor(s.ts / DAY_MS);
+      if (!seenDay.has(bucket)) { seenDay.add(bucket); keep.add(s.name); }
+      continue;
+    }
+    // older than 365d → drop
+  }
+  for (const s of all) {
+    if (!keep.has(s.name)) {
+      try { await fs.unlink(path.join(BACKUP_DIR, s.name)); } catch {}
+    }
+  }
+}
+
+async function _restoreSnapshotFile(filename) {
+  await _ensureBackupDir();
+  if (!/^mms-snapshot-[0-9TZ:.\-]+\.json$/i.test(filename)) {
+    throw new Error('invalid snapshot name');
+  }
+  const src = path.join(BACKUP_DIR, filename);
+  const raw = await fs.readFile(src, 'utf8');
+  const parsed = JSON.parse(raw);
+  if (!parsed.iv || !parsed.data || !parsed.authTag) {
+    throw new Error('snapshot is not in encrypted format');
+  }
+  const decoded = await decrypt(parsed);
+
+  // Save the *current* state as a pre-restore safety snapshot before swapping.
+  try {
+    const safetyStamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const safetyName  = `${SNAPSHOT_PREFIX}${safetyStamp}-prerestore.json`;
+    await fs.copyFile(DATA_FILE, path.join(BACKUP_DIR, safetyName));
+  } catch {}
+
+  // Hot-swap dataCache and persist
+  dataCache = decoded;
+  dataDirty = true;
+  await persistCache();
+  return { restoredFromTs: parsed._snapshottedAt || null, restoredAt: new Date().toISOString() };
 }
 
 // ── persistAccountNow ─────────────────────────────────────────────────────────
@@ -1951,6 +2074,48 @@ app.post('/api/indeed/event',
 
 // (requireSuperAdmin already defined above; reused here.)
 
+// ── BACKUP / RESTORE ENDPOINTS ───────────────────────────────────────────────
+// GET  /api/admin/snapshots               → list available point-in-time snapshots
+// POST /api/admin/snapshots                → force-create a snapshot right now
+// POST /api/admin/snapshots/restore        → roll the cache back to a snapshot
+// All Super Admin only — restoring data is a destructive operation that must
+// be auditable. We log RESTORE events into the tamper-evident audit chain.
+app.get('/api/admin/snapshots', requireAuth, requireSuperAdmin, async (req, res) => {
+  if (_useDB) return res.json({ backend: 'postgres', message: 'Snapshots disabled in Postgres mode (use DB backups).', snapshots: [] });
+  try {
+    const all = await _listSnapshotFiles();
+    res.json({
+      backend: 'file',
+      retention: { allUnder: '24h', hourly: '30d', daily: '365d' },
+      snapshots: all.map(s => ({ filename: s.name, takenAt: new Date(s.ts).toISOString() })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/admin/snapshots', requireAuth, requireSuperAdmin, async (req, res) => {
+  if (_useDB) return res.status(400).json({ error: 'Snapshots disabled in Postgres mode' });
+  try {
+    _lastSnapshotAt = 0;                   // force through the throttle
+    await _writeSnapshot();
+    auditLog('BACKUP_SNAPSHOT_FORCED', req.user, {});
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/admin/snapshots/restore', requireAuth, requireSuperAdmin, async (req, res) => {
+  if (_useDB) return res.status(400).json({ error: 'Restore disabled in Postgres mode (use DB PITR)' });
+  const filename = String(req.body?.filename || '');
+  if (!filename) return res.status(400).json({ error: 'filename required' });
+  try {
+    const result = await _restoreSnapshotFile(filename);
+    auditLog('BACKUP_SNAPSHOT_RESTORED', req.user, { filename, restoredAt: result.restoredAt });
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    auditLog('BACKUP_SNAPSHOT_RESTORE_FAILED', req.user, { filename, err: e.message });
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /api/buildings/:id/provision-sms
 //   Body (optional): { areaCode: "918" }   — overrides ZIP-derived area code
 // Returns: { ok, phoneNumber, monthlyCost, areaCode } on success.
@@ -2974,6 +3139,20 @@ app.get('/api/pbj/quarterly', requireAuth, requireAdmin, async (req, res) => {
   catch (e) { return res.status(400).json({ error: e.message }); }
 
   auditLog('PBJ_GENERATED', req.user, { buildingId, year, quarter, ccn: result.summary.ccn });
+
+  // Archive every generated XML to Azure Blob Storage for re-download later.
+  // The archive is keyed by (buildingId, year, quarter) so re-running the
+  // same quarter just overwrites — useful when an admin corrects a
+  // missed-punch and re-exports.
+  if (process.env.AUDIT_STORAGE_CONNECTION_STRING) {
+    _pbjArchive({
+      conn: process.env.AUDIT_STORAGE_CONNECTION_STRING,
+      buildingId, year, quarter, ccn: result.summary.ccn,
+      xml: result.xml,
+      generatedBy: req.user.email,
+    }).catch(e => logger.error('pbj_archive_failed', { msg: e.message }));
+  }
+
   if (format === 'xml') {
     const fileName = `pbj_${result.summary.ccn || buildingId}_${year}Q${quarter}.xml`;
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
@@ -2981,6 +3160,96 @@ app.get('/api/pbj/quarterly', requireAuth, requireAdmin, async (req, res) => {
     return res.send(result.xml);
   }
   res.json({ ok: true, ...result });
+});
+
+// Push an archive copy of a PBJ XML to Azure Blob (container "pbj-archive").
+// Idempotent: same (building, year, quarter) overwrites. Fire-and-forget
+// from the export endpoint — failure is logged but doesn't block the
+// download.
+async function _pbjArchive({ conn, buildingId, year, quarter, ccn, xml, generatedBy }) {
+  const { BlobServiceClient } = require('@azure/storage-blob');
+  const blobService = BlobServiceClient.fromConnectionString(conn);
+  const container   = blobService.getContainerClient('pbj-archive');
+  await container.createIfNotExists();
+  const safeCcn = ccn || buildingId;
+  const blobName = `${year}/Q${quarter}/${safeCcn}.xml`;
+  const block    = container.getBlockBlobClient(blobName);
+  await block.upload(xml, Buffer.byteLength(xml), {
+    blobHTTPHeaders: { blobContentType: 'application/xml; charset=utf-8' },
+    metadata: {
+      buildingId: String(buildingId),
+      year:       String(year),
+      quarter:    String(quarter),
+      ccn:        String(ccn || ''),
+      generatedBy: String(generatedBy || '').slice(0, 100),
+      generatedAt: new Date().toISOString(),
+    },
+  });
+}
+
+// GET /api/pbj/archive?year=YYYY — list every archived PBJ for the year.
+// Returns array of { buildingId, year, quarter, ccn, generatedAt, sizeBytes,
+// downloadUrl }. SA + admins; building admins only see their own buildings.
+app.get('/api/pbj/archive', requireAuth, requireAdmin, async (req, res) => {
+  if (!process.env.AUDIT_STORAGE_CONNECTION_STRING) return res.json({ ok: true, archives: [] });
+  const year = parseInt(req.query.year, 10) || new Date().getFullYear();
+  try {
+    const { BlobServiceClient } = require('@azure/storage-blob');
+    const blobService = BlobServiceClient.fromConnectionString(process.env.AUDIT_STORAGE_CONNECTION_STRING);
+    const container   = blobService.getContainerClient('pbj-archive');
+    const callerBIds  = new Set([req.user.buildingId, ...(req.user.buildingIds || [])].filter(Boolean));
+    const out = [];
+    for await (const blob of container.listBlobsFlat({ prefix: `${year}/`, includeMetadata: true })) {
+      const md = blob.metadata || {};
+      const bId = md.buildingid || md.buildingId;
+      if (!bId) continue;
+      if (req.user.role !== 'superadmin' && !callerBIds.has(bId)) continue;
+      out.push({
+        buildingId: bId,
+        year:       parseInt(md.year, 10) || year,
+        quarter:    parseInt(md.quarter, 10) || 0,
+        ccn:        md.ccn || '',
+        generatedAt: md.generatedat || md.generatedAt || blob.properties.lastModified?.toISOString(),
+        sizeBytes:   blob.properties.contentLength,
+        blobName:    blob.name,
+      });
+    }
+    out.sort((a, b) => b.quarter - a.quarter);
+    res.json({ ok: true, archives: out });
+  } catch (e) {
+    logger.error('pbj_archive_list_failed', { msg: e.message });
+    res.status(502).json({ error: 'Archive lookup failed' });
+  }
+});
+
+// GET /api/pbj/archive/download?blob=<name> — re-download a previously
+// archived PBJ XML.
+app.get('/api/pbj/archive/download', requireAuth, requireAdmin, async (req, res) => {
+  if (!process.env.AUDIT_STORAGE_CONNECTION_STRING) return res.status(503).json({ error: 'Archive not configured' });
+  const blobName = String(req.query.blob || '');
+  if (!blobName || /[^A-Za-z0-9._\/Q-]/.test(blobName)) return res.status(400).json({ error: 'Invalid blob name' });
+  try {
+    const { BlobServiceClient } = require('@azure/storage-blob');
+    const blobService = BlobServiceClient.fromConnectionString(process.env.AUDIT_STORAGE_CONNECTION_STRING);
+    const container   = blobService.getContainerClient('pbj-archive');
+    const block       = container.getBlobClient(blobName);
+    const props       = await block.getProperties();
+    const md          = props.metadata || {};
+    const bId         = md.buildingid || md.buildingId;
+    const callerBIds  = new Set([req.user.buildingId, ...(req.user.buildingIds || [])].filter(Boolean));
+    if (req.user.role !== 'superadmin' && bId && !callerBIds.has(bId)) {
+      return res.status(403).json({ error: 'Out of scope' });
+    }
+    const buf = await block.downloadToBuffer();
+    auditLog('PBJ_ARCHIVE_DOWNLOADED', req.user, { blobName, buildingId: bId });
+    const fname = blobName.split('/').pop() || 'pbj.xml';
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+    res.send(buf);
+  } catch (e) {
+    logger.error('pbj_archive_download_failed', { msg: e.message });
+    res.status(502).json({ error: 'Archive download failed' });
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

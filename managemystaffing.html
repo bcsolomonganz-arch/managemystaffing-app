@@ -1598,6 +1598,7 @@ const App = {
     // View flags
     eventsView: false,
     textsView: false,
+    textsTab: 'group',        // 'group' = alert log | 'direct' = DM threads
     // Time Clock
     tcSort: {col:'date', dir:-1},
     tcMissedPeriod: null,
@@ -2504,6 +2505,7 @@ const App = {
       ['overview', 'Platform',      '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>'],
       ['demos',    'Demo Portal',   '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 8.5a6 6 0 1 1-12 0V5"/><path d="M5 2h6l1 3H4z"/><path d="M8 8.5V14M5 14h6"/></svg>'],
       ['billing',  'Billing',       '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 7h14"/><path d="M4 11h2M9 11h3"/></svg>'],
+      ['backups',  'Backups',       '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="8" cy="3.5" rx="6" ry="2"/><path d="M2 3.5v9c0 1.1 2.7 2 6 2s6-.9 6-2v-9"/><path d="M2 8c0 1.1 2.7 2 6 2s6-.9 6-2"/></svg>'],
     ];
     // 'company' is a drill-down of 'overview' — keep overview active
     const activePg = pg === 'company' ? 'overview' : pg;
@@ -2535,8 +2537,92 @@ const App = {
       company:  () => this.renderCompanyDashboard(),
       demos:    () => this.renderSADemos(),
       billing:  () => this.renderSABilling(),
+      backups:  () => this.renderSABackups(),
     };
     (pages[this.S.saPage] || pages.overview)();
+  },
+
+  // ── SA BACKUPS ──────────────────────────────────────────────────
+  // Surfaces /api/admin/snapshots so the SA can roll back to any
+  // saved point — every change for the last 24h, hourly for 30d,
+  // daily for 365d.
+  async renderSABackups() {
+    const main = document.getElementById('main');
+    if (!main) return;
+    main.innerHTML = `<div style="padding:24px"><div style="font-size:22px;font-weight:800;color:var(--g900);margin-bottom:6px">Backups</div>
+      <div style="font-size:13px;color:var(--g500)">Loading snapshots…</div></div>`;
+    let data = null;
+    try {
+      const r = await fetch('/api/admin/snapshots');
+      data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Failed to load');
+    } catch (e) {
+      main.innerHTML = `<div style="padding:24px;color:var(--red)">Failed to load snapshots: ${sanitize(e.message)}</div>`;
+      return;
+    }
+    const fmt = iso => { try { return new Date(iso).toLocaleString(); } catch { return iso; } };
+    const rows = (data.snapshots || []).map(s => `
+      <tr>
+        <td style="padding:8px 12px;font-family:ui-monospace,monospace;font-size:12px;color:var(--g700)">${sanitize(s.filename)}</td>
+        <td style="padding:8px 12px;font-size:13px;color:var(--g800)">${sanitize(fmt(s.takenAt))}</td>
+        <td style="padding:8px 12px;text-align:right">
+          <button class="btn btn-ghost btn-sm" onclick="App.restoreSnapshot('${sanitize(s.filename)}', '${sanitize(s.takenAt)}')" style="color:var(--blue-d)">Restore…</button>
+        </td>
+      </tr>`).join('');
+    const tableHtml = data.snapshots?.length
+      ? `<table style="width:100%;border-collapse:collapse;background:#fff;border:1.5px solid var(--g200);border-radius:10px;overflow:hidden">
+          <thead style="background:var(--g50)">
+            <tr>
+              <th style="text-align:left;padding:10px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--g600);font-weight:700">Filename</th>
+              <th style="text-align:left;padding:10px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--g600);font-weight:700">Taken</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>`
+      : `<div style="background:var(--g50);border:1px dashed var(--g200);border-radius:10px;padding:30px;text-align:center;color:var(--g600);font-size:13px">No snapshots yet — they're written automatically every time data changes.</div>`;
+
+    const retentionMsg = data.backend === 'postgres'
+      ? `<div style="background:var(--blue-l);color:var(--blue-d);padding:10px 14px;border-radius:8px;font-size:12px;margin-bottom:14px">Postgres mode: rely on Azure Database point-in-time restore (35-day window). File-based snapshots are disabled.</div>`
+      : `<div style="background:var(--green-l);color:#047857;padding:10px 14px;border-radius:8px;font-size:12px;margin-bottom:14px">Retention: every save kept for 24h · 1 per hour for 30 days · 1 per day for 365 days.</div>`;
+
+    main.innerHTML = `<div style="padding:24px;max-width:1000px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px">
+        <div>
+          <div style="font-size:22px;font-weight:800;color:var(--g900)">Backups</div>
+          <div style="font-size:13px;color:var(--g500);margin-top:2px">Encrypted point-in-time copies of every change. Restore rolls the entire platform back to that moment.</div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="App.forceSnapshot()">Snapshot Now</button>
+      </div>
+      ${retentionMsg}
+      ${tableHtml}
+    </div>`;
+  },
+
+  async forceSnapshot() {
+    try {
+      const r = await fetch('/api/admin/snapshots', { method: 'POST' });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Failed');
+      this.showToast('Snapshot saved');
+      this.renderSABackups();
+    } catch (e) { this.showToast(e.message, 'warn'); }
+  },
+
+  async restoreSnapshot(filename, takenAt) {
+    const ok = confirm(`Restore platform data to the snapshot taken at:\n\n${takenAt}\n\nThis replaces ALL current data (buildings, employees, shifts, accounts, messages). The current state will be saved as a "prerestore" snapshot first so you can roll forward again. Continue?`);
+    if (!ok) return;
+    try {
+      const r = await fetch('/api/admin/snapshots/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Restore failed');
+      this.showToast('Restored. Reloading…');
+      setTimeout(() => location.reload(), 800);
+    } catch (e) { this.showToast(e.message, 'warn'); }
   },
 
   // ── SA DEMO PORTAL ───────────────────────────────────────────
@@ -3704,21 +3790,14 @@ const App = {
         Staff Events
       </div>
       ${(() => {
-        const unread = this._textsUnreadCount();
-        const bg = unread > 0 ? 'background:#FDE68A' : '';
+        const groupUnread = this._textsUnreadCount();
+        const dmUnread = this._dmUnreadCount();
+        const totalUnread = groupUnread + dmUnread;
+        const bg = totalUnread > 0 ? 'background:#FDE68A' : '';
         return `<div class="group-item${this.S.textsView?' active':''}" onclick="App.openTexts()" style="cursor:pointer;${bg}">
-          <div class="group-icon" style="background:${unread>0?'#F59E0B':'var(--g100)'};color:${unread>0?'#fff':'var(--g600)'}"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v9H6l-3 3V3z"/></svg></div>
+          <div class="group-icon" style="background:${totalUnread>0?'#F59E0B':'var(--g100)'};color:${totalUnread>0?'#fff':'var(--g600)'}"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v9H6l-3 3V3z"/></svg></div>
           Texts
-          ${unread > 0 ? `<span class="group-badge" style="background:#D97706;color:#fff;margin-left:auto">${unread}</span>` : ''}
-        </div>`;
-      })()}
-      ${(() => {
-        const unreadDM = this._dmUnreadCount();
-        const bg = unreadDM > 0 ? 'background:#DBEAFE' : '';
-        return `<div class="group-item${this.S.messagesView?' active':''}" onclick="App.openMessages()" style="cursor:pointer;${bg}">
-          <div class="group-icon" style="background:${unreadDM>0?'#3B82F6':'var(--g100)'};color:${unreadDM>0?'#fff':'var(--g600)'}"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H8l-4 3v-3H4a2 2 0 0 1-2-2z"/></svg></div>
-          Messages
-          ${unreadDM > 0 ? `<span class="group-badge" style="background:#1E40AF;color:#fff;margin-left:auto">${unreadDM}</span>` : ''}
+          ${totalUnread > 0 ? `<span class="group-badge" style="background:#D97706;color:#fff;margin-left:auto">${totalUnread}</span>` : ''}
         </div>`;
       })()}
       ${(() => {
@@ -8709,6 +8788,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
 
         <div id="pbj-preview" style="margin-top:18px"></div>
 
+        <div style="margin-top:24px;display:flex;align-items:center;justify-content:space-between">
+          <div style="font-weight:700;color:var(--g900);font-size:14px">Past Quarters</div>
+          <button class="btn btn-ghost btn-sm" onclick="App.loadPbjArchive()">↻ Refresh</button>
+        </div>
+        <div id="pbj-archive-list" style="margin-top:8px"></div>
+
         <div style="margin-top:24px;padding:14px;background:var(--blue-l);border-radius:8px;border:1px solid var(--blue-m);font-size:12px;color:var(--g700);line-height:1.5">
           <strong>How it works.</strong> The XML pulls staffing hours from the
           HR Time Clock and the daily census from the PPD Calendar / PCC sync.
@@ -8763,6 +8848,56 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (!buildingId || !year || !quarter) { this.showToast('Pick a facility, year, and quarter','warn'); return; }
     // Browsers handle the file save when the response sets Content-Disposition.
     window.location.href = `/api/pbj/quarterly?buildingId=${encodeURIComponent(buildingId)}&year=${year}&quarter=${quarter}&format=xml`;
+    // Refresh the archive list a couple seconds later so the new file shows up
+    setTimeout(() => this.loadPbjArchive(), 3000);
+  },
+
+  // List previously generated PBJ XMLs from Azure Blob archive. Each row
+  // links back to the file via /api/pbj/archive/download. Useful when CMS
+  // requests a re-submission of a prior quarter or for internal audit.
+  async loadPbjArchive() {
+    const year = document.getElementById('pbj-year')?.value || new Date().getFullYear();
+    const host = document.getElementById('pbj-archive-list');
+    if (!host) return;
+    host.innerHTML = '<div style="color:var(--g500);font-size:12px;padding:8px 0">Loading…</div>';
+    try {
+      const r = await fetch(`/api/pbj/archive?year=${encodeURIComponent(year)}`);
+      const data = await r.json();
+      if (!r.ok) { host.innerHTML = `<div style="color:var(--red);font-size:12px">${sanitize(data.error || 'Failed')}</div>`; return; }
+      const archives = data.archives || [];
+      if (!archives.length) {
+        host.innerHTML = `<div style="background:var(--g50);border:1px solid var(--g200);border-radius:8px;padding:14px;font-size:12px;color:var(--g600)">No archived PBJs for ${year}. Each Download generates an archive copy automatically.</div>`;
+        return;
+      }
+      const buildingName = (id) => sanitize(this.S.buildings.find(b => b.id === id)?.name || id);
+      const rows = archives.map(a => {
+        const dt = a.generatedAt ? new Date(a.generatedAt).toLocaleString([], { month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' }) : '—';
+        const sizeKb = Math.max(1, Math.round((a.sizeBytes || 0) / 1024));
+        return `<tr style="border-bottom:1px solid var(--g100)">
+          <td style="padding:8px 12px;font-size:12px;color:var(--g700)"><strong>Q${a.quarter} ${a.year}</strong></td>
+          <td style="padding:8px 12px;font-size:12px;color:var(--g700)">${buildingName(a.buildingId)}</td>
+          <td style="padding:8px 12px;font-size:11px;color:var(--g500)">CCN ${sanitize(a.ccn || '—')}</td>
+          <td style="padding:8px 12px;font-size:11px;color:var(--g500)">${sanitize(dt)}</td>
+          <td style="padding:8px 12px;font-size:11px;color:var(--g500)">${sizeKb} KB</td>
+          <td style="padding:8px 12px;text-align:right">
+            <a href="/api/pbj/archive/download?blob=${encodeURIComponent(a.blobName)}" class="btn btn-ghost btn-sm">Download</a>
+          </td>
+        </tr>`;
+      }).join('');
+      host.innerHTML = `<table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--g200);border-radius:8px;overflow:hidden">
+        <thead style="background:var(--g50)">
+          <tr>
+            <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Quarter</th>
+            <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Facility</th>
+            <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">CCN</th>
+            <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Generated</th>
+            <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Size</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+    } catch (e) { host.innerHTML = `<div style="color:var(--red);font-size:12px">Network error</div>`; }
   },
 
   // ── HR Reports — daily/weekly/monthly email digests ────────────────────────
@@ -9930,20 +10065,16 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     }, 30);
   },
 
-  // Start a new DM with an employee (called from roster row).
+  // Start a new DM with an employee (called from roster row). Opens the
+  // Texts page on the Direct tab so all messaging lives in one place.
   startDmWith(empId) {
     const e = this.S.employees.find(x => x.id === empId);
     if (!e) return;
-    this.S.messagesView = true;
-    this.S.textsView = false;
-    this.S.eventsView = false;
-    this.S.ppdView = false;
-    this.S.rosterView = false;
     this.S._activeThreadOtherId = empId;
     // Compute deterministic threadId same way the server does
     const ids = [String(this.S.user.id), String(empId)].sort();
     this.S._activeThreadId = 'dm:' + ids[0] + ':' + ids[1];
-    this.render();
+    this.openTexts('direct');
   },
 
   async sendDM(toId) {
@@ -9985,15 +10116,18 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     return count;
   },
 
-  openTexts() {
-    this.S.textsView   = true;
-    this.S.eventsView  = false;
-    this.S.ppdView     = false;
-    this.S.rosterView  = false;
-    this.S.panelOpen   = false;
+  openTexts(tab) {
+    this.S.textsView    = true;
+    this.S.messagesView = false;
+    this.S.eventsView   = false;
+    this.S.ppdView      = false;
+    this.S.rosterView   = false;
+    this.S.panelOpen    = false;
+    if (tab === 'group' || tab === 'direct') this.S.textsTab = tab;
+    if (!this.S.textsTab) this.S.textsTab = 'group';
     document.getElementById('right-panel')?.classList.remove('open');
     document.getElementById('main')?.classList.remove('panel-open');
-    this.S.textsLastSeen = Date.now();
+    if (this.S.textsTab === 'group') this.S.textsLastSeen = Date.now();
     this.persistData();
     this.render();
   },
@@ -10004,6 +10138,34 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
 
   renderTexts() {
+    const tab = (this.S.textsTab === 'direct') ? 'direct' : 'group';
+    const groupUnread = this._textsUnreadCount();
+    const dmUnread    = this._dmUnreadCount();
+    const tabBtn = (id, label, badge) => {
+      const active = (id === tab);
+      return `<button onclick="App.openTexts('${id}')" style="
+        padding:8px 16px;border:none;background:${active?'#fff':'transparent'};
+        border-bottom:${active?'3px solid var(--green)':'3px solid transparent'};
+        color:${active?'var(--g900)':'var(--g600)'};
+        font-weight:${active?'800':'600'};font-size:13px;cursor:pointer;
+        display:inline-flex;align-items:center;gap:6px">
+        ${label}
+        ${badge>0?`<span style="background:#D97706;color:#fff;font-size:10px;font-weight:700;padding:1px 7px;border-radius:99px">${badge}</span>`:''}
+      </button>`;
+    };
+    const tabsBar = `<div style="display:flex;border-bottom:1.5px solid var(--g200);background:var(--g50);padding:0 8px;margin:-20px -20px 16px -20px">
+      ${tabBtn('group',  'Group Messages', groupUnread)}
+      ${tabBtn('direct', 'Direct Messages', dmUnread)}
+    </div>`;
+
+    if (tab === 'direct') {
+      const dmInner = this.renderMessages();
+      return `<div style="padding:20px;max-width:1200px">
+        ${tabsBar}
+        <div style="margin:0 -20px">${dmInner}</div>
+      </div>`;
+    }
+
     const log = (this.S.alertLog || []).slice().sort((a,b) =>
       new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime());
     const fmtTime = iso => {
@@ -10043,9 +10205,10 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     </div>`;
 
     return `<div style="padding:20px;max-width:760px">
+      ${tabsBar}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
         <div>
-          <div style="font-size:20px;font-weight:800;color:var(--g900)">Texts</div>
+          <div style="font-size:20px;font-weight:800;color:var(--g900)">Group Messages</div>
           <div style="font-size:13px;color:var(--g500);margin-top:2px">All SMS / email alerts sent from this facility · replies inbound to your Twilio/ACS number land here</div>
         </div>
       </div>
@@ -11389,9 +11552,14 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       return;
     }
 
-    // ── MESSAGES (in-app DM) ────────────────────────────────
+    // ── MESSAGES (legacy route) ─────────────────────────────
+    // DMs now live as a tab inside Texts. Bounce any stale messagesView=true
+    // state into the Direct tab of Texts so old links/buttons still work.
     if (this.S.messagesView) {
-      document.getElementById('main').innerHTML = this.renderMessages();
+      this.S.messagesView = false;
+      this.S.textsView    = true;
+      this.S.textsTab     = 'direct';
+      document.getElementById('main').innerHTML = this.renderTexts();
       return;
     }
 
