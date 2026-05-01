@@ -10835,8 +10835,15 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       ${sortableTh('name','Employee')}${sortableTh('group','Position')}<th scope="col">Phone</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Actions</span></th>
     </tr>`;
 
-    return `<div style="padding:20px;max-width:900px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+    // Roster wrapper expands to fill the available main-content width.
+    // Each table sits inside a horizontally-scrollable container so that
+    // the Set-PIN / IDs / action buttons on the right can never get
+    // clipped — when the screen is narrow the table grows past the
+    // viewport and a scrollbar appears at the bottom of the card; when
+    // it's wide enough, all columns fit naturally.
+    const TABLE_MIN_W = 'min-width:1080px';   // accommodates all action buttons without wrapping
+    return `<div style="padding:20px;width:100%;max-width:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px">
         <div>
           <div style="font-size:20px;font-weight:800;color:var(--g900)">Staff Roster</div>
           <div style="font-size:13px;color:var(--g500);margin-top:2px">${sanitize(building?.name||'')} · ${active.length} active · ${inactive.length} inactive</div>
@@ -10853,10 +10860,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           <div style="font-size:13px;font-weight:800;color:var(--g900);text-transform:uppercase;letter-spacing:.06em">Active Staff</div>
           <span class="tag-active">${active.length} employees</span>
         </div>
-        <table class="roster-table">
-          <thead>${tableHdr}</thead>
-          <tbody>${activeRows || '<tr><td colspan="5" style="text-align:center;color:var(--g600);padding:20px">No active employees</td></tr>'}</tbody>
-        </table>
+        <div style="overflow-x:auto">
+          <table class="roster-table" style="${TABLE_MIN_W}">
+            <thead>${tableHdr}</thead>
+            <tbody>${activeRows || '<tr><td colspan="5" style="text-align:center;color:var(--g600);padding:20px">No active employees</td></tr>'}</tbody>
+          </table>
+        </div>
       </div>
 
       ${inactive.length ? `
@@ -10866,10 +10875,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           <div style="font-size:13px;font-weight:800;color:var(--g500);text-transform:uppercase;letter-spacing:.06em">Inactive / Former Staff</div>
           <span class="tag-inactive">${inactive.length} employees</span>
         </div>
-        <table class="roster-table">
-          <thead>${tableHdr}</thead>
-          <tbody>${inactiveRows}</tbody>
-        </table>
+        <div style="overflow-x:auto">
+          <table class="roster-table" style="${TABLE_MIN_W}">
+            <thead>${tableHdr}</thead>
+            <tbody>${inactiveRows}</tbody>
+          </table>
+        </div>
       </div>` : ''}
     </div>`;
   },
