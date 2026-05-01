@@ -393,34 +393,38 @@ function buildInstructionsPdf() {
 
   coverPage(doc,
     'ManageMyStaffing\nOperator Guide',
-    'Day-to-day instructions for super admins, building admins, and HR users',
-    'For internal use — covers signing in, scheduling, recruiting, PPD, time clock, and security');
+    'Day-to-day instructions for super admins, building admins, HR admins, and regional admins',
+    'For internal use — covers access roles, scheduling, recruiting, PPD, time clock, clinical reports, and security');
 
   // ── TOC ────────────────────────────────────────────────────────────────
   doc.addPage();
   h1(doc, 'Contents');
   const sections = [
     '1.  Signing in',
-    '2.  Super Admin platform overview',
-    '3.  Entering a facility (and getting back out)',
-    '4.  Recruiting — posting to Indeed, ZipRecruiter, and LinkedIn',
-    '5.  Recruiting — managing applicants + in-app chat',
-    '6.  PPD Calculator and PPD Calendar',
-    '7.  Staff Events calendar',
-    '8.  Texts sidebar (alert log + replies)',
-    '9.  Direct Messages (in-app 1-to-1 chat)',
-    '10. HR module (super-admin-only for now)',
-    '11. Time Clock — three entry paths (kiosk / mobile / SmartLinx / CSV)',
-    '12. Agency time entry on open shifts',
-    '13. Reports — daily / weekly / monthly email digests',
-    '14. PBJ Reports — quarterly XML export + archive',
-    '15. Shift Trade Requests',
-    '16. Mass Shift Swap',
-    '17. Adding & editing facilities (CCN, geofence, kiosk URL)',
-    '18. Roster — access levels, badges, PINs, IDs',
-    '19. Onboarding → Roster push',
-    '20. Security and HIPAA features',
-    '21. Glossary',
+    '2.  Access roles and what each one can do',
+    '3.  Super Admin platform overview',
+    '4.  Entering a facility (and getting back out)',
+    '5.  Recruiting — posting to Indeed, ZipRecruiter, and LinkedIn',
+    '6.  Recruiting — managing applicants + in-app chat',
+    '7.  PPD Calculator and PPD Calendar',
+    '8.  Staff Events calendar',
+    '9.  Texts — Group Messages and Direct Messages tabs',
+    '10. Notifications bell + inbox',
+    '11. HR module — sidebar tour',
+    '12. Time Clock — kiosk, mobile, SmartLinx, and CSV',
+    '13. Punch corrections — direct edits and HR-Admin approval flow',
+    '14. Agency time entry on open shifts',
+    '15. Reports — daily ops digest + weekly clinical CMS metrics',
+    '16. Clinical Reports — PCC census + UTI / rehosp / weight loss',
+    '17. PBJ Reports — quarterly XML export + archive',
+    '18. Shift Trade Requests',
+    '19. Mass Shift Swap',
+    '20. Adding & editing facilities (CCN, geofence, kiosk URL)',
+    '21. Roster — access levels, badges, PINs, IDs',
+    '22. Onboarding → Roster push',
+    '23. Backups + point-in-time restore (Super Admin)',
+    '24. Security and HIPAA features',
+    '25. Glossary',
   ];
   doc.font('Helvetica').fontSize(11).fillColor(TEXT);
   for (const s of sections) doc.text(s, { lineGap: 4 });
@@ -428,7 +432,7 @@ function buildInstructionsPdf() {
   // ── 1. SIGNING IN ──────────────────────────────────────────────────────
   doc.addPage();
   h1(doc, '1. Signing in');
-  body(doc, 'Open https://www.managemystaffing.com in any modern browser. Two factors are needed for privileged accounts (admin / super admin / regional admin); employees use email + password only.');
+  body(doc, 'Open https://www.managemystaffing.com in any modern browser. Two factors are needed for privileged accounts (admin / HR admin / super admin / regional admin); employees use email + password only.');
   h2(doc, 'Step-by-step');
   bullet(doc, 'Email — your registered email address. Recent accounts auto-fill from local storage if you have signed in before.');
   bullet(doc, 'Password — minimum 12 characters with upper, lower, digit, and special for admins; 8 characters for employees.');
@@ -439,12 +443,46 @@ function buildInstructionsPdf() {
     'Click "Trouble signing in?" → enter your email → check your inbox for a reset link. The link expires in 1 hour. Setting a new password automatically signs you out of all other sessions.');
 
   h2(doc, 'Idle timeout');
-  bullet(doc, 'Admins / super admins / regional admins are auto-logged out after 2 hours of inactivity.');
+  bullet(doc, 'Admins / HR admins / super admins / regional admins are auto-logged out after 2 hours of inactivity.');
   bullet(doc, 'Employees are not auto-logged out (clinical-workflow / kiosk style).');
   bullet(doc, 'Sessions also have a hard 2-hour cap regardless of activity for privileged accounts.');
 
-  // ── 2. SA PLATFORM OVERVIEW ────────────────────────────────────────────
-  h1(doc, '2. Super Admin platform overview');
+  // ── 2. ACCESS ROLES ────────────────────────────────────────────────────
+  h1(doc, '2. Access roles and what each one can do');
+  body(doc, 'Five roles, three privilege tiers. Treat all four privileged roles as PHI-touching — same TOTP / idle timeout / audit applies.');
+
+  h2(doc, 'Employee');
+  bullet(doc, 'Sees own schedule and open shifts to claim. No admin tools, no PHI views.');
+  bullet(doc, 'Can clock in/out via mobile or kiosk.');
+  bullet(doc, 'Can DM admins through the Texts → Direct Messages tab.');
+
+  h2(doc, 'Scheduler Access (admin minus financials)');
+  bullet(doc, 'Manage employees, shifts, alerts. Same routing as Full Admin.');
+  bullet(doc, 'Hourly rate, Cost/Day, Total Daily Cost, and OT cost panel are hidden.');
+
+  h2(doc, 'HR Admin (NEW)');
+  bullet(doc, 'Same access surface as Full Admin EXCEPT punch corrections require admin sign-off.');
+  bullet(doc, 'When an HR Admin edits a time-clock punch, the change is staged. Building admins get a "<n> pending" chip in the header; they Approve or Reject from the inbox.');
+  bullet(doc, 'On Approve, the edit applies AND a notification fires to all regional admins + super admins.');
+  bullet(doc, 'On Reject, the HR Admin gets a notification with the reason (if provided).');
+  bullet(doc, 'Header badge: purple "HR Admin".');
+
+  h2(doc, 'Full Building Admin');
+  bullet(doc, 'Manages employees, shifts, alerts, AND sees hourly rates / OT / cost / PPD financials.');
+  bullet(doc, 'Approves HR-Admin punch corrections.');
+  bullet(doc, 'Header badge: blue "Admin".');
+
+  h2(doc, 'Regional Admin');
+  bullet(doc, 'Spans multiple buildings via buildingIds[].');
+  bullet(doc, 'Receives PUNCH_EDIT_APPROVED notifications when any HR-Admin correction is approved at any of their buildings.');
+  bullet(doc, 'Can run reports across all in-scope buildings.');
+
+  h2(doc, 'Super Admin (platform owner)');
+  bullet(doc, 'Sees every building, every account, every audit trail.');
+  bullet(doc, 'Only role that can run snapshot restores or wipe-equivalent operations.');
+
+  // ── 3. SA PLATFORM OVERVIEW ────────────────────────────────────────────
+  h1(doc, '3. Super Admin platform overview');
   body(doc, 'The super-admin home page shows a portfolio view of every facility (building) on the platform. Use the left sidebar to switch between Platform, Demos, and Billing.');
 
   h2(doc, 'Sidebar');
@@ -457,8 +495,8 @@ function buildInstructionsPdf() {
   bullet(doc, '"+ Add Building" creates a new facility. The first admin gets an auto-generated invite link.');
   bullet(doc, 'Click any company name to drill into a single company\'s portfolio of buildings.');
 
-  // ── 3. ENTERING A FACILITY ─────────────────────────────────────────────
-  h1(doc, '3. Entering a facility (and getting back out)');
+  // ── 4. ENTERING A FACILITY ─────────────────────────────────────────────
+  h1(doc, '4. Entering a facility (and getting back out)');
   body(doc, 'Clicking "Enter Dashboard" on a facility card swaps your view to that facility\'s admin dashboard. The app treats you as the building\'s admin while you are inside, but your original SA identity is preserved for HR-module access.');
 
   h2(doc, 'What changes when you enter a facility');
@@ -471,8 +509,8 @@ function buildInstructionsPdf() {
   bullet(doc, 'There is a small "Back to Platform" link in the header — click it to return to the SA portfolio.');
   bullet(doc, 'Or click the avatar dropdown → Sign Out and sign back in.');
 
-  // ── 4. RECRUITING — XML feeds ──────────────────────────────────────────
-  h1(doc, '4. Recruiting — posting to Indeed, ZipRecruiter, and LinkedIn');
+  // ── 5. RECRUITING — XML feeds ──────────────────────────────────────────
+  h1(doc, '5. Recruiting — posting to Indeed, ZipRecruiter, and LinkedIn');
   body(doc, 'ManageMyStaffing hosts an XML feed of every active job posting. You submit the feed URL once per platform; from then on, every job you create or take down inside our app appears or disappears on those platforms automatically.');
 
   h2(doc, 'Three feed URLs');
@@ -508,8 +546,8 @@ function buildInstructionsPdf() {
   bullet(doc, 'Closed jobs show "Repost" — flips back to active.');
   bullet(doc, 'You never need to log back into Indeed / ZipRecruiter / LinkedIn for these actions.');
 
-  // ── 5. RECRUITING — APPLICANTS ─────────────────────────────────────────
-  h1(doc, '5. Recruiting — managing applicants');
+  // ── 6. RECRUITING — APPLICANTS ─────────────────────────────────────────
+  h1(doc, '6. Recruiting — managing applicants');
   body(doc, 'When a candidate applies through any of the three platforms, they land on our hosted apply page (/apply/<jobId>). Their name, email, and phone are captured into a prospect card automatically.');
 
   h2(doc, 'Applicants table');
@@ -527,8 +565,8 @@ function buildInstructionsPdf() {
   bullet(doc, 'Drop-down selector at the top of the Recruiting page filters jobs and prospects to a single building (or "All buildings").');
   bullet(doc, 'Single-building admins do not see the selector — they only see their own facility\'s data.');
 
-  // ── 6. PPD CALCULATOR + CALENDAR ───────────────────────────────────────
-  h1(doc, '6. PPD Calculator and PPD Calendar');
+  // ── 7. PPD CALCULATOR + CALENDAR ───────────────────────────────────────
+  h1(doc, '7. PPD Calculator and PPD Calendar');
   body(doc, 'CMS Five-Star compliance hinges on Per-Patient-Day (PPD) staffing ratios. The PPD Calculator computes today\'s ratios; the PPD Calendar shows a month at a glance.');
 
   h2(doc, 'PPD Calculator (today)');
@@ -544,8 +582,8 @@ function buildInstructionsPdf() {
   bullet(doc, 'Click "Sync Month from PCC" to pull census for every day at once.');
   bullet(doc, 'Header summary: month-average PPD, total / direct-care hours, total month cost.');
 
-  // ── 7. STAFF EVENTS ────────────────────────────────────────────────────
-  h1(doc, '7. Staff Events calendar');
+  // ── 8. STAFF EVENTS ────────────────────────────────────────────────────
+  h1(doc, '8. Staff Events calendar');
   body(doc, 'Side-bar item under Tools. Month-grid calendar of birthdays, work anniversaries, and custom events.');
 
   h2(doc, 'Auto-derived events');
@@ -558,37 +596,54 @@ function buildInstructionsPdf() {
   bullet(doc, 'Color-coded legend at the bottom of the page.');
   bullet(doc, 'Per-building scoped — admins only see their own facility\'s events.');
 
-  // ── 8. TEXTS ───────────────────────────────────────────────────────────
-  h1(doc, '8. Texts sidebar (alert log + replies)');
-  body(doc, 'The Texts sidebar item shows every SMS or email alert sent from this facility, plus any inbound SMS replies.');
+  // ── 9. TEXTS — Group + Direct ──────────────────────────────────────────
+  h1(doc, '9. Texts — Group Messages and Direct Messages tabs');
+  body(doc, 'The Texts sidebar item is the single hub for all messaging. Inside Texts there are two tabs: Group Messages (the alert log) and Direct Messages (1-to-1 chat). The sidebar badge sums unread counts from both.');
 
-  h2(doc, 'What you see');
-  bullet(doc, 'Most recent alerts at the top: subject, sender, recipient groups, channel chips (SMS / Email + recipient counts), full message body.');
-  bullet(doc, 'Inbound replies appear under the originating alert in green-bordered bubbles.');
-  bullet(doc, 'Recipient email and phone are masked in the audit log (e.g. j***@example.com, ***-***-1234) per HIPAA minimum-necessary.');
+  h2(doc, 'Group Messages tab');
+  bullet(doc, 'Every SMS / email alert sent from this facility, most recent at the top.');
+  bullet(doc, 'Channel chips (SMS / Email) plus recipient counts.');
+  bullet(doc, 'Inbound SMS replies appear inline under the originating alert.');
+  bullet(doc, 'Recipient PII masked per HIPAA minimum-necessary (j***@example.com, ***-***-1234).');
 
-  h2(doc, 'Badge for unread');
-  bullet(doc, 'When new replies arrive, the Texts sidebar item gets a yellow background and a count badge.');
-  bullet(doc, 'Opening the Texts view marks everything as seen.');
+  h2(doc, 'Direct Messages tab');
+  bullet(doc, 'In-app 1-to-1 chat between admins and employees in the same building.');
+  bullet(doc, 'No SMS / email is sent — these are persistent app messages stored on data.directMessages.');
+  bullet(doc, 'Start a thread from any roster row\'s Message button, or from the existing thread list.');
+  bullet(doc, 'Unread badge per thread; threads sorted by most-recent message.');
 
-  h2(doc, 'Inbound webhook');
-  bullet(doc, 'Configure your messaging provider (Twilio or Azure Communication Services) to POST inbound SMS to /api/sms/inbound.');
+  h2(doc, 'Inbound SMS webhook');
+  bullet(doc, 'Configure Twilio or Azure Communication Services to POST inbound SMS to /api/sms/inbound.');
   bullet(doc, 'Use the SMS_WEBHOOK_SECRET env var as a shared secret in the X-Webhook-Secret header.');
   bullet(doc, 'Replies are matched to the most recent alert that texted that phone number within the last 7 days.');
 
-  // ── 9. HR MODULE ───────────────────────────────────────────────────────
-  h1(doc, '9. HR module (super-admin-only for now)');
-  body(doc, 'The HR module is currently restricted to the SA login (solomong@managemystaffing.com). It is a separate sidebar with its own pages: Hiring, Employees, Doc Review, Schedule, Shift Board, Time Clock, Data Center, Onboarding Flow, Integrations, Recruiting, PBJ Reports, Accounts, Audit Log, Billing.');
+  // ── 10. NOTIFICATIONS BELL ─────────────────────────────────────────────
+  h1(doc, '10. Notifications bell + inbox');
+  body(doc, 'The bell icon next to the avatar shows a red unread count. Click for a popover with the 200 most recent items for your account, color-coded by kind.');
+
+  h2(doc, 'What lands here');
+  bullet(doc, 'PUNCH_EDIT_PENDING — building admins receive when an HR Admin submits a punch correction. Clicking deep-links into the inbox modal.');
+  bullet(doc, 'PUNCH_EDIT_APPROVED — regional admins + super admins receive when any building admin approves a correction.');
+  bullet(doc, 'PUNCH_EDIT_APPROVED_BY_ADMIN / PUNCH_EDIT_REJECTED — round-trip back to the HR Admin who submitted the edit.');
+
+  h2(doc, 'Behavior');
+  bullet(doc, 'Auto-refreshes every 60 seconds while signed in.');
+  bullet(doc, 'Click anywhere outside to dismiss the popover.');
+  bullet(doc, '"Mark all read" clears every unread for the caller in one POST.');
+  bullet(doc, 'Endpoints: GET /api/notifications, POST /api/notifications/:id/read, POST /api/notifications/read-all.');
+
+  // ── 11. HR MODULE ──────────────────────────────────────────────────────
+  h1(doc, '11. HR module — sidebar tour');
+  body(doc, 'The HR module is a separate sidebar with these pages: Hiring, Employees, Doc Review, Schedule, Shift Board, Time Clock, Payroll Calculator, Data Center, Onboarding Flow, Integrations, Recruiting, PBJ Reports, Accounts, Reports, Audit Log, Billing.');
 
   h2(doc, 'Switching modes');
-  bullet(doc, 'When you are inside a facility as SA, the sidebar shows a Schedule / HR toggle at the top.');
+  bullet(doc, 'When you are inside a facility, the sidebar shows a Schedule / HR toggle at the top.');
   bullet(doc, 'Click HR to switch to the HR sidebar; click Schedule to come back.');
   bullet(doc, 'The toggle is hidden on the SA Platform overview — only visible after you enter a facility.');
-  bullet(doc, 'Other admins (non-SA) never see the toggle.');
 
-  // ── 10. TIME CLOCK ─────────────────────────────────────────────────────
-  h1(doc, '10. Time Clock — CSV import + missed-punch reports');
-  body(doc, 'HR > Time Clock displays every punch record. Three types of irregularities are highlighted: late, missed, and no-clockout.');
+  // ── 12. TIME CLOCK ─────────────────────────────────────────────────────
+  h1(doc, '12. Time Clock — kiosk, mobile, SmartLinx, and CSV');
+  body(doc, 'HR > Time Clock displays every punch record. Three types of irregularities are highlighted: late, missed, and no-clockout. Punches arrive through four paths.');
 
   h2(doc, 'CSV import');
   bullet(doc, 'Click "Import CSV" — file picker opens.');
@@ -628,34 +683,94 @@ function buildInstructionsPdf() {
   bullet(doc, 'Map each employee\'s badge ID via Roster → IDs button.');
   bullet(doc, 'A small bridge script polls your Slate/Kronos/etc. and POSTs new punches; same _applyPunch pipeline classifies status against scheduled shift.');
 
-  h2(doc, 'Admin punch correction');
-  bullet(doc, 'HR → Time Clock → Edit button on any row.');
-  bullet(doc, 'Three prompts: in time, out time, reason. Edit appended to record.events[] with editor + before/after for audit.');
+  h2(doc, 'Edit button (deep link to the punch corrections section)');
+  bullet(doc, 'HR → Time Clock → Edit button on any row. Behavior depends on your role — see section 13.');
 
-  // ── 12. AGENCY TIME ────────────────────────────────────────────────────
-  h1(doc, '12. Agency time entry on open shifts');
+  // ── 13. PUNCH CORRECTIONS ──────────────────────────────────────────────
+  h1(doc, '13. Punch corrections — direct edits and HR-Admin approval flow');
+  body(doc, 'Editing a time-clock punch is one of the most consequential admin actions on the platform. The flow depends on your role.');
+
+  h2(doc, 'As Full Admin, Regional Admin, or Super Admin');
+  bullet(doc, 'PATCH /api/timeclock/punch with the new in / out / note. The change applies immediately.');
+  bullet(doc, 'A line is appended to the record\'s events[] with editor email, before/after, and the reason note.');
+  bullet(doc, 'Audit chain entry: PUNCH_EDITED.');
+
+  h2(doc, 'As HR Admin (NEW)');
+  bullet(doc, 'The same Edit button is available, but the change is staged into pendingPunchEdits[] — not applied yet.');
+  bullet(doc, 'A notification is dropped for every building admin: kind = PUNCH_EDIT_PENDING.');
+  bullet(doc, 'You receive a round-trip notification when the admin decides:');
+  bullet(doc, '   – approve → PUNCH_EDIT_APPROVED_BY_ADMIN');
+  bullet(doc, '   – reject  → PUNCH_EDIT_REJECTED (with the reason if one was given)');
+
+  h2(doc, 'As the approving Building Admin');
+  bullet(doc, 'Header chip: "<n> pending" appears whenever there are open requests in your scope.');
+  bullet(doc, 'Click → modal lists each pending edit with employee, date, current → proposed times, requester, optional note.');
+  bullet(doc, 'Approve → applies the edit, audits PUNCH_EDIT_APPROVED, AND fires a notification to all regional admins + super admins.');
+  bullet(doc, 'Reject → drops the staged edit; no time-clock change. HR Admin is notified with the reason.');
+
+  h2(doc, 'Endpoints');
+  code(doc, 'PATCH  /api/timeclock/punch                         (any privileged role)');
+  code(doc, 'GET    /api/timeclock/punch/pending                 (admin scope)');
+  code(doc, 'POST   /api/timeclock/punch/:editId/decide          (admin / regional / SA only)');
+  code(doc, '  body: { action: "approve"|"reject", note?: "" }');
+
+  // ── 14. AGENCY TIME ────────────────────────────────────────────────────
+  h1(doc, '14. Agency time entry on open shifts');
   body(doc, 'When an open shift is filled by an agency / contract worker (not a regular employee), admin records the hours here. Hours feed into PBJ + PPD + daily cost as agency-source nursing hours.');
   bullet(doc, 'Click the yellow "AGENCY" button on any open shift slot.');
   bullet(doc, 'Modal: worker name, agency, in/out time, hourly rate, license number.');
   bullet(doc, 'Saves an hrTimeClock record with kind:\'agency\' + flips the shift to status:agency-filled with the agency name displayed inline.');
   bullet(doc, 'PBJ export tags these entries with payTypeCode=3 (agency) automatically.');
 
-  // ── 13. REPORTS ────────────────────────────────────────────────────────
-  h1(doc, '13. Reports — daily / weekly / monthly email digests');
-  body(doc, 'HR → Reports lets admins set up email subscriptions that send an inline HTML table every morning at 6am Central. No attachments — the table renders directly in the email body.');
+  // ── 15. REPORTS ────────────────────────────────────────────────────────
+  h1(doc, '15. Reports — daily ops digest + weekly clinical CMS metrics');
+  body(doc, 'HR → Reports lets admins set up email subscriptions that send an inline HTML table on a schedule. No attachments — the table renders directly in the email body.');
   h2(doc, 'Subscription fields');
   bullet(doc, 'Recipients (up to 20 emails) — comma-separated.');
-  bullet(doc, 'Buildings — one for a single facility, multiple for a regional admin digest.');
-  bullet(doc, 'Metrics: Daily PPD, OT hours, Daily cost, Missed punches. Pick any combination.');
-  h2(doc, 'Roll-ups');
+  bullet(doc, 'Buildings — one for a single facility, multiple for a regional digest.');
+  bullet(doc, 'Metrics: Daily PPD, OT hours, Daily cost, Missed punches, plus a separate Clinical / CMS quality option.');
+  bullet(doc, 'Frequency: Daily (6am Central) or Weekly (Monday 6am Central). Selecting Clinical forces Weekly.');
+  h2(doc, 'Daily digest roll-ups');
   bullet(doc, 'Friday emails add a "Weekly Totals" table covering the past 7 days.');
   bullet(doc, 'The last day of the month adds a "Monthly Totals" table.');
+  h2(doc, 'Weekly clinical digest');
+  bullet(doc, 'Fires Monday at 6am Central, covering the trailing 7 days.');
+  bullet(doc, 'One row per building with UTIs, 30-day rehospitalizations, weight-loss flags, long-term antipsychotic, falls w/ major injury, pressure ulcers (Stage 2+), long-stay catheter, C. diff, and total resident-days.');
+  bullet(doc, 'Subject: "Clinical Quality Report — <date>".');
   h2(doc, 'Multi-building digests');
   bullet(doc, 'When more than one building is selected, the table has one row per facility and a "Total" row at the bottom — perfect for regional admins.');
   bullet(doc, '"Send test now" button verifies setup before the first scheduled run.');
+  bullet(doc, 'Subscription list shows DAILY/WEEKLY chips per row.');
 
-  // ── 14. PBJ REPORTS ────────────────────────────────────────────────────
-  h1(doc, '14. PBJ Reports — quarterly XML export + archive');
+  // ── 16. CLINICAL REPORTS ───────────────────────────────────────────────
+  h1(doc, '16. Clinical Reports — PCC census + UTI / rehosp / weight loss');
+  body(doc, 'HR → Reports → "Clinical Reports" section. Live ad-hoc reports against PointClickCare, surfaced as tiles + CSV export.');
+
+  h2(doc, 'Run a CMS quality report');
+  bullet(doc, 'Pick building + date range (defaults to trailing 30 days).');
+  bullet(doc, 'Click "Run Report". The system computes 8 CMS-tracked metrics for the range:');
+  bullet(doc, '   – UTIs');
+  bullet(doc, '   – 30-day rehospitalizations');
+  bullet(doc, '   – Significant weight loss (≥5% in 30d or ≥10% in 180d)');
+  bullet(doc, '   – Long-term (≥90 days) antipsychotic use without supporting Dx');
+  bullet(doc, '   – Falls with major injury');
+  bullet(doc, '   – Pressure ulcers, Stage 2 or higher');
+  bullet(doc, '   – Long-stay catheter (≥14 days)');
+  bullet(doc, '   – C. diff infections');
+  bullet(doc, 'Each tile shows raw count + rate per 1,000 resident-days.');
+  bullet(doc, 'Click "Export CSV" for a flat copy.');
+
+  h2(doc, 'Census-only report');
+  bullet(doc, 'Click "Census Only" instead — pulls /api/pcc/census/range for the same date window.');
+  bullet(doc, 'Output: Avg Daily Census, Total Resident-Days, plus a per-day table.');
+
+  h2(doc, 'When PCC is offline or unconfigured');
+  bullet(doc, 'The endpoint falls back to the most recent cached pull for the same building+range.');
+  bullet(doc, 'A yellow "CACHED — PCC NOT CONFIGURED" chip appears instead of the green "LIVE FROM PCC" chip.');
+  bullet(doc, 'Successful live pulls always update the cache, so a single live run "warms" all subsequent fallback paths.');
+
+  // ── 17. PBJ REPORTS ────────────────────────────────────────────────────
+  h1(doc, '17. PBJ Reports — quarterly XML export + archive');
   body(doc, 'CMS Payroll-Based Journal submission for SNF/LTC. The XML pulls staffing hours from the HR Time Clock and the daily census from the PPD Calendar / PCC sync.');
   h2(doc, 'Generating');
   bullet(doc, 'HR → PBJ Reports → pick facility, year, quarter.');
@@ -672,8 +787,8 @@ function buildInstructionsPdf() {
   bullet(doc, '"Past Quarters" table lists every archive for the selected year, with download links.');
   bullet(doc, 'Re-running the same quarter overwrites the archive — useful when you correct a missed punch and re-export.');
 
-  // ── 15. SHIFT TRADES ───────────────────────────────────────────────────
-  h1(doc, '15. Shift Trade Requests');
+  // ── 18. SHIFT TRADES ───────────────────────────────────────────────────
+  h1(doc, '18. Shift Trade Requests');
   body(doc, 'Employee-initiated swap with admin approval.');
   bullet(doc, 'Employee taps a future shift on My Schedule → "↔ Request Shift Trade" button.');
   bullet(doc, 'Picker shows other employees\' upcoming shifts in the same group at the same building.');
@@ -682,16 +797,16 @@ function buildInstructionsPdf() {
   bullet(doc, 'On approve, the server atomically swaps employeeIds on both shifts.');
   bullet(doc, 'Initiator can cancel a pending request. Cross-group / cross-building trades are blocked.');
 
-  // ── 16. MASS SHIFT SWAP ────────────────────────────────────────────────
-  h1(doc, '16. Mass Shift Swap');
+  // ── 19. MASS SHIFT SWAP ────────────────────────────────────────────────
+  h1(doc, '19. Mass Shift Swap');
   body(doc, 'Admin tool for vacation / leave coverage. Reassigns all of one employee\'s scheduled shifts in a date range to another employee.');
   bullet(doc, 'Click "Mass Swap" in the admin header.');
   bullet(doc, 'Pick From and To employees (same staff group), date range.');
   bullet(doc, '"Preview" shows how many shifts will move and how many days conflict (target already has a shift).');
   bullet(doc, '"Execute Swap" performs the reassignment. Skipped conflicts are reported in the success toast.');
 
-  // ── 17. ADD/EDIT FACILITIES ────────────────────────────────────────────
-  h1(doc, '17. Adding & editing facilities (CCN, geofence, kiosk URL)');
+  // ── 20. ADD/EDIT FACILITIES ────────────────────────────────────────────
+  h1(doc, '20. Adding & editing facilities (CCN, geofence, kiosk URL)');
   body(doc, 'SA only. The "+ Add Building" button on the Platform overview creates new facilities. Existing buildings have an "⚙ Edit" button on each card.');
   h2(doc, 'Add facility form fields');
   bullet(doc, 'Name, address, phone, beds, state, ZIP, CCN (CMS Certification Number — required for PBJ filing).');
@@ -703,15 +818,17 @@ function buildInstructionsPdf() {
   bullet(doc, '"Activate SMS" — provisions a local-area-code SMS number for this facility (requires 10DLC brand registration first).');
   bullet(doc, '"📱 Kiosk URL" — copies the per-building kiosk URL to clipboard for tablet setup.');
 
-  // ── 18. ROSTER ─────────────────────────────────────────────────────────
-  h1(doc, '18. Roster — access levels, badges, PINs, IDs');
+  // ── 21. ROSTER ─────────────────────────────────────────────────────────
+  h1(doc, '21. Roster — access levels, badges, PINs, IDs');
   body(doc, 'Per-employee row actions for everything an admin needs to manage one person.');
   h2(doc, 'Access pill (color-coded by current level)');
   bullet(doc, 'Grey "Employee" — sees own schedule + open shifts only.');
   bullet(doc, 'Blue "Admin" — full Building Admin, sees hourly rates / OT / cost / PPD financials.');
+  bullet(doc, 'Purple "HR Admin" — same as Admin, but punch corrections route through admin approval.');
   bullet(doc, 'Amber "Scheduler" — admin without financial visibility.');
-  bullet(doc, 'Click the pill → modal with three radio cards. Promoting auto-creates an account + sends invite email. Demoting removes the linked admin account but preserves the employee record.');
-  bullet(doc, 'Cannot change your own access (would let you lock yourself out). Cannot demote the only admin of a building.');
+  bullet(doc, 'Click the pill → modal with four radio cards (Employee, Full Admin, HR Admin, Scheduler). Promoting auto-creates an account + sends invite email. Demoting removes the linked admin account but preserves the employee record.');
+  bullet(doc, 'Only Admin / Super Admin can assign HR Admin (a Scheduler-tier admin cannot grant an access level higher than their own).');
+  bullet(doc, 'Cannot change your own access (would let you lock yourself out). Cannot demote the only Full Admin of a building.');
   h2(doc, 'Other row buttons');
   bullet(doc, 'Message — opens the in-app DM thread with this person.');
   bullet(doc, 'IDs — set badge ID (for SmartLinx), PBJ job-code override, DOB, hire date.');
@@ -720,15 +837,40 @@ function buildInstructionsPdf() {
   h2(doc, 'Discipline notes');
   bullet(doc, 'Each employee row has a Discipline dropdown. Notes carry over for inactive employees: re-adding the same name + DOB pulls the old card back, write-ups intact.');
 
-  // ── 19. ONBOARDING → ROSTER PUSH ───────────────────────────────────────
-  h1(doc, '19. Onboarding → Roster push');
+  // ── 22. ONBOARDING → ROSTER PUSH ───────────────────────────────────────
+  h1(doc, '22. Onboarding → Roster push');
   body(doc, 'Promote a finished onboardee directly to the active staff roster.');
   bullet(doc, 'HR → Doc Review → green "+ Push to Roster" button on each pending row.');
   bullet(doc, 'Confirms, prompts for hourly rate if missing, then maps onboarding fields → employees row (name, role, email, phone, DOB, hire date, hourly rate).');
   bullet(doc, 'Original HR record is marked status:active and linked back via onboardingHrId.');
 
-  // ── 20. SECURITY + HIPAA ───────────────────────────────────────────────
-  h1(doc, '20. Security and HIPAA features');
+  // ── 23. BACKUPS + RESTORE ──────────────────────────────────────────────
+  h1(doc, '23. Backups + point-in-time restore (Super Admin)');
+  body(doc, 'Every save writes an encrypted snapshot next to the live data file. Super Admin → Backups in the SA sidebar lists every snapshot with one-click restore.');
+
+  h2(doc, 'Retention');
+  bullet(doc, 'Every save kept for 24 hours.');
+  bullet(doc, 'One snapshot per hour for the last 30 days.');
+  bullet(doc, 'One snapshot per day for the last 365 days.');
+  bullet(doc, 'Older than 365d → pruned automatically. Throttled to one snapshot per 30 seconds.');
+
+  h2(doc, 'Restore flow');
+  bullet(doc, 'Super Admin → Backups → "Restore…" on any row.');
+  bullet(doc, 'Confirmation dialog explains the action replaces ALL current data.');
+  bullet(doc, 'Before swapping, the system writes a "prerestore" snapshot of the current state — a bad restore is itself reversible.');
+  bullet(doc, 'Page reloads after success. Tamper-evident audit chain entry: BACKUP_SNAPSHOT_RESTORED.');
+
+  h2(doc, 'Postgres mode');
+  bullet(doc, 'When PG_CONN is set, file snapshots are skipped — Azure Database PITR (35-day window) is the system of record.');
+  bullet(doc, 'The Backups page renders a notice instead of the snapshot list.');
+
+  h2(doc, 'Endpoints (SA only)');
+  code(doc, 'GET    /api/admin/snapshots                  list available snapshots');
+  code(doc, 'POST   /api/admin/snapshots                  force a snapshot now');
+  code(doc, 'POST   /api/admin/snapshots/restore          { filename }');
+
+  // ── 24. SECURITY + HIPAA ───────────────────────────────────────────────
+  h1(doc, '24. Security and HIPAA features');
   body(doc, 'A summary of the HIPAA §164.312 (technical safeguards) controls in place. For the full self-attested posture, hit /api/healthz/deep at any time.');
 
   h2(doc, 'Authentication and access');
@@ -762,25 +904,32 @@ function buildInstructionsPdf() {
   bullet(doc, 'Self-role-escalation explicitly blocked (audit logged as blocked_self_role_escalation).');
 
   h2(doc, 'Access levels');
-  bullet(doc, 'Full Admin — sees hourly rates, PPD cost columns, OT cost panel.');
-  bullet(doc, 'Scheduler Access — schedule-only. Hourly rate field, Cost/Day, Total Daily Cost, and OT panel are all hidden. Toggle from Manage Admins or set on invite.');
+  bullet(doc, 'Full Admin — sees hourly rates, PPD cost columns, OT cost panel. Approves HR-Admin punch corrections.');
+  bullet(doc, 'HR Admin — same surface as Full Admin EXCEPT punch corrections require admin sign-off (see section 13). Approving admins are notified; on approval, regional admins are also notified.');
+  bullet(doc, 'Scheduler Access — schedule-only. Hourly rate field, Cost/Day, Total Daily Cost, and OT panel are all hidden.');
+  bullet(doc, 'All three privileged tiers are subject to the same TOTP, idle-timeout, and audit requirements.');
 
-  // ── 12. GLOSSARY ───────────────────────────────────────────────────────
-  h1(doc, '12. Glossary');
+  // ── 25. GLOSSARY ───────────────────────────────────────────────────────
+  h1(doc, '25. Glossary');
   const glossary = [
     ['BAA',          'Business Associate Agreement. Legal contract required between covered entities and any subprocessor that handles PHI.'],
     ['Census',       'Number of occupied resident beds on a given day.'],
     ['CMS',          'Centers for Medicare & Medicaid Services. Sets the staffing rating thresholds.'],
     ['Direct-care PPD', 'Hours of NM + RN + LPN + CNA + CMA divided by census.'],
     ['HIPAA',        'Health Insurance Portability and Accountability Act.'],
+    ['HR Admin',     'Privileged role with the same access surface as Full Admin EXCEPT that punch corrections require admin sign-off before they apply.'],
     ['PBJ',          'Payroll-Based Journal. CMS\'s quarterly staffing data submission.'],
     ['PCC',          'PointClickCare — the EHR system we integrate with.'],
     ['PHI',          'Protected Health Information.'],
+    ['PITR',         'Point-in-Time Restore. Roll the data store back to a specific moment.'],
     ['PPD',          'Per Patient Day — staffing hours divided by census.'],
     ['RBAC',         'Role-Based Access Control.'],
+    ['Resident-day', 'One resident occupying one bed for one day. Used as the denominator for CMS quality rates (per 1,000 resident-days).'],
     ['RLS',          'Row-Level Security (Postgres).'],
     ['SA',           'Super Admin (platform-wide privileges).'],
+    ['Snapshot',     'Encrypted point-in-time copy of the entire data file written next to DATA_FILE on every save.'],
     ['TOTP',         'Time-based One-Time Password (RFC 6238). 6-digit code from your authenticator app.'],
+    ['UTI',          'Urinary Tract Infection — one of the CMS-tracked clinical quality metrics.'],
   ];
   for (const [term, def] of glossary) {
     doc.font('Helvetica-Bold').fontSize(10).fillColor(BRAND_DARK);
