@@ -654,13 +654,21 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
         <div class="form-group"><label>Phone</label><input type="tel" id="b-phone" placeholder="555-0100"></div>
         <div class="form-group"><label>Bed Count</label><input type="number" id="b-beds" placeholder="120" min="1"></div>
       </div>
-      <div class="form-group"><label>State <span style="font-size:11px;color:var(--g600);font-weight:400">(used to auto-assign onboarding package)</span></label>
-        <select id="b-state" style="width:100%;padding:8px 10px;border:1.5px solid var(--g200);border-radius:8px;font-size:13px;font-family:inherit">
-          <option value="">— Select state —</option>
-          <option value="TX">Texas (TX)</option>
-          <option value="OK">Oklahoma (OK)</option>
-          <option value="OTHER">Other</option>
-        </select>
+      <div class="grid-2">
+        <div class="form-group"><label>State <span style="font-size:11px;color:var(--g600);font-weight:400">(onboarding package + PBJ)</span></label>
+          <select id="b-state" style="width:100%;padding:8px 10px;border:1.5px solid var(--g200);border-radius:8px;font-size:13px;font-family:inherit">
+            <option value="">— Select state —</option>
+            <option value="TX">Texas (TX)</option>
+            <option value="OK">Oklahoma (OK)</option>
+            <option value="IA">Iowa (IA)</option>
+            <option value="AL">Alabama (AL)</option>
+            <option value="OTHER">Other</option>
+          </select>
+        </div>
+        <div class="form-group"><label>ZIP Code</label><input type="text" id="b-zip" placeholder="74012" maxlength="10"></div>
+      </div>
+      <div class="form-group"><label>CCN <span style="font-size:11px;color:var(--g600);font-weight:400">(CMS Certification Number — required for PBJ submission)</span></label>
+        <input type="text" id="b-ccn" placeholder="6-digit federal facility ID" maxlength="6">
       </div>
       <div class="section-label">Primary Admin Account</div>
       <div class="grid-2">
@@ -2463,6 +2471,7 @@ const App = {
         ${backBtn}
         <button class="btn btn-ghost btn-sm" onclick="App.openAuditLog()" style="display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg> Audit</button>
         <button class="btn btn-ghost btn-sm" onclick="App.openRoster()" style="display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg> Roster</button>
+        <button class="btn btn-ghost btn-sm" onclick="App.openMassSwapModal()" style="display:flex;align-items:center;gap:5px" title="Mass-reassign one employee's shifts to another (vacation coverage)"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg> Mass Swap</button>
         <button class="btn btn-secondary btn-sm" onclick="App.openAlertModal()" style="display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg> Alert</button>
         <button class="btn btn-primary btn-sm" onclick="App.openModal('modal-add-emp')">+ Add Employee</button>`;
     }
@@ -3040,10 +3049,121 @@ const App = {
         ${this._renderBuildingSmsStatus(b)}
         <div class="building-actions">
           <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();App.enterBuilding('${b.id}')">Enter Dashboard →</button>
+          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.editBuilding('${b.id}')" title="Edit facility details — CCN, geofence, address, etc.">⚙ Edit</button>
           <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.showKioskUrl('${b.id}')" title="Tablet kiosk URL — opens on any tablet at the nurse station for employees to clock in/out by PIN">📱 Kiosk URL</button>
-          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.openManageAdmins(); App.S._adminsForBuildingId='${b.id}'" title="Manage admins for this building">Admins</button>
+          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.openManageAdmins('${b.id}')" title="Manage admins for this building">Admins</button>
         </div>
       </div>`;
+  },
+
+  // ── Edit existing building — pulls every operational field admin needs ──
+  editBuilding(buildingId) {
+    const b = this.S.buildings.find(x => x.id === buildingId);
+    if (!b) return;
+    const states = ['TX','OK','IA','AL','OTHER'];
+    const div = document.createElement('div');
+    div.id = 'modal-edit-bld';
+    div.className = 'modal-overlay open';
+    div.innerHTML = `<div class="modal" style="max-width:560px;max-height:90vh;display:flex;flex-direction:column">
+      <div class="modal-header" style="flex-shrink:0">
+        <span class="modal-title">⚙ Edit ${sanitize(b.name)}</span>
+        <button class="modal-close" onclick="document.getElementById('modal-edit-bld').remove()">✕</button>
+      </div>
+      <div class="modal-body" style="overflow-y:auto;flex:1">
+        <div class="form-group"><label>Facility Name</label><input type="text" id="ebld-name" value="${sanitize(b.name||'')}" maxlength="120"></div>
+        <div class="form-group"><label>Address</label><input type="text" id="ebld-addr" value="${sanitize(b.address||'')}" maxlength="200"></div>
+        <div class="grid-2">
+          <div class="form-group"><label>Phone</label><input type="tel" id="ebld-phone" value="${sanitize(b.phone||'')}"></div>
+          <div class="form-group"><label>Beds</label><input type="number" id="ebld-beds" value="${b.beds||''}" min="1"></div>
+        </div>
+        <div class="grid-2">
+          <div class="form-group"><label>State</label>
+            <select id="ebld-state">
+              <option value="">— Select —</option>
+              ${states.map(s => `<option value="${s}"${(b.stateCode||b.state)===s?' selected':''}>${s}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group"><label>ZIP</label><input type="text" id="ebld-zip" value="${sanitize(b.zip||'')}" maxlength="10"></div>
+        </div>
+        <div class="form-group"><label>CCN <span style="font-size:11px;color:var(--g600);font-weight:400">(6-digit CMS Certification Number — required for PBJ filing)</span></label>
+          <input type="text" id="ebld-ccn" value="${sanitize(b.ccn||'')}" maxlength="6" placeholder="e.g. 455123">
+        </div>
+
+        <div class="section-label">Mobile Punch Geofence</div>
+        <div class="grid-2">
+          <div class="form-group"><label>Latitude</label><input type="number" id="ebld-lat" value="${b.lat ?? ''}" step="0.000001" placeholder="36.0526"></div>
+          <div class="form-group"><label>Longitude</label><input type="number" id="ebld-lng" value="${b.lng ?? ''}" step="0.000001" placeholder="-95.7891"></div>
+        </div>
+        <div class="form-group"><label>Geofence radius (meters) <span style="font-size:11px;color:var(--g600);font-weight:400">(default 200m)</span></label>
+          <input type="number" id="ebld-fence" value="${b.geofenceRadiusM||200}" min="20" max="5000">
+        </div>
+        <div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:6px;padding:10px 12px;font-size:11px;color:var(--g700);margin-bottom:14px">
+          Mobile clock-in / clock-out checks the user's GPS coords against this lat/lng + radius.
+          Without lat/lng set, mobile punches are accepted regardless of location.
+          <br><br>
+          <button class="btn btn-secondary btn-sm" type="button" onclick="App.geocodeBuilding('${b.id}')">📍 Geocode from address</button>
+          <span style="font-size:11px;color:var(--g500);margin-left:6px">Auto-fill from the address above</span>
+        </div>
+      </div>
+      <div class="modal-footer" style="flex-shrink:0">
+        <button class="btn btn-secondary" onclick="document.getElementById('modal-edit-bld').remove()">Cancel</button>
+        <button class="btn btn-primary" onclick="App.saveEditedBuilding('${b.id}')">Save</button>
+      </div>
+    </div>`;
+    document.body.appendChild(div);
+  },
+
+  async saveEditedBuilding(buildingId) {
+    const b = this.S.buildings.find(x => x.id === buildingId);
+    if (!b) return;
+    const get = id => document.getElementById(id)?.value.trim() || '';
+    const ccn = get('ebld-ccn');
+    if (ccn && !/^\d{6}$/.test(ccn)) { this.showToast('CCN must be 6 digits','warn'); return; }
+    const lat = parseFloat(get('ebld-lat')); const lng = parseFloat(get('ebld-lng'));
+    const fence = parseInt(get('ebld-fence'),10) || 200;
+    Object.assign(b, {
+      name:    get('ebld-name') || b.name,
+      address: get('ebld-addr'),
+      phone:   get('ebld-phone'),
+      beds:    parseInt(get('ebld-beds'),10) || b.beds || 0,
+      state:   get('ebld-state') || b.state,
+      stateCode: get('ebld-state') || b.stateCode,
+      zip:     get('ebld-zip'),
+      ccn,
+      geofenceRadiusM: fence,
+    });
+    if (Number.isFinite(lat)) b.lat = lat; else delete b.lat;
+    if (Number.isFinite(lng)) b.lng = lng; else delete b.lng;
+    this.persistData();
+    Audit.log('BUILDING_EDITED', `Edited ${sanitize(b.name)}`, this.S.user?.id, 'medium');
+    document.getElementById('modal-edit-bld')?.remove();
+    this.showToast(`${b.name} updated`);
+    this.render();
+  },
+
+  // Geocode a building's address → lat/lng. Hits OpenStreetMap Nominatim
+  // (free, no key) for now; swap to Azure Maps when AZURE_MAPS_KEY is added.
+  async geocodeBuilding(buildingId) {
+    const b = this.S.buildings.find(x => x.id === buildingId);
+    if (!b) return;
+    const addr = document.getElementById('ebld-addr')?.value.trim() || b.address;
+    const zip  = document.getElementById('ebld-zip')?.value.trim()  || b.zip;
+    const state= document.getElementById('ebld-state')?.value.trim()|| b.state;
+    if (!addr) { this.showToast('Enter address first','warn'); return; }
+    const q = encodeURIComponent([addr, zip, state, 'USA'].filter(Boolean).join(', '));
+    this.showToast('Looking up coordinates…');
+    try {
+      const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${q}`, {
+        headers: { 'User-Agent': 'ManageMyStaffing/1.0' },
+      });
+      if (!r.ok) { this.showToast('Geocode lookup failed','warn'); return; }
+      const arr = await r.json();
+      if (!arr.length) { this.showToast('Address not found — enter lat/lng manually','warn'); return; }
+      const { lat, lon } = arr[0];
+      const latEl = document.getElementById('ebld-lat'); if (latEl) latEl.value = parseFloat(lat).toFixed(6);
+      const lngEl = document.getElementById('ebld-lng'); if (lngEl) lngEl.value = parseFloat(lon).toFixed(6);
+      this.showToast(`Coords filled: ${parseFloat(lat).toFixed(4)}, ${parseFloat(lon).toFixed(4)}`);
+    } catch(e) { this.showToast('Geocode error — check internet','warn'); }
   },
 
   // Per-building SMS number widget on the SA building card. Shows current
@@ -9780,6 +9900,13 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
           ${emp.pinHash?'Reset PIN':'Set PIN'}
        </button>` : '';
+      const codesBtn = isActive ? `<button class="btn btn-ghost btn-sm"
+        style="color:var(--g600);border:1.5px solid var(--g200)"
+        title="Set badge ID for SmartLinx and override PBJ job code"
+        onclick="App.editEmpCodes('${emp.id}')">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M7 14h2M7 18h2"/></svg>
+          IDs
+       </button>` : '';
       const actionBtn = isActive
         ? `<button class="btn btn-ghost btn-sm" style="color:var(--red);border:1.5px solid var(--g200)" onclick="App.showInactivateForm('${emp.id}')">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> Inactivate
@@ -9806,7 +9933,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         <td>${sanitize(emp.phone||'—')}</td>
         <td><span class="${isActive?'tag-active':'tag-inactive'}">${isActive?'Active':'Inactive'}</span></td>
         <td style="text-align:right;white-space:nowrap">
-          ${pinBtn ? pinBtn + ' ' : ''}${actionBtn}
+          ${codesBtn ? codesBtn + ' ' : ''}${pinBtn ? pinBtn + ' ' : ''}${actionBtn}
         </td>
       </tr>`;
     };
@@ -10063,6 +10190,178 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       this.showToast(`PIN set for ${emp.name}`);
       this.renderMain();
     } catch(e) { this.showToast('Network error','warn'); }
+  },
+
+  // ── MASS SHIFT SWAP — vacation / leave coverage ────────────────────────
+  // Admin reassigns all of one employee's scheduled shifts in a date range
+  // to a different employee. Skips shifts where the target already has a
+  // shift that day (would conflict). Same-group only — can't reassign a
+  // CNA shift to a Cook.
+  openMassSwapModal() {
+    const u = this.S.user;
+    const bId = this.S.activeBuildingId || u.buildingId || 'b1';
+    const emps = this.S.employees.filter(e => e.buildingId === bId && !e.inactive)
+      .sort((a,b) => a.name.localeCompare(b.name));
+    if (emps.length < 2) { this.showToast('Need at least 2 active employees','warn'); return; }
+    const today = TODAY;
+    const twoWeeksOut = new Date(); twoWeeksOut.setDate(twoWeeksOut.getDate() + 14);
+    const defaultEnd = twoWeeksOut.toISOString().slice(0,10);
+    const opts = emps.map(e => `<option value="${e.id}">${sanitize(e.name)} · ${sanitize(e.group)}</option>`).join('');
+    const div = document.createElement('div');
+    div.id = 'modal-mass-swap';
+    div.className = 'modal-overlay open';
+    div.innerHTML = `<div class="modal" style="max-width:520px">
+      <div class="modal-header">
+        <span class="modal-title">↔ Mass Shift Swap</span>
+        <button class="modal-close" onclick="document.getElementById('modal-mass-swap').remove()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--g700);margin-bottom:18px">
+          Move every shift assigned to <strong>From</strong> within the date range to <strong>To</strong>. Same staff group only. Skips days where the target already has a shift.
+        </div>
+        <div class="form-group"><label>From employee</label><select id="ms-from">${opts}</select></div>
+        <div class="form-group"><label>To employee</label><select id="ms-to">${opts}</select></div>
+        <div class="grid-2">
+          <div class="form-group"><label>From date</label><input type="date" id="ms-start" value="${today}"></div>
+          <div class="form-group"><label>To date</label><input type="date" id="ms-end" value="${defaultEnd}"></div>
+        </div>
+        <div id="ms-preview" style="margin-top:12px"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="document.getElementById('modal-mass-swap').remove()">Cancel</button>
+        <button class="btn btn-secondary" onclick="App.previewMassSwap()">Preview</button>
+        <button class="btn btn-primary" onclick="App.executeMassSwap()">Execute Swap</button>
+      </div>
+    </div>`;
+    document.body.appendChild(div);
+  },
+
+  _massSwapMatches() {
+    const fromId = document.getElementById('ms-from')?.value;
+    const toId   = document.getElementById('ms-to')?.value;
+    const start  = document.getElementById('ms-start')?.value;
+    const end    = document.getElementById('ms-end')?.value;
+    const from = this.S.employees.find(e => e.id === fromId);
+    const to   = this.S.employees.find(e => e.id === toId);
+    if (!from || !to || !start || !end) return null;
+    if (from.id === to.id) return { error: 'From and To must be different employees' };
+    if (from.group !== to.group) return { error: `Same staff group only. ${sanitize(from.name)} is ${sanitize(from.group)}, ${sanitize(to.name)} is ${sanitize(to.group)}.` };
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
+    const targetShifts = this.S.shifts.filter(s =>
+      s.buildingId === bId && s.employeeId === from.id && s.status === 'scheduled' &&
+      s.date >= start && s.date <= end);
+    const toExisting = new Set(this.S.shifts.filter(s =>
+      s.buildingId === bId && s.employeeId === to.id && s.status === 'scheduled' &&
+      s.date >= start && s.date <= end).map(s => s.date));
+    const movable = targetShifts.filter(s => !toExisting.has(s.date));
+    const conflicts = targetShifts.filter(s => toExisting.has(s.date));
+    return { from, to, movable, conflicts, targetShifts };
+  },
+
+  previewMassSwap() {
+    const m = this._massSwapMatches();
+    if (!m) { this.showToast('Pick employees + date range','warn'); return; }
+    if (m.error) { document.getElementById('ms-preview').innerHTML = `<div style="background:var(--red-l);border:1px solid #FCA5A5;color:#991B1B;border-radius:8px;padding:10px 14px;font-size:12px">${m.error}</div>`; return; }
+    document.getElementById('ms-preview').innerHTML = `
+      <div style="background:var(--g50);border:1px solid var(--g200);border-radius:8px;padding:12px 14px;font-size:13px">
+        <div><strong>${m.targetShifts.length}</strong> shifts found in range for ${sanitize(m.from.name)}</div>
+        <div style="color:var(--green)"><strong>${m.movable.length}</strong> will move to ${sanitize(m.to.name)}</div>
+        <div style="color:#D97706"><strong>${m.conflicts.length}</strong> skipped (target already has a shift that day)</div>
+      </div>`;
+  },
+
+  executeMassSwap() {
+    const m = this._massSwapMatches();
+    if (!m) { this.showToast('Pick employees + date range','warn'); return; }
+    if (m.error) { this.showToast(m.error,'warn'); return; }
+    if (!m.movable.length) { this.showToast('Nothing to move','warn'); return; }
+    if (!confirm(`Move ${m.movable.length} shift${m.movable.length===1?'':'s'} from ${m.from.name} to ${m.to.name}?\n\n${m.conflicts.length} day${m.conflicts.length===1?'':'s'} will be skipped (target already has a shift).`)) return;
+    let moved = 0;
+    for (const s of m.movable) {
+      s.employeeId = m.to.id;
+      moved++;
+    }
+    this.persistData();
+    Audit.log('MASS_SHIFT_SWAP', `${moved} shifts moved from ${sanitize(m.from.name)} to ${sanitize(m.to.name)}`, this.S.user?.id, 'medium');
+    document.getElementById('modal-mass-swap')?.remove();
+    this.showToast(`${moved} shift${moved===1?'':'s'} reassigned to ${m.to.name}${m.conflicts.length?` · ${m.conflicts.length} skipped`:''}`);
+    this.renderMain();
+  },
+
+  // Edit the per-employee badge ID (used by SmartLinx + other physical
+  // clocks) and PBJ job-code override (rare — needed when the default
+  // group→PBJ mapping is wrong, e.g. RN serving as charge nurse).
+  editEmpCodes(empId) {
+    const emp = this.S.employees.find(e => e.id === empId);
+    if (!emp) return;
+    const PBJ_LIST = [
+      ['',  '— default for ' + (emp.group || '?') + ' —'],
+      ['5',  '5 — Registered Nurse (RN)'],
+      ['6',  '6 — Licensed Practical Nurse (LPN/LVN)'],
+      ['7',  '7 — Certified Nurse Aide (CNA)'],
+      ['8',  '8 — Nurse Aide in Training (NAT)'],
+      ['9',  '9 — Medication Aide (CMA/MA)'],
+      ['10', '10 — Nurse Administrator'],
+      ['11', '11 — Director of Nursing (DON)'],
+      ['12', '12 — Assistant Director of Nursing (ADON)'],
+      ['26', '26 — Cook (Dietary)'],
+      ['27', '27 — Other Dietary Worker'],
+    ];
+    const pbjOpts = PBJ_LIST.map(([v,l]) => `<option value="${v}"${(emp.pbjCode||'')===v?' selected':''}>${l}</option>`).join('');
+    const div = document.createElement('div');
+    div.id = 'modal-emp-codes';
+    div.className = 'modal-overlay open';
+    div.innerHTML = `<div class="modal" style="max-width:440px">
+      <div class="modal-header">
+        <span class="modal-title">IDs &amp; Codes — ${sanitize(emp.name)}</span>
+        <button class="modal-close" onclick="document.getElementById('modal-emp-codes').remove()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group"><label>Badge ID <span style="font-size:11px;color:var(--g600);font-weight:400">(printed on the physical badge — used by SmartLinx)</span></label>
+          <input type="text" id="ec-badge" value="${sanitize(emp.badgeId||'')}" placeholder="e.g. 04823" maxlength="32">
+        </div>
+        <div class="form-group"><label>Date of Birth</label>
+          <input type="date" id="ec-dob" value="${sanitize(emp.dob||'')}">
+        </div>
+        <div class="form-group"><label>Hire Date</label>
+          <input type="date" id="ec-hire" value="${sanitize(emp.hireDate||'')}">
+        </div>
+        <div class="form-group"><label>PBJ Job Code Override <span style="font-size:11px;color:var(--g600);font-weight:400">(only set if default for ${sanitize(emp.group||'?')} is wrong for this person)</span></label>
+          <select id="ec-pbj">${pbjOpts}</select>
+        </div>
+        <div style="background:var(--g50);border:1px solid var(--g200);border-radius:6px;padding:10px 12px;font-size:11px;color:var(--g700)">
+          The badge ID is matched when SmartLinx posts a punch — leave blank if this employee doesn't use the physical clocks. PBJ override is only needed for unusual role assignments; default for "${sanitize(emp.group||'?')}" is used otherwise.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="document.getElementById('modal-emp-codes').remove()">Cancel</button>
+        <button class="btn btn-primary" onclick="App.saveEmpCodes('${emp.id}')">Save</button>
+      </div>
+    </div>`;
+    document.body.appendChild(div);
+  },
+
+  saveEmpCodes(empId) {
+    const emp = this.S.employees.find(e => e.id === empId);
+    if (!emp) return;
+    const badge = document.getElementById('ec-badge')?.value.trim();
+    const dob   = document.getElementById('ec-dob')?.value.trim();
+    const hire  = document.getElementById('ec-hire')?.value.trim();
+    const pbj   = document.getElementById('ec-pbj')?.value.trim();
+    // Reject duplicate badgeId within the same building (SmartLinx needs unique).
+    if (badge) {
+      const dup = this.S.employees.find(e => e.id !== emp.id && e.buildingId === emp.buildingId && e.badgeId === badge);
+      if (dup) { this.showToast(`Badge ID already used by ${dup.name}`,'warn'); return; }
+    }
+    if (badge) emp.badgeId = badge; else delete emp.badgeId;
+    if (dob)   emp.dob = dob;   else delete emp.dob;
+    if (hire)  emp.hireDate = hire;
+    if (pbj)   emp.pbjCode = pbj; else delete emp.pbjCode;
+    this.persistData();
+    Audit.log('EMP_CODES_UPDATED', `${sanitize(emp.name)} codes/IDs updated`, this.S.user?.id, 'low');
+    document.getElementById('modal-emp-codes')?.remove();
+    this.showToast(`${emp.name} updated`);
+    this.renderMain();
   },
 
   // Open the kiosk URL for the current building. SA can also pull it for any
@@ -11281,11 +11580,30 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         );
       });
     } catch(e) { gps = null; }
+
+    // Optional selfie verification — opt-in per facility (building.requireSelfie).
+    // For v1 we just attempt capture; if camera denied or unavailable, we fall
+    // back to "no selfie" and the server records the punch without a photo.
+    let selfie = null;
+    try {
+      const u = this.S.user;
+      const b = (this.S.buildings || []).find(x => x.id === u.buildingId);
+      if (b?.requireSelfie) {
+        selfie = await this._captureSelfie();
+        if (!selfie) {
+          this.showToast('Selfie required by your facility — please allow camera and try again','warn');
+          if (btn) btn.disabled = false;
+          this.renderMain();
+          return;
+        }
+      }
+    } catch(e) { /* selfie is opt-in; failure isn't fatal */ }
+
     try {
       const r = await fetch('/api/timeclock/punch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, timestamp: new Date().toISOString(), gps }),
+        body: JSON.stringify({ action, timestamp: new Date().toISOString(), gps, selfie }),
       });
       const data = await r.json();
       if (!r.ok) {
@@ -11306,6 +11624,51 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
   employeeClockIn()  { return this._employeePunchAction('in'); },
   employeeClockOut() { return this._employeePunchAction('out'); },
+
+  // Capture a small JPEG selfie via the device camera. Used when the
+  // facility has building.requireSelfie = true. Returns base64 data URL or
+  // null if the user denied camera or it's not available. Auto-stops the
+  // camera stream when done so it doesn't keep recording.
+  async _captureSelfie() {
+    if (!navigator.mediaDevices?.getUserMedia) return null;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false,
+      });
+      // Mount a quick capture overlay
+      const overlay = document.createElement('div');
+      overlay.id = 'selfie-overlay';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:10000';
+      overlay.innerHTML = `
+        <video autoplay playsinline muted style="max-width:90vw;max-height:60vh;border-radius:12px;border:3px solid #fff"></video>
+        <div style="display:flex;gap:14px;margin-top:24px">
+          <button id="selfie-cancel" style="padding:14px 28px;font-size:16px;font-weight:700;border-radius:10px;border:1px solid #555;background:#222;color:#fff;cursor:pointer">Cancel</button>
+          <button id="selfie-snap" style="padding:14px 32px;font-size:16px;font-weight:700;border-radius:10px;border:none;background:var(--green);color:#fff;cursor:pointer">📷 Take Photo</button>
+        </div>
+        <div style="color:#aaa;margin-top:16px;font-size:12px">Photo is stored on your punch record for HR review only.</div>`;
+      document.body.appendChild(overlay);
+      const video = overlay.querySelector('video');
+      video.srcObject = stream;
+      const cleanup = () => {
+        stream.getTracks().forEach(t => t.stop());
+        overlay.remove();
+      };
+      return await new Promise(resolve => {
+        overlay.querySelector('#selfie-snap').onclick = () => {
+          const c = document.createElement('canvas');
+          c.width  = video.videoWidth || 640;
+          c.height = video.videoHeight || 480;
+          const ctx = c.getContext('2d');
+          ctx.drawImage(video, 0, 0, c.width, c.height);
+          const dataUrl = c.toDataURL('image/jpeg', 0.6);
+          cleanup();
+          resolve(dataUrl);
+        };
+        overlay.querySelector('#selfie-cancel').onclick = () => { cleanup(); resolve(null); };
+      });
+    } catch(e) { return null; }
+  },
 
   empSelectDay(dateStr) {
     // Show a simple shift detail for the employee's own shift on that day
@@ -11921,9 +12284,14 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
 
   // ── ADMIN MANAGEMENT ─────────────────────────────────────────
-  openManageAdmins() {
+  openManageAdmins(targetBuildingId) {
     const u = this.S.user;
-    const bId = u.buildingId || 'b1';
+    // SA opens this from the platform overview's building card → targetBuildingId
+    // is passed in. Building admins opening from the avatar dropdown have no
+    // explicit target → use their own buildingId. Sticky preference also
+    // honored for backwards compat.
+    const bId = targetBuildingId || this.S._adminsForBuildingId || u.buildingId || 'b1';
+    this.S._adminsForBuildingId = bId;     // remember for any inline subactions
     const building = this.S.buildings.find(b=>b.id===bId);
     const admins = this.S.accounts.filter(a=>a.buildingId===bId&&a.role==='admin');
     let rows = admins.map(a=>`
@@ -12487,13 +12855,18 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const adminEmail=sanitizeInput(document.getElementById('b-admin-email').value.trim().toLowerCase(), 254);
     const companyId=document.getElementById('b-company')?.value||'';
     const bState=document.getElementById('b-state')?.value||'';
+    const zip=sanitizeInput(document.getElementById('b-zip')?.value.trim()||'', 10);
+    const ccn=sanitizeInput(document.getElementById('b-ccn')?.value.trim()||'', 10);
     if(!name||!adminName||!adminEmail){this.showToast('Facility name and admin info are required','warn');return;}
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail)){this.showToast('Invalid admin email','warn');return;}
+    if(ccn && !/^\d{6}$/.test(ccn)){this.showToast('CCN must be 6 digits','warn');return;}
     const colors=['#2563EB','#7C3AED','#059669','#D97706','#DC2626','#DB2777','#0891B2'];
     const bId=`b${Date.now()}`;
     const building = {id:bId,name,address:addr,phone,beds:parseInt(beds)||0,color:colors[this.S.buildings.length%colors.length]};
     if (companyId) building.companyId = companyId;
-    if (bState) building.state = bState;
+    if (bState) { building.state = bState; building.stateCode = bState; }
+    if (zip) building.zip = zip;
+    if (ccn) building.ccn = ccn;
     this.S.buildings.push(building);
     this.S.accounts.push({id:`a${Date.now()}`,name:adminName,email:adminEmail,role:'admin',buildingId:bId});
     Audit.log('BUILDING_CREATED', `Created building ${sanitize(name)} admin ${sanitize(adminEmail)}`, this.S.user?.id, 'high');
@@ -12501,7 +12874,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.persistData();
     this.closeModal('modal-building');
     this.showToast(`${sanitize(name)} created — invite sent to ${sanitize(adminEmail)}`);
-    ['b-name','b-addr','b-phone','b-beds','b-admin-name','b-admin-email'].forEach(id=>document.getElementById(id).value='');
+    ['b-name','b-addr','b-phone','b-beds','b-admin-name','b-admin-email','b-zip','b-ccn'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
     document.getElementById('b-admin-pass').value=genTempPw();
     this.renderSAMain();
   },

@@ -2124,7 +2124,7 @@ function _applyPunch(data, emp, action, when, sourceMeta = {}) {
 app.post('/api/timeclock/punch', requireAuth, async (req, res) => {
   const data = await loadData();
   const me = req.user;
-  let { empId, action, timestamp, gps } = req.body || {};
+  let { empId, action, timestamp, gps, selfie } = req.body || {};
   // Default empId to caller for employees
   if (me.role === 'employee') empId = me.id;
   if (!empId) return res.status(400).json({ error: 'empId is required for non-employee callers' });
@@ -2160,6 +2160,12 @@ app.post('/api/timeclock/punch', requireAuth, async (req, res) => {
     source: me.role === 'employee' ? 'mobile' : 'admin',
     gps: gps ? { lat: gps.lat, lng: gps.lng, accuracyM: gps.accuracyM || null } : null,
   });
+  // Attach selfie (if provided) to the just-pushed event entry. Capped at
+  // ~256 KB per photo to bound storage; the frontend already JPEG-compresses.
+  if (result.ok && selfie && typeof selfie === 'string' && selfie.startsWith('data:image/') && selfie.length < 350_000) {
+    const ev = result.record.events?.[result.record.events.length - 1];
+    if (ev) ev.selfie = selfie;
+  }
   if (result.error) return res.status(400).json({ error: result.error });
   markDirty();
   auditLog('PUNCH_RECORDED', me, { empId, action, source: me.role === 'employee' ? 'mobile' : 'admin' });
