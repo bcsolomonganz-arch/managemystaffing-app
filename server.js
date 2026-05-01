@@ -4659,6 +4659,18 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
 
   const data = await loadData();
 
+  // Snapshot existing counts BEFORE any merge so the audit entry below
+  // captures the actual delta, not just the post-write totals. Without this
+  // we can't tell whether a save shrank a collection silently.
+  const _preCounts = {
+    buildings:        (data.buildings        || []).length,
+    employees:        (data.employees        || []).length,
+    shifts:           (data.shifts           || []).length,
+    accounts:         (data.accounts         || []).length,
+    schedulePatterns: (data.schedulePatterns || []).length,
+    hrTimeClock:      (data.hrTimeClock      || []).length,
+  };
+
   // ── Tripwire: refuse writes that would drop existing collections ─────────
   // If a client sends an array that is dramatically smaller than what we
   // already have, treat it as suspicious and reject unless the caller has
@@ -4873,15 +4885,108 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   dataCache = data;
   _bumpDataVersion();
   markDirty();
+  // Audit BEFORE / AFTER counts so we can forensically tell whether a save
+  // shrank a collection. Without the delta we have no record of who/what
+  // wiped data — exactly the gap that bit Tanya's Kirkland adds on 2026-04-30.
+  const _postCounts = {
+    buildings:        (data.buildings        || []).length,
+    employees:        (data.employees        || []).length,
+    shifts:           (data.shifts           || []).length,
+    accounts:         (data.accounts         || []).length,
+    schedulePatterns: (data.schedulePatterns || []).length,
+    hrTimeClock:      (data.hrTimeClock      || []).length,
+  };
+  const _delta = {};
+  for (const k of Object.keys(_postCounts)) {
+    _delta[k] = _postCounts[k] - (_preCounts[k] || 0);
+  }
   auditLog('DATA_UPDATE', req.user, {
-    counts: {
-      buildings: data.buildings?.length || 0,
-      employees: data.employees?.length || 0,
-      shifts:    data.shifts?.length    || 0,
-    },
+    before:      _preCounts,
+    after:       _postCounts,
+    delta:       _delta,
+    confirmWipe: confirmWipe,
+    payloadKeys: present,
   });
   res.setHeader('ETag', `"${_dataVersion}"`);
   res.json({ ok: true, version: _dataVersion });
+});
+
+// ── ADMIN AUDIT QUERY ────────────────────────────────────────────────────────
+// Lets a building admin query the audit_entries table for their own building's
+// recent activity. Built for forensic recovery — see the 2026-04-30 Kirkland
+// data-loss incident. Read-only; building-scoped (RLS-equivalent at app layer).
+//
+// Query params:
+//   since      — ISO timestamp lower bound (default: 7 days ago)
+//   actions    — comma-separated action names (default: all)
+//   limit      — max rows (default 200, cap 1000)
+//   buildingId — optional filter; defaults to caller's building scope
+app.get('/api/admin/audit', requireAuth, requireAdmin, async (req, res) => {
+  if (!_useDB) return res.status(503).json({ error: 'Audit query requires Postgres backend' });
+  try {
+    const dbg = require('./db/repo');
+    if (!dbg.isEnabled()) return res.status(503).json({ error: 'PG pool not initialized' });
+    // Scope: admin caller can only query their own building(s). SA can pass any.
+    const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds || [])].filter(Boolean));
+    const reqB = String(req.query.buildingId || '').trim();
+    if (req.user.role !== 'superadmin') {
+      if (reqB && !callerBIds.has(reqB)) return res.status(403).json({ error: 'Out of scope' });
+    }
+    const sinceISO = String(req.query.since || '').trim();
+    const since = sinceISO || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit || '200', 10) || 200));
+    const actionsCSV = String(req.query.actions || '').trim();
+    const actionList = actionsCSV ? actionsCSV.split(',').map(s => s.trim()).filter(Boolean) : null;
+
+    // Build WHERE clauses with parameterized queries (no SQL injection risk).
+    const params = [since];
+    let where = `ts >= $1`;
+    if (reqB) {
+      params.push(reqB);
+      where += ` AND building_id = $${params.length}`;
+    } else if (req.user.role !== 'superadmin' && callerBIds.size > 0) {
+      // Limit to caller's buildings (or rows that don't carry a building_id).
+      params.push([...callerBIds]);
+      where += ` AND (building_id = ANY($${params.length}::text[]) OR building_id IS NULL)`;
+    }
+    if (actionList && actionList.length) {
+      params.push(actionList);
+      where += ` AND action = ANY($${params.length}::text[])`;
+    }
+    params.push(limit);
+    const sql = `
+      SELECT ts, user_id, user_role, action, building_id, details
+      FROM audit_entries
+      WHERE ${where}
+      ORDER BY ts DESC
+      LIMIT $${params.length}
+    `;
+    // Reach into the pg pool via the repo's exported helpers
+    const { Pool } = require('pg');
+    const pool = require('./db/repo');
+    // Use the existing pool by calling a tiny exposed query function. If not
+    // exposed, do an ad-hoc connection from PG_CONN.
+    const pg = require('pg');
+    const connStr = process.env.PG_CONN;
+    if (!connStr) return res.status(503).json({ error: 'PG_CONN not set' });
+    const client = new pg.Client({ connectionString: connStr, ssl: { rejectUnauthorized: false } });
+    await client.connect();
+    try {
+      const r = await client.query(sql, params);
+      auditLog('ADMIN_AUDIT_QUERY', req.user, {
+        since, limit, buildingId: reqB || null, actions: actionList, rowCount: r.rows.length,
+      });
+      res.json({
+        rows: r.rows.map(x => ({
+          ts: x.ts, userId: x.user_id, role: x.user_role,
+          action: x.action, buildingId: x.building_id, details: x.details,
+        })),
+      });
+    } finally { await client.end(); }
+  } catch (e) {
+    logger.error('admin_audit_query_failed', { err: e.message });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── POST /api/invite ──────────────────────────────────────────────────────────
