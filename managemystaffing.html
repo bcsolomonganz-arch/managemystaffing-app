@@ -5954,6 +5954,113 @@ const App = {
   },
 
   // ── REMOVE SHIFTS — same 14-day picker, opposite action ─────────────────
+  // ── PER-SLOT REMOVE MODAL (✕ on an open shift) ───────────────────────────
+  // Three options:
+  //   1. Remove this single shift (just the date you clicked)
+  //   2. Remove this open slot from every future day (every date >= today
+  //      where there's an open shift of the same group/type/building)
+  //   3. Remove every open shift on this same weekday going forward (e.g.
+  //      "every Wednesday" — useful when the rotation has fewer days)
+  // Only touches `status='open'` rows — never deletes a shift someone has
+  // already been assigned to.
+  openOpenSlotRemoveModal(shiftId) {
+    const shift = this.S.shifts.find(s => s.id === shiftId);
+    if (!shift) { this.showToast('Shift not found', 'warn'); return; }
+    if (shift.status !== 'open') { this.showToast('Shift is no longer open', 'warn'); return; }
+    const dt = new Date(shift.date + 'T12:00:00');
+    const dowName = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][dt.getDay()];
+    const prettyDate = dt.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' });
+
+    // Pre-count what each option would remove so the buttons show the impact.
+    const futureCount = this.S.shifts.filter(s =>
+      s.status === 'open' &&
+      s.buildingId === shift.buildingId &&
+      s.group === shift.group &&
+      s.type === shift.type &&
+      s.date >= TODAY).length;
+    const sameWeekday = this.S.shifts.filter(s => {
+      if (s.status !== 'open' || s.buildingId !== shift.buildingId || s.group !== shift.group || s.type !== shift.type) return false;
+      if (s.date < TODAY) return false;
+      return new Date(s.date + 'T12:00:00').getDay() === dt.getDay();
+    }).length;
+
+    document.getElementById('modal-open-slot-remove')?.remove();
+    const div = document.createElement('div');
+    div.id = 'modal-open-slot-remove';
+    div.className = 'modal-overlay open';
+    div.innerHTML = `<div class="modal" style="max-width:520px">
+      <div class="modal-header">
+        <span class="modal-title">Remove Open Shift</span>
+        <button class="modal-close" onclick="document.getElementById('modal-open-slot-remove').remove()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="background:var(--g50);border:1px solid var(--g200);border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:var(--g700)">
+          <strong>${sanitize(shift.group)} · ${sanitize(shift.type)}</strong>
+          ${shift.start && shift.end ? ` · ${sanitize(shift.start)}–${sanitize(shift.end)}` : ''}
+          <br>
+          <span style="color:var(--g500)">${prettyDate} (${dowName})</span>
+        </div>
+
+        <div style="font-size:13px;color:var(--g700);margin-bottom:8px">Pick what to remove:</div>
+
+        <button onclick="App.confirmOpenSlotRemove('${shiftId}','one')" style="width:100%;text-align:left;background:#fff;border:1.5px solid var(--g200);border-radius:10px;padding:14px 16px;margin-bottom:8px;cursor:pointer" onmouseover="this.style.borderColor='#DC2626';this.style.background='#FEF2F2'" onmouseout="this.style.borderColor='var(--g200)';this.style.background='#fff'">
+          <div style="font-weight:700;color:var(--g900);font-size:14px">Remove just this shift</div>
+          <div style="font-size:12px;color:var(--g600);margin-top:3px">Removes only ${prettyDate}. Future dates and rotation are untouched.</div>
+        </button>
+
+        <button onclick="App.confirmOpenSlotRemove('${shiftId}','future')" style="width:100%;text-align:left;background:#fff;border:1.5px solid var(--g200);border-radius:10px;padding:14px 16px;margin-bottom:8px;cursor:pointer" onmouseover="this.style.borderColor='#DC2626';this.style.background='#FEF2F2'" onmouseout="this.style.borderColor='var(--g200)';this.style.background='#fff'">
+          <div style="font-weight:700;color:var(--g900);font-size:14px">Remove all future open ${sanitize(shift.type)} slots</div>
+          <div style="font-size:12px;color:var(--g600);margin-top:3px">Removes every open ${sanitize(shift.group)} · ${sanitize(shift.type)} slot from today onward — <strong>${futureCount} shift${futureCount===1?'':'s'}</strong>.</div>
+        </button>
+
+        <button onclick="App.confirmOpenSlotRemove('${shiftId}','weekday')" style="width:100%;text-align:left;background:#fff;border:1.5px solid var(--g200);border-radius:10px;padding:14px 16px;cursor:pointer" onmouseover="this.style.borderColor='#DC2626';this.style.background='#FEF2F2'" onmouseout="this.style.borderColor='var(--g200)';this.style.background='#fff'">
+          <div style="font-weight:700;color:var(--g900);font-size:14px">Remove from the rotation: every ${dowName}</div>
+          <div style="font-size:12px;color:var(--g600);margin-top:3px">Removes only the ${dowName} ${sanitize(shift.type)} slots going forward — <strong>${sameWeekday} shift${sameWeekday===1?'':'s'}</strong>. Other weekdays stay.</div>
+        </button>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="document.getElementById('modal-open-slot-remove').remove()">Cancel</button>
+      </div>
+    </div>`;
+    document.body.appendChild(div);
+  },
+
+  // Apply the removal chosen in openOpenSlotRemoveModal.
+  // mode: 'one' | 'future' | 'weekday'
+  confirmOpenSlotRemove(shiftId, mode) {
+    const seed = this.S.shifts.find(s => s.id === shiftId);
+    if (!seed) { this.showToast('Shift not found', 'warn'); return; }
+    const dow = new Date(seed.date + 'T12:00:00').getDay();
+    const before = this.S.shifts.length;
+    let kept;
+    if (mode === 'one') {
+      kept = this.S.shifts.filter(s => s.id !== shiftId);
+    } else if (mode === 'future') {
+      kept = this.S.shifts.filter(s => !(
+        s.status === 'open' &&
+        s.buildingId === seed.buildingId &&
+        s.group === seed.group &&
+        s.type === seed.type &&
+        s.date >= TODAY
+      ));
+    } else if (mode === 'weekday') {
+      kept = this.S.shifts.filter(s => {
+        if (s.status !== 'open' || s.buildingId !== seed.buildingId ||
+            s.group !== seed.group || s.type !== seed.type || s.date < TODAY) return true;
+        return new Date(s.date + 'T12:00:00').getDay() !== dow;
+      });
+    } else {
+      this.showToast('Unknown remove mode','warn'); return;
+    }
+    const removed = before - kept.length;
+    this.S.shifts = kept;
+    Audit.log('OPEN_SHIFT_REMOVED', `${mode}: removed ${removed} open ${seed.group} · ${seed.type} shift${removed===1?'':'s'}`, this.S.user?.id, 'medium');
+    this.persistData();
+    document.getElementById('modal-open-slot-remove')?.remove();
+    this.renderMain();
+    this.showToast(`${removed} open shift${removed===1?'':'s'} removed`);
+  },
+
   // Reuses the Add Shifts modal (same DOM) but flips the state to mode:'remove'
   // so _renderAddShiftsBody knows to swap the title + button. saveAddShifts
   // dispatches to saveRemoveShifts when mode === 'remove'.
@@ -12987,10 +13094,23 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
             </div>`;
           }
         });
-        // Empty slot placeholders
+        // Empty slot placeholders. Each placeholder picks up an existing
+        // 'open' shift row when one exists (so we can target a specific
+        // shift id for the remove flow); when the requirement exceeds
+        // existing open rows, we fall back to the date+group+type tuple
+        // for the legacy "first matching" pickers.
+        const openShiftRows = allSlots.filter(s => s.status === 'open');
         for (let i = 0; i < numEmpty; i++) {
+          const targetShift = openShiftRows[i];
           const opts = this.S.employees.filter(e=>e.group===g&&!e.inactive).map(e=>`<option value="${e.id}">${sanitize(e.name)}</option>`).join('');
-          cell += `<div style="border:2px dashed #FCA5A5;border-radius:8px;padding:8px 10px;margin-bottom:6px;background:#FFF5F5">
+          // Inline ✕ button opens the per-slot remove modal with three
+          // options: just-this-day / all-future / weekday-only.
+          const removeBtn = targetShift
+            ? `<button onclick="event.stopPropagation();App.openOpenSlotRemoveModal('${targetShift.id}')" title="Remove this open slot"
+                style="position:absolute;top:4px;right:4px;background:#fff;border:1px solid #FCA5A5;border-radius:50%;width:18px;height:18px;color:#DC2626;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;padding:0;font-size:12px">×</button>`
+            : '';
+          cell += `<div style="position:relative;border:2px dashed #FCA5A5;border-radius:8px;padding:8px 10px;margin-bottom:6px;background:#FFF5F5">
+            ${removeBtn}
             <div style="font-size:10px;font-weight:700;color:#DC2626;margin-bottom:4px">OPEN SLOT</div>
             <select class="assign-select" style="font-size:11px" onchange="App.assignShiftByDate('${date}','${g}','${sh.type}',this.value)">
               <option value="">Assign employee…</option>${opts}
