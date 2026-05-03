@@ -5913,6 +5913,7 @@ const App = {
     if (!st?.selectedDays?.length) { this.showToast('Select at least one day', 'warn'); return; }
     const { group: g, buildingId: bId, slots } = st;
     let { shiftType } = st;
+    this._pushUndo(`Added ${shiftType||'custom'} ${g} shifts`);
 
     // Handle custom shift type
     let shiftDef;
@@ -6031,6 +6032,10 @@ const App = {
     const seed = this.S.shifts.find(s => s.id === shiftId);
     if (!seed) { this.showToast('Shift not found', 'warn'); return; }
     const dow = new Date(seed.date + 'T12:00:00').getDay();
+    const undoLabel = mode === 'one' ? `Removed 1 shift (${seed.date})`
+                    : mode === 'future' ? `Removed all future ${seed.type} ${seed.group} shifts`
+                    : `Removed ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dow]} ${seed.type} ${seed.group} rotation`;
+    this._pushUndo(undoLabel);
     const before = this.S.shifts.length;
     let kept;
     if (mode === 'one') {
@@ -6115,6 +6120,8 @@ const App = {
       const cyclePos = ((diff % 14) + 14) % 14;
       if (st.selectedDays.includes(cyclePos)) toRemoveDates.add(ds);
     }
+
+    this._pushUndo(`Removed ${shiftType} ${g} shifts (${slotsPerDay}/day)`);
 
     // Pass 1: bucket open rows by date so we can pick exactly N to drop.
     const openByDate = new Map();   // date → array of shift ids
@@ -11316,6 +11323,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (m.error) { this.showToast(m.error,'warn'); return; }
     if (!m.movable.length) { this.showToast('Nothing to move','warn'); return; }
     if (!confirm(`Move ${m.movable.length} shift${m.movable.length===1?'':'s'} from ${m.from.name} to ${m.to.name}?\n\n${m.conflicts.length} day${m.conflicts.length===1?'':'s'} will be skipped (target already has a shift).`)) return;
+    this._pushUndo(`Mass swap: ${m.from.name} → ${m.to.name} (${m.movable.length} shifts)`);
     let moved = 0;
     for (const s of m.movable) {
       s.employeeId = m.to.id;
@@ -12196,6 +12204,13 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="2" y1="8" x2="14" y2="8"/></svg>
       Remove Shifts
     </button>`;
+    // Undo last calendar mutation. Hidden when the undo stack is empty
+    // so the toolbar isn't cluttered when there's nothing to undo.
+    const lastUndo = this._peekUndo?.();
+    const undoBtn = lastUndo ? `<button class="btn btn-secondary btn-sm" onclick="App.undoLastAction()" title="Undo: ${sanitize(lastUndo.label)}" style="display:flex;align-items:center;gap:6px;font-weight:600;color:var(--blue-d);border-color:var(--blue-m)">
+      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M3 13a8 8 0 1 0 2.84-6.93L3 9"/></svg>
+      Undo · ${sanitize(lastUndo.label)}
+    </button>` : '';
     const slotsBtn = `<button class="btn btn-secondary btn-sm" onclick="App.openShiftManagerModal()" style="display:flex;align-items:center;gap:6px;font-weight:600">
       <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="1.5"/><path d="M1 6h14M5 2v4M11 2v4M4 10h3M9 10h3"/></svg>
       Manage Shifts
@@ -12248,7 +12263,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     else calHtml = this.renderShiftView();
 
     document.getElementById('main').innerHTML = `${stats}
-      <div class="cal-toolbar">${viewTabs}${groupPill}${g?addShiftsBtn:''}${g?removeShiftsBtn:''}${filterTabs}</div>${calHtml}`;
+      <div class="cal-toolbar">${viewTabs}${groupPill}${g?addShiftsBtn:''}${g?removeShiftsBtn:''}${undoBtn}${filterTabs}</div>${calHtml}`;
   },
 
   // ── PPD CALCULATOR ──────────────────────────────────────────
@@ -13727,6 +13742,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (this.S.user?.role !== 'admin' && this.S.user?.role !== 'superadmin') { this.showToast('Unauthorized','warn'); return; }
     const emp = this.S.employees.find(e => e.id === empId);
     if (!emp) return;
+    this._pushUndo(`Assigned ${emp.name} to ${shiftType} ${date}`);
     const bId = this.S.user?.buildingId || 'b1';
     // Find an existing open shift for this date/group/type, or create one and assign it
     let shift = this.S.shifts.find(s => s.date === date && s.group === group && s.type === shiftType && s.status === 'open' && (s.buildingId === bId || !s.buildingId));
@@ -13754,8 +13770,9 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if(this.S.user?.role !== 'admin' && this.S.user?.role !== 'superadmin') { this.showToast('Unauthorized','warn'); return; }
     const shift=this.S.shifts.find(s=>s.id===shiftId);
     if(!shift) return;
-    shift.employeeId=empId; shift.status='scheduled';
     const emp=this.S.employees.find(e=>e.id===empId);
+    this._pushUndo(`Assigned ${emp?.name || 'employee'} to ${shift.type} ${shift.date}`);
+    shift.employeeId=empId; shift.status='scheduled';
     Audit.log('SHIFT_ASSIGNED', `Shift ${sanitize(shiftId)} assigned to ${sanitize(emp?.name||empId)}`, this.S.user?.id, 'low');
     this.persistData();
     this.showToast(`Assigned to ${sanitize(emp?.name||'')}`);
@@ -14254,6 +14271,33 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
 
   // ── DATA PERSISTENCE ─────────────────────────────────────
   // Saves all user-created data to localStorage. Called after
+  // ── UNDO STACK (calendar mutations) ─────────────────────────────────────
+  // Each entry snapshots the state BEFORE a destructive shift action. Stack
+  // is in-memory only (this.S._undo) so it doesn't persist across reloads —
+  // by design, undo is for "I just did that and want to take it back".
+  // Bounded to the last 20 actions to keep memory reasonable.
+  _undoStack() { return (this.S._undo = this.S._undo || []); },
+  _peekUndo()  { const s = this._undoStack(); return s.length ? s[s.length-1] : null; },
+  _pushUndo(label, snapshotKeys = ['shifts']) {
+    // Deep-copy only the keys touched by this kind of action so the
+    // snapshot doesn't blow up memory. Default = shifts only.
+    const snap = {};
+    for (const k of snapshotKeys) snap[k] = JSON.parse(JSON.stringify(this.S[k] || []));
+    this._undoStack().push({ label, at: Date.now(), keys: snapshotKeys, snap });
+    // Cap at 20 entries
+    while (this._undoStack().length > 20) this._undoStack().shift();
+  },
+  undoLastAction() {
+    const entry = this._undoStack().pop();
+    if (!entry) { this.showToast('Nothing to undo', 'warn'); return; }
+    for (const k of entry.keys) this.S[k] = entry.snap[k];
+    Audit.log('UNDO', `Reverted: ${entry.label}`, this.S.user?.id, 'medium');
+    this.persistData();
+    this.renderMain();
+    this.showToast(`Undone: ${entry.label}`);
+  },
+
+  // ── PERSIST DATA ────────────────────────────────────────────────────────
   // every mutation. Code updates never touch localStorage, so
   // facility data (employees, buildings, shifts) is never lost.
   persistData({ confirmWipe = false } = {}) {
