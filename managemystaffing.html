@@ -6091,17 +6091,23 @@ const App = {
   },
 
   // Removes shifts in the next 90 days that match the picked shift type AND
-  // the selected days within the 14-day cycle. ONLY removes shifts that are
-  // currently 'open' (not assigned to anyone yet) — we never delete a shift
-  // someone has already claimed, would be confusing.
+  // the selected days within the 14-day cycle. ONLY removes 'open' (unfilled)
+  // rows — never deletes a shift someone has already been scheduled for.
+  //
+  // CRITICAL: removes EXACTLY `st.slots` open rows per matching date — NOT
+  // every open slot on that date. If a Monday currently has 4 open Day CNA
+  // slots and the picker says "remove 1 slot Mondays", we go from 4→3, not
+  // 4→0. This is the inverse of saveAddShifts which adds `st.slots` per day.
   saveRemoveShifts() {
     const st = this.S._addShiftState;
     if (!st?.selectedDays?.length) { this.showToast('Select at least one day', 'warn'); return; }
     const { group: g, buildingId: bId, shiftType } = st;
+    const slotsPerDay = Math.max(1, parseInt(st.slots, 10) || 1);
     const pickerStart = new Date(st.dates[0] + 'T12:00:00');
     const end = new Date(TODAY + 'T12:00:00');
     end.setDate(end.getDate() + 90);
-    // Build a set of dates whose cycle position is in selectedDays.
+
+    // Set of dates whose cycle position is in selectedDays.
     const toRemoveDates = new Set();
     for (let cur = new Date(TODAY + 'T12:00:00'); cur <= end; cur.setDate(cur.getDate() + 1)) {
       const ds = cur.toISOString().slice(0, 10);
@@ -6109,26 +6115,51 @@ const App = {
       const cyclePos = ((diff % 14) + 14) % 14;
       if (st.selectedDays.includes(cyclePos)) toRemoveDates.add(ds);
     }
+
+    // Pass 1: bucket open rows by date so we can pick exactly N to drop.
+    const openByDate = new Map();   // date → array of shift ids
+    for (const s of this.S.shifts) {
+      if (s.buildingId !== bId || s.group !== g || s.type !== shiftType) continue;
+      if (s.status !== 'open') continue;
+      if (!toRemoveDates.has(s.date)) continue;
+      if (!openByDate.has(s.date)) openByDate.set(s.date, []);
+      openByDate.get(s.date).push(s.id);
+    }
+
+    // Pick the first N ids per date.
+    const idsToDrop = new Set();
+    for (const [, ids] of openByDate) {
+      for (const id of ids.slice(0, slotsPerDay)) idsToDrop.add(id);
+    }
+
+    // Count assigned matches separately so we can warn the operator that
+    // some shifts couldn't be touched (someone is already scheduled).
+    let assignedSkipped = 0;
+    let datesWithFewerOpen = 0;
+    for (const s of this.S.shifts) {
+      if (s.buildingId !== bId || s.group !== g || s.type !== shiftType) continue;
+      if (!toRemoveDates.has(s.date)) continue;
+      if (s.status !== 'open' && s.status !== 'cancelled') assignedSkipped++;
+    }
+    for (const date of toRemoveDates) {
+      const have = (openByDate.get(date) || []).length;
+      if (have < slotsPerDay) datesWithFewerOpen++;
+    }
+
     const before = this.S.shifts.length;
-    let removedAssigned = 0;
-    this.S.shifts = this.S.shifts.filter(s => {
-      if (s.buildingId !== bId) return true;
-      if (s.group !== g) return true;
-      if (s.type !== shiftType) return true;
-      if (!toRemoveDates.has(s.date)) return true;
-      // Match — remove if open. If already assigned, count separately and keep.
-      if (s.status === 'open') return false;
-      removedAssigned++;
-      return true;     // keep assigned shifts; admin must reassign manually
-    });
+    this.S.shifts = this.S.shifts.filter(s => !idsToDrop.has(s.id));
     const removedCount = before - this.S.shifts.length;
-    Audit.log('SHIFTS_REMOVED', `Removed ${removedCount} open ${shiftType} shifts for ${g}`, this.S.user?.id, 'medium');
+
+    Audit.log('SHIFTS_REMOVED', `Removed ${removedCount} open ${shiftType} ${g} shifts (${slotsPerDay} per day)`, this.S.user?.id, 'medium');
     this.persistData();
     this.closeModal('modal-add-shifts');
     this.renderMain();
-    let msg = `${removedCount} open shift${removedCount===1?'':'s'} removed`;
-    if (removedAssigned > 0) {
-      msg += ` · ${removedAssigned} matching assigned shift${removedAssigned===1?'':'s'} kept (reassign or delete individually)`;
+    let msg = `${removedCount} open shift${removedCount===1?'':'s'} removed (${slotsPerDay}/day)`;
+    if (datesWithFewerOpen > 0) {
+      msg += ` · ${datesWithFewerOpen} day${datesWithFewerOpen===1?'':'s'} had fewer than ${slotsPerDay} open slot${slotsPerDay===1?'':'s'} available`;
+    }
+    if (assignedSkipped > 0) {
+      msg += ` · ${assignedSkipped} already-assigned shift${assignedSkipped===1?'':'s'} kept`;
     }
     this.showToast(msg);
   },
