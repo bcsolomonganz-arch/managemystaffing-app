@@ -88,14 +88,27 @@ function mapPosition(rawPos) {
     return { group: 'Housekeeping', smartlinxPosition: rawPos };
   if (/laundry/.test(p))
     return { group: 'Laundry', smartlinxPosition: rawPos };
+  // Therapy — PT/OT/Speech and their assistants/aides
+  if (/physical therapy|occupational therapy|\bpt\b|\bot\b|speech therap|respiratory therap|restorative aide|wound care|infection control/.test(p)) {
+    // Wound Care / Infection Control nurses are still licensed nurses, but
+    // most therapy roles are non-nursing. Caller catches the LPN/RN suffixes
+    // earlier — by the time we get here, it's a non-nursing therapy role.
+    return { group: 'Therapy', smartlinxPosition: rawPos };
+  }
+  // Office / Admin — non-clinical office roles
+  if (/business office|receptionist|medical records|hr\/payroll|hr payroll|payroll|admin assistant|administrative assistant|staffing coordinator|scheduler|admissions|account/.test(p))
+    return { group: 'Office', smartlinxPosition: rawPos };
   // Maintenance
-  if (/maintenance|janitor|grounds/.test(p))
+  if (/maintenance|janitor|grounds|floor tech|transport(?:ation)?\b/.test(p))
     return { group: 'Maintenance', smartlinxPosition: rawPos };
   // Marketing / Activities / Social Services
-  if (/marketing|activit|community|recreation|social|admissions/.test(p))
+  if (/marketing|activit|community|recreation|social/.test(p))
     return { group: 'Marketing', smartlinxPosition: rawPos };
-  // Everything else — keep but bucket as Maintenance and preserve original.
-  return { group: 'Maintenance', smartlinxPosition: rawPos };
+  // Caregiver / shower aide / hospitality aide → CNA-equivalent direct care
+  if (/caregiver|shower aide|hospitality aide/.test(p))
+    return { group: 'CNA', smartlinxPosition: rawPos };
+  // Everything else — keep but bucket as Office (admin-ish catch-all) and preserve original.
+  return { group: 'Office', smartlinxPosition: rawPos };
 }
 
 function readSheet(file) {
