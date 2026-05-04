@@ -5574,6 +5574,12 @@ const App = {
       group: g, buildingId: bId,
       shiftType: defaultType,
       slots: 1, selectedDays: [], dates,
+      // Cycle anchor — which date in the 14-day grid is "day 1 of the
+      // rotation". Defaults to dates[0] (Monday); operator can change it
+      // before applying a preset to align e.g. a Pitman rotation to its
+      // actual start day.
+      cycleAnchorIdx: 0,
+      mirrorWeeks: true,
       // custom shift fields (used when shiftType === '__custom__')
       customName: '', customStart: '7:00 AM', customEnd: '3:00 PM',
       // builtin shift type editing
@@ -5767,6 +5773,13 @@ const App = {
           <input type="checkbox" ${st.mirrorWeeks!==false?'checked':''} onchange="App.toggleMirrorWeeks('add')" style="accent-color:${col}">
           Mirror week 1 → week 2 (clicking Mon W1 also picks Mon W2)
         </label>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+          <span style="font-size:12px;font-weight:600;color:var(--g700)">Cycle starts on:</span>
+          <select onchange="App.setCycleAnchor('add',this.value)" style="font-size:12px;padding:4px 8px;border:1.5px solid var(--g200);border-radius:6px;background:#fff">
+            ${st.dates.map((d,i)=>{const dt=new Date(d+'T12:00:00');return `<option value="${i}"${i===(st.cycleAnchorIdx||0)?' selected':''}>${dt.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</option>`;}).join('')}
+          </select>
+          <span style="font-size:11px;color:var(--g500)">— day 1 of the rotation. Re-pick a preset after changing this to re-align the pattern.</span>
+        </div>
         <div style="font-size:11px;font-weight:600;color:var(--g600);margin-bottom:6px">Week 1</div>
         ${week1}
         <div style="font-size:11px;font-weight:600;color:var(--g600);margin:10px 0 6px">Week 2</div>
@@ -5849,11 +5862,27 @@ const App = {
     none:        { label: 'Clear',            days: [] },
   },
 
+  // Apply a preset, OFFSET by st.cycleAnchorIdx so the preset's "day 1"
+  // lines up with whichever date the operator declared as the start of
+  // their rotation. Pitman 2-2-3 starting on Wed reaches Mon by index 5,
+  // not index 0 — without this, the pattern would always start on whatever
+  // Monday the picker grid begins with.
   _selectPreset(mode, preset) {
     const st = mode === 'add' ? this.S._addShiftState : this.S._assignShiftState;
     const def = this._PRESETS[preset];
     if (!def) { this.showToast('Unknown preset: ' + preset, 'warn'); return; }
-    st.selectedDays = [...def.days];
+    const anchor = ((parseInt(st.cycleAnchorIdx, 10) || 0) % 14 + 14) % 14;
+    st.selectedDays = def.days.map(d => (d + anchor) % 14);
+    if (mode === 'add') this._renderAddShiftsBody();
+    else this._renderAssignShiftBody();
+  },
+
+  // Change which date in the 14-day grid is "day 1 of the rotation".
+  // Re-applying any preset uses the new anchor. Already-selected days
+  // (manual picks) are preserved unless the user picks a preset again.
+  setCycleAnchor(mode, idx) {
+    const st = mode === 'add' ? this.S._addShiftState : this.S._assignShiftState;
+    st.cycleAnchorIdx = ((parseInt(idx,10)||0) % 14 + 14) % 14;
     if (mode === 'add') this._renderAddShiftsBody();
     else this._renderAssignShiftBody();
   },
@@ -6136,6 +6165,8 @@ const App = {
       group: g, buildingId: bId,
       shiftType: defaultType,
       slots: 1, selectedDays: [], dates,
+      cycleAnchorIdx: 0,
+      mirrorWeeks: true,
       customName: '', customStart: '7:00 AM', customEnd: '3:00 PM',
       editingBuiltinType: null, editingBuiltinName: '', editingBuiltinStart: '', editingBuiltinEnd: '',
     };
@@ -6247,6 +6278,12 @@ const App = {
     this.S._assignShiftState = {
       date, group, shiftType, buildingId: bId, empId: null,
       selectedDays: clickedIdx >= 0 ? [clickedIdx] : [],
+      // Cycle anchor — which date in the 14-day grid is "day 1 of the
+      // rotation". Defaults to whichever cell the operator clicked, so
+      // presets like Pitman start on the date they intended, not blindly
+      // on Monday.
+      cycleAnchorIdx: clickedIdx >= 0 ? clickedIdx : 0,
+      mirrorWeeks: true,
       dates,
       view: 'assign',
       msgText: defaultMsg,
@@ -6385,6 +6422,13 @@ const App = {
           <input type="checkbox" ${st.mirrorWeeks!==false?'checked':''} onchange="App.toggleMirrorWeeks('assign')" style="accent-color:${col}">
           Mirror week 1 → week 2 (clicking Mon W1 also picks Mon W2)
         </label>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+          <span style="font-size:12px;font-weight:600;color:var(--g700)">Cycle starts on:</span>
+          <select onchange="App.setCycleAnchor('assign',this.value)" style="font-size:12px;padding:4px 8px;border:1.5px solid var(--g200);border-radius:6px;background:#fff">
+            ${st.dates.map((d,i)=>{const dt=new Date(d+'T12:00:00');return `<option value="${i}"${i===(st.cycleAnchorIdx||0)?' selected':''}>${dt.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</option>`;}).join('')}
+          </select>
+          <span style="font-size:11px;color:var(--g500)">— day 1 of the rotation. Re-pick a preset to re-align after changing.</span>
+        </div>
         <div style="font-size:11px;font-weight:600;color:var(--g600);margin-bottom:6px">Week 1</div>
         <div style="display:flex;gap:5px">${[0,1,2,3,4,5,6].map(makeDay).join('')}</div>
         <div style="font-size:11px;font-weight:600;color:var(--g600);margin:10px 0 6px">Week 2</div>
