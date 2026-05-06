@@ -732,10 +732,33 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
         </select>
         <div style="font-size:11px;color:var(--g500);margin-top:3px">Scheduler Access hides Cost/Day, Total Daily Staffing Cost, Overtime Costs, and employee hourly rates.</div>
       </div>
+      <div class="form-group">
+        <label>Pay Type</label>
+        <div style="display:flex;gap:8px">
+          <label style="flex:1;border:1.5px solid var(--g200);border-radius:8px;padding:10px 12px;cursor:pointer;display:flex;align-items:center;gap:8px" id="emp-pay-hourly-tab">
+            <input type="radio" name="emp-pay-type" value="hourly" checked onchange="App.toggleEmpPayType('hourly')">
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:600;font-size:13px">Hourly</div>
+              <div style="font-size:11px;color:var(--g500)">Paid per hour worked · OT &gt; 40 hrs/wk @ 1.5×</div>
+            </div>
+          </label>
+          <label style="flex:1;border:1.5px solid var(--g200);border-radius:8px;padding:10px 12px;cursor:pointer;display:flex;align-items:center;gap:8px" id="emp-pay-salary-tab">
+            <input type="radio" name="emp-pay-type" value="salaried" onchange="App.toggleEmpPayType('salaried')">
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:600;font-size:13px">Salary</div>
+              <div style="font-size:11px;color:var(--g500)">Fixed annual pay · cost spread across 365 days · no OT</div>
+            </div>
+          </label>
+        </div>
+      </div>
       <div class="grid-2">
         <div class="form-group" id="emp-hourly-rate-group"><label>Hourly Rate ($/hr)</label>
           <input type="number" id="emp-hourly-rate" placeholder="22" min="0" step="0.01" inputmode="decimal">
           <div style="font-size:11px;color:var(--g500);margin-top:3px">Used by PPD cost calc · OT &gt; 40 hrs/wk @ 1.5×</div>
+        </div>
+        <div class="form-group" id="emp-annual-salary-group" style="display:none"><label>Annual Salary ($)</label>
+          <input type="number" id="emp-annual-salary" placeholder="65000" min="0" step="100" inputmode="decimal">
+          <div style="font-size:11px;color:var(--g500);margin-top:3px">Daily cost on calendar = salary ÷ 365 (every day, regardless of shifts)</div>
         </div>
         <div class="form-group"><label>Hire Date</label>
           <input type="date" id="emp-hire-date">
@@ -9652,8 +9675,16 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       this.showToast(`${emp.name} is already in ${info.name} (ID ${emp.payrollIds[provider]})`, 'warn');
       return false;
     }
-    if (!emp.hourlyRate) {
-      this.showToast(`Set hourly rate for ${emp.name} before pushing to payroll`, 'warn');
+    // Pay must be set on whichever model the employee uses. Honor the
+    // declared payType even when the underlying value is missing — that's
+    // how we know which message to surface ("set salary" vs "set rate").
+    const declaredSalaried = emp.payType === 'salaried';
+    const hasPay = declaredSalaried
+      ? (parseFloat(emp.annualSalary) || 0) > 0
+      : (parseFloat(emp.hourlyRate)   || 0) > 0;
+    if (!hasPay) {
+      const what = declaredSalaried ? 'annual salary' : 'hourly rate';
+      this.showToast(`Set ${what} for ${emp.name} before pushing to payroll`, 'warn');
       return false;
     }
     // Build payload (logged to history for debugging — not transmitted in demo)
@@ -9674,7 +9705,10 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   // Bulk hire push with progress toast.
   async pushAllPendingHires(provider) {
     const info = this.payrollProviderInfo(provider);
-    const pending = this._payrollPendingHires(provider).filter(e => e.hourlyRate);
+    // Bulk push: include any pending hire that has a usable pay rate set,
+    // either hourly or salaried.
+    const pending = this._payrollPendingHires(provider).filter(e =>
+      this._isSalaried(e) || (parseFloat(e.hourlyRate) || 0) > 0);
     if (!pending.length) {
       this.showToast(`No pending hires to push to ${info.name}`, 'warn');
       return;
@@ -9698,8 +9732,15 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   _buildHirePayload(provider, emp) {
     const [first, ...rest] = (emp.name||'').trim().split(/\s+/);
     const last = rest.join(' ') || first;
+    const salaried = this._isSalaried(emp);
     if (provider === 'paycom') {
       const i = this._payrollState('paycom');
+      // Paycom compensation block differs by pay type:
+      //   Hourly → rate=$/hr, payFrequency=hourly
+      //   Salary → rate=annual, payFrequency=salary
+      const compensation = salaried
+        ? { rate: emp.annualSalary, payFrequency: 'salary',  currency: 'USD' }
+        : { rate: emp.hourlyRate,   payFrequency: 'hourly',  currency: 'USD' };
       return {
         clientCode: i.companyCode,
         employeeNumber: emp.id,
@@ -9709,14 +9750,18 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         phone: emp.phone || null,
         hireDate: emp.hireDate || TODAY,
         position: emp.group || null,
-        compensation: {
-          rate: emp.hourlyRate, payFrequency: 'hourly', currency: 'USD',
-        },
+        compensation,
         location: emp.buildingId || null,
         status: 'active',
       };
     }
     // ADP — event-based shape (worker.hire)
+    // Salaried employees use annualRateAmount; hourly use hourlyRateAmount.
+    const baseRemuneration = salaried
+      ? { annualRateAmount: { amountValue: emp.annualSalary, currencyCode: 'USD' },
+          payCycleCode:     { codeValue: 'salary' } }
+      : { hourlyRateAmount: { amountValue: emp.hourlyRate,   currencyCode: 'USD' },
+          payCycleCode:     { codeValue: 'hourly' } };
     return {
       events: [{
         eventNameCode: { codeValue: 'worker.hire' },
@@ -9734,9 +9779,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
               workAssignment: {
                 hireDate: emp.hireDate || TODAY,
                 jobTitle: emp.group || null,
-                baseRemuneration: {
-                  hourlyRateAmount: { amountValue: emp.hourlyRate, currencyCode: 'USD' },
-                },
+                baseRemuneration,
                 workLocation: { nameCode: { codeValue: emp.buildingId || '' } },
               },
             },
@@ -12389,7 +12432,10 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     })();
 
     const showFinancials = this.canViewFinancials?.() !== false;
+    const isSalaried = this._isSalaried(emp);
     const rate = this._empHourlyRate(emp);
+    const annualSalary = this._empAnnualSalary(emp);
+    const fmtMoney = (n) => '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
     // — Schedule snapshot — next 30 days —
     const next30End = new Date(today); next30End.setDate(today.getDate() + 30);
@@ -12441,19 +12487,40 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         ${row('Building',     bld ? sanitize(bld.name) : null)}
         ${row('Hire date',    fmtDate(emp.hireDate) ? `${fmtDate(emp.hireDate)}${tenure ? ` <span style="color:var(--g500);font-weight:400">· ${tenure}</span>` : ''}` : null)}
         ${row('Type',         emp.employmentType ? sanitize(emp.employmentType) : null)}
-        ${showFinancials ? row('Hourly rate', `
-          <span id="empcard-rate-display-${emp.id}">
-            ${rate > 0 ? `<strong>$${rate.toFixed(2)}</strong>/hr` : dash}
-            <button type="button" class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px;margin-left:6px;color:var(--blue-d)" onclick="App.empCardEditRate('${emp.id}')">${rate > 0 ? 'Edit' : 'Set rate'}</button>
-          </span>
-          <span id="empcard-rate-edit-${emp.id}" style="display:none;align-items:center;gap:4px;justify-content:flex-end">
-            <span style="font-size:13px;color:var(--g600)">$</span>
-            <input type="number" id="empcard-rate-input-${emp.id}" min="0" step="0.01" placeholder="0.00" value="${rate > 0 ? rate.toFixed(2) : ''}" style="width:80px;padding:3px 6px;border:1.5px solid var(--g200);border-radius:5px;font-size:13px;text-align:right" onkeydown="if(event.key==='Enter'){event.preventDefault();App.empCardSaveRate('${emp.id}')}else if(event.key==='Escape'){event.preventDefault();App.empCardCancelRate('${emp.id}')}">
-            <span style="font-size:11px;color:var(--g600)">/hr</span>
-            <button type="button" class="btn btn-primary btn-sm" style="font-size:11px;padding:3px 8px" onclick="App.empCardSaveRate('${emp.id}')">Save</button>
-            <button type="button" class="btn btn-ghost btn-sm" style="font-size:11px;padding:3px 6px;color:var(--g600)" onclick="App.empCardCancelRate('${emp.id}')">Cancel</button>
+        ${showFinancials ? row('Pay type', `
+          <span id="empcard-paytype-display-${emp.id}">
+            <strong>${isSalaried ? 'Salary' : 'Hourly'}</strong>
+            <button type="button" class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px;margin-left:6px;color:var(--blue-d)" onclick="App.empCardSwitchPayType('${emp.id}')" title="Switch to ${isSalaried ? 'hourly' : 'salary'}">Switch to ${isSalaried ? 'hourly' : 'salary'}</button>
           </span>
         `) : ''}
+        ${showFinancials ? (isSalaried
+          ? row('Annual salary', `
+              <span id="empcard-rate-display-${emp.id}">
+                ${annualSalary > 0 ? `<strong>${fmtMoney(annualSalary)}</strong>/yr` : dash}
+                <button type="button" class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px;margin-left:6px;color:var(--blue-d)" onclick="App.empCardEditRate('${emp.id}')">${annualSalary > 0 ? 'Edit' : 'Set salary'}</button>
+              </span>
+              <span id="empcard-rate-edit-${emp.id}" style="display:none;align-items:center;gap:4px;justify-content:flex-end">
+                <span style="font-size:13px;color:var(--g600)">$</span>
+                <input type="number" id="empcard-rate-input-${emp.id}" min="0" step="100" placeholder="0" value="${annualSalary > 0 ? annualSalary.toFixed(0) : ''}" style="width:100px;padding:3px 6px;border:1.5px solid var(--g200);border-radius:5px;font-size:13px;text-align:right" onkeydown="if(event.key==='Enter'){event.preventDefault();App.empCardSaveRate('${emp.id}')}else if(event.key==='Escape'){event.preventDefault();App.empCardCancelRate('${emp.id}')}">
+                <span style="font-size:11px;color:var(--g600)">/yr</span>
+                <button type="button" class="btn btn-primary btn-sm" style="font-size:11px;padding:3px 8px" onclick="App.empCardSaveRate('${emp.id}')">Save</button>
+                <button type="button" class="btn btn-ghost btn-sm" style="font-size:11px;padding:3px 6px;color:var(--g600)" onclick="App.empCardCancelRate('${emp.id}')">Cancel</button>
+              </span>
+            `) + row('Daily equivalent', annualSalary > 0 ? `${fmtMoney(annualSalary / 365)}/day <span style="color:var(--g500);font-weight:400">(${fmtMoney(annualSalary / 2080)}/hr equiv.)</span>` : null)
+          : row('Hourly rate', `
+              <span id="empcard-rate-display-${emp.id}">
+                ${rate > 0 ? `<strong>$${rate.toFixed(2)}</strong>/hr` : dash}
+                <button type="button" class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px;margin-left:6px;color:var(--blue-d)" onclick="App.empCardEditRate('${emp.id}')">${rate > 0 ? 'Edit' : 'Set rate'}</button>
+              </span>
+              <span id="empcard-rate-edit-${emp.id}" style="display:none;align-items:center;gap:4px;justify-content:flex-end">
+                <span style="font-size:13px;color:var(--g600)">$</span>
+                <input type="number" id="empcard-rate-input-${emp.id}" min="0" step="0.01" placeholder="0.00" value="${rate > 0 ? rate.toFixed(2) : ''}" style="width:80px;padding:3px 6px;border:1.5px solid var(--g200);border-radius:5px;font-size:13px;text-align:right" onkeydown="if(event.key==='Enter'){event.preventDefault();App.empCardSaveRate('${emp.id}')}else if(event.key==='Escape'){event.preventDefault();App.empCardCancelRate('${emp.id}')}">
+                <span style="font-size:11px;color:var(--g600)">/hr</span>
+                <button type="button" class="btn btn-primary btn-sm" style="font-size:11px;padding:3px 8px" onclick="App.empCardSaveRate('${emp.id}')">Save</button>
+                <button type="button" class="btn btn-ghost btn-sm" style="font-size:11px;padding:3px 6px;color:var(--g600)" onclick="App.empCardCancelRate('${emp.id}')">Cancel</button>
+              </span>
+            `)
+        ) : ''}
         ${row('Status',       isActive ? '<span class="tag-active">Active</span>' : '<span class="tag-inactive">Inactive</span>')}
       </div>`;
 
@@ -12599,34 +12666,43 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const input = document.getElementById('empcard-rate-input-' + empId);
     if (!input) return;
     const raw = (input.value || '').trim();
+    const isSalaried = this._isSalaried(emp);
+    const fieldKey   = isSalaried ? 'annualSalary' : 'hourlyRate';
+    const fieldLabel = isSalaried ? 'annual salary' : 'hourly rate';
+
     // Allow blank → clear the rate (treats as "not set")
     if (raw === '') {
-      const oldRate = emp.hourlyRate;
-      delete emp.hourlyRate;
+      const oldVal = emp[fieldKey];
+      delete emp[fieldKey];
       this.persistData();
       Audit.log('EMP_RATE_CLEARED',
-        `Cleared hourly rate for ${sanitize(emp.name)} (was $${oldRate ?? '—'})`,
+        `Cleared ${fieldLabel} for ${sanitize(emp.name)} (was $${oldVal ?? '—'})`,
         this.S.user?.id, 'medium');
-      this.showToast(`${emp.name.split(' ')[0]}: hourly rate cleared`);
+      this.showToast(`${emp.name.split(' ')[0]}: ${fieldLabel} cleared`);
     } else {
       const parsed = parseFloat(raw);
       if (isNaN(parsed) || parsed < 0) {
-        this.showToast('Enter a valid hourly rate (e.g. 22.50)', 'warn');
+        this.showToast(`Enter a valid ${fieldLabel}`, 'warn');
         return;
       }
-      if (parsed > 1000) {
-        this.showToast('Rate looks too high — please double-check', 'warn');
+      // Sanity caps: $1,000/hr or $10M/yr
+      const cap = isSalaried ? 10_000_000 : 1000;
+      if (parsed > cap) {
+        this.showToast(`${fieldLabel} looks too high — please double-check`, 'warn');
         return;
       }
-      const oldRate = emp.hourlyRate ?? 0;
-      emp.hourlyRate = parsed;
+      const oldVal = emp[fieldKey] ?? 0;
+      emp[fieldKey] = parsed;
       this.persistData();
+      const fmtNew = isSalaried
+        ? '$' + parsed.toLocaleString('en-US', { maximumFractionDigits: 0 }) + '/yr'
+        : '$' + parsed.toFixed(2) + '/hr';
       Audit.log('EMP_RATE_UPDATED',
-        `${sanitize(emp.name)} hourly rate $${oldRate} → $${parsed.toFixed(2)}`,
+        `${sanitize(emp.name)} ${fieldLabel} $${oldVal} → $${parsed}`,
         this.S.user?.id, 'medium');
-      this.showToast(`${emp.name.split(' ')[0]}: $${parsed.toFixed(2)}/hr saved`);
+      this.showToast(`${emp.name.split(' ')[0]}: ${fmtNew} saved`);
     }
-    // Re-render the card so other dependent fields (cost preview, etc.) refresh
+    // Re-render the card so other dependent fields refresh
     document.getElementById('modal-employee-card')?.remove();
     this.openEmployeeCard(empId);
     // Refresh the roster behind the modal so any indicators update too
@@ -12638,6 +12714,33 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         }
       } catch (_) { /* non-fatal */ }
     }
+  },
+
+  // Switch an employee between hourly and salaried pay. Requires user
+  // confirmation since this changes how the daily cost calc treats them.
+  // The previous-mode field is preserved (so a former salaried emp's last
+  // annualSalary stays on file), but only the active-mode field is honored.
+  empCardSwitchPayType(empId) {
+    const emp = (this.S.employees || []).find(e => e.id === empId);
+    if (!emp) { this.showToast('Employee not found', 'warn'); return; }
+    if (!this.canViewFinancials?.()) { this.showToast('Not allowed to change pay type', 'warn'); return; }
+    // Toggle on the EXPLICITLY-DECLARED payType field, not on whether the
+    // current salary has been filled in. Otherwise switching to "salaried"
+    // and back wouldn't work until you typed a salary.
+    const wasSalaried = emp.payType === 'salaried';
+    const newType = wasSalaried ? 'hourly' : 'salaried';
+    const msg = wasSalaried
+      ? `Switch ${emp.name} to HOURLY pay?\n\nTheir current annual salary ($${(emp.annualSalary||0).toLocaleString()}) will be kept on file but stop affecting daily cost calcs. You'll need to enter an hourly rate next.`
+      : `Switch ${emp.name} to SALARY pay?\n\nTheir hourly rate (${emp.hourlyRate?'$'+emp.hourlyRate+'/hr':'unset'}) will be kept on file but stop affecting cost calcs. Salaried daily cost = annual salary ÷ 365, regardless of which days they're scheduled. No OT.\n\nYou'll need to enter an annual salary next.`;
+    if (!confirm(msg)) return;
+    emp.payType = newType;
+    this.persistData();
+    Audit.log('EMP_PAY_TYPE_SWITCHED',
+      `${sanitize(emp.name)} pay type → ${newType}`,
+      this.S.user?.id, 'high');
+    this.showToast(`${emp.name.split(' ')[0]} → ${newType === 'salaried' ? 'salary' : 'hourly'}`);
+    document.getElementById('modal-employee-card')?.remove();
+    this.openEmployeeCard(empId);
   },
 
   // Edit the per-employee badge ID (used by SmartLinx + other physical
@@ -12729,19 +12832,62 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
 
   // ── Cost helpers (used by PPD calculator) ───────────────────────────────
-  // hourlyRate is the canonical field. dailyRate is preserved for legacy
-  // accounts that were entered before hourly was introduced.
+  // Pay model:
+  //   payType='hourly'   → hourlyRate × hours worked; OT > 40 hrs/wk @ 1.5×
+  //   payType='salaried' → annualSalary, spread across 365 calendar days,
+  //                        regardless of which days they're scheduled. No OT.
+  // hourlyRate is the canonical hourly field. dailyRate is preserved for
+  // legacy accounts that were entered before hourly was introduced.
+  _isSalaried(emp) {
+    if (!emp) return false;
+    return emp.payType === 'salaried' &&
+           emp.annualSalary != null && emp.annualSalary !== '' &&
+           parseFloat(emp.annualSalary) > 0;
+  },
+  _empAnnualSalary(emp) {
+    if (!emp) return 0;
+    if (emp.annualSalary != null && emp.annualSalary !== '') return parseFloat(emp.annualSalary) || 0;
+    return 0;
+  },
   _empHourlyRate(emp) {
     if (!emp) return 0;
+    if (this._isSalaried(emp)) {
+      // Effective hourly equivalent for FYI / OT-attribution displays only.
+      // Real payroll uses annualSalary directly. Based on 2080 work hrs/yr.
+      return (parseFloat(emp.annualSalary) || 0) / 2080;
+    }
     if (emp.hourlyRate != null && emp.hourlyRate !== '') return parseFloat(emp.hourlyRate) || 0;
-    if (emp.dailyRate != null && emp.dailyRate !== '') return (parseFloat(emp.dailyRate) || 0) / 8;
+    if (emp.dailyRate  != null && emp.dailyRate  !== '') return (parseFloat(emp.dailyRate) || 0) / 8;
     return 0;
   },
   _empDailyRate(emp) {
     if (!emp) return 0;
+    if (this._isSalaried(emp)) return (parseFloat(emp.annualSalary) || 0) / 365;
     if (emp.hourlyRate != null && emp.hourlyRate !== '') return (parseFloat(emp.hourlyRate) || 0) * 8;
-    if (emp.dailyRate != null && emp.dailyRate !== '') return parseFloat(emp.dailyRate) || 0;
+    if (emp.dailyRate  != null && emp.dailyRate  !== '') return parseFloat(emp.dailyRate) || 0;
     return 0;
+  },
+  // Per-employee, per-day cost contribution.
+  //   Salaried: annualSalary / 365 (every calendar day, regardless of shifts)
+  //   Hourly:   sum of (shift.hours × hourlyRate) for scheduled shifts on that
+  //             date at that building (matches the old behavior)
+  _empDailyCost(emp, dateISO, buildingId) {
+    if (!emp || emp.inactive) return 0;
+    if (this._isSalaried(emp)) {
+      if (buildingId && emp.buildingId !== buildingId) return 0;
+      return (parseFloat(emp.annualSalary) || 0) / 365;
+    }
+    const rate = this._empHourlyRate(emp);
+    if (rate <= 0) return 0;
+    let cost = 0;
+    for (const s of (this.S.shifts || [])) {
+      if (s.employeeId !== emp.id) continue;
+      if (s.date !== dateISO) continue;
+      if (s.status !== 'scheduled') continue;
+      if (buildingId && s.buildingId !== buildingId) continue;
+      cost += this._shiftHours(s) * rate;
+    }
+    return cost;
   },
   // ── Permission helpers ──────────────────────────────────────────────────
   _isSchedulerOnly() {
@@ -12811,16 +12957,22 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   // breaking each ISO week down so OT is correctly capped at >40 hrs/wk
   // per employee. Returns dollars of OT premium.
   _otPremiumOver(buildingId, fromISO, toISO) {
-    const empHourly = new Map();              // empId → hourlyRate
-    for (const e of this.S.employees) empHourly.set(e.id, this._empHourlyRate(e));
+    const empHourly = new Map();              // empId → hourlyRate (HOURLY emps only)
+    const salariedSet = new Set();            // empIds that don't earn OT
+    for (const e of this.S.employees) {
+      if (this._isSalaried(e)) { salariedSet.add(e.id); continue; }
+      empHourly.set(e.id, this._empHourlyRate(e));
+    }
     // Group all scheduled shifts that fall in [fromISO, toISO] by (empId, weekStart)
     // and also count the hours that landed inside [fromISO, toISO] vs those that
     // landed in the same week but outside the requested range, so we only
     // attribute to the requested period the OT that actually occurred there.
+    // Salaried employees are skipped — they don't accrue OT under FLSA exemption.
     const buckets = new Map();                // key = empId|weekStart  →  { weekHrs, inRangeHrs }
     for (const s of this.S.shifts) {
       if (s.buildingId !== buildingId) continue;
       if (!s.employeeId || s.status !== 'scheduled') continue;
+      if (salariedSet.has(s.employeeId)) continue;
       if (!empHourly.has(s.employeeId)) continue;
       const wk = this._weekRangeISO(s.date);
       const key = s.employeeId + '|' + wk.start;
@@ -12840,18 +12992,36 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     return premium;
   },
   // Daily base cost for a list of groups on a given date.
+  // Two parts:
+  //   1. Hourly employees: sum (hours × rate) for each scheduled shift, but
+  //      ONLY count salaried employees whose payType ≠ 'salaried' (so a
+  //      salaried admin scheduled to a clinical shift doesn't double-count).
+  //   2. Salaried employees in this building/group: add annualSalary/365
+  //      EVERY DAY, regardless of whether they have a shift scheduled. The
+  //      cost spreads evenly across all 7 days of the week.
   _dailyCostForGroups(buildingId, dateISO, groups) {
     const empById = new Map(this.S.employees.map(e => [e.id, e]));
     let cost = 0;
+    const groupSet = new Set(groups);
+    // Part 1 — hourly employees from scheduled shifts
     for (const s of this.S.shifts) {
       if (s.buildingId !== buildingId || s.date !== dateISO || s.status !== 'scheduled') continue;
       if (!s.employeeId) continue;
-      if (!groups.includes(s.group)) continue;
+      if (!groupSet.has(s.group)) continue;
       const emp = empById.get(s.employeeId);
       if (!emp) continue;
-      // Pro-rate the daily rate by hours / 8 so non-8-hour shifts don't overcharge.
-      const hrs = this._shiftHours(s);
-      cost += this._empDailyRate(emp) * (hrs / 8);
+      if (this._isSalaried(emp)) continue;   // counted separately below
+      const rate = this._empHourlyRate(emp);
+      if (rate <= 0) continue;
+      cost += this._shiftHours(s) * rate;
+    }
+    // Part 2 — salaried employees of this building/group, every day
+    for (const emp of (this.S.employees || [])) {
+      if (emp.inactive) continue;
+      if (emp.buildingId !== buildingId) continue;
+      if (!groupSet.has(emp.group)) continue;
+      if (!this._isSalaried(emp)) continue;
+      cost += (parseFloat(emp.annualSalary) || 0) / 365;
     }
     return cost;
   },
@@ -13142,7 +13312,19 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       totalHours += hrs;
       if (directGroups.has(s.group)) directHours += hrs;
       const emp = empById.get(s.employeeId);
-      if (emp) dailyCost += this._empHourlyRate(emp) * hrs;
+      // Hourly employees: scheduled hrs × rate. Salaried emps are skipped here
+      // because their daily cost is added below as salary/365 regardless of
+      // shifts (and hours don't represent compensation for a salaried role).
+      if (emp && !this._isSalaried(emp)) {
+        dailyCost += this._empHourlyRate(emp) * hrs;
+      }
+    }
+    // Salaried employees at this building contribute salary/365 every day.
+    for (const emp of (this.S.employees || [])) {
+      if (emp.inactive) continue;
+      if (emp.buildingId !== buildingId) continue;
+      if (!this._isSalaried(emp)) continue;
+      dailyCost += (parseFloat(emp.annualSalary) || 0) / 365;
     }
     const census = parseFloat(this.S.ppdDailyCensus?.[dateISO]) || 0;
     return {
@@ -15301,6 +15483,22 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.renderSidebar();
   },
 
+  // ── PAY TYPE TOGGLE (Add Employee form) ──────────────────────
+  // Show the matching rate input when the user toggles Hourly ↔ Salary.
+  // Both inputs stay in the DOM so any partially-typed value is preserved
+  // until the user actually saves.
+  toggleEmpPayType(payType) {
+    const hourlyGroup = document.getElementById('emp-hourly-rate-group');
+    const salaryGroup = document.getElementById('emp-annual-salary-group');
+    const hourlyTab   = document.getElementById('emp-pay-hourly-tab');
+    const salaryTab   = document.getElementById('emp-pay-salary-tab');
+    const hourly = (payType === 'salaried') ? false : true;
+    if (hourlyGroup) hourlyGroup.style.display = hourly ? '' : 'none';
+    if (salaryGroup) salaryGroup.style.display = hourly ? 'none' : '';
+    if (hourlyTab)   hourlyTab.style.borderColor   = hourly ? 'var(--blue-d)'  : 'var(--g200)';
+    if (salaryTab)   salaryTab.style.borderColor   = hourly ? 'var(--g200)'    : 'var(--blue-d)';
+  },
+
   // ── SAVE EMPLOYEE ────────────────────────────────────────────
   saveEmployee() {
     if(this.S.user?.role !== 'admin' && this.S.user?.role !== 'superadmin') { this.showToast('Unauthorized','warn'); return; }
@@ -15310,8 +15508,15 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const phone=sanitizeInput(document.getElementById('emp-phone').value.trim(), 20);
     const role=document.getElementById('emp-role').value;
     const employmentType=document.getElementById('emp-employment-type').value;
+    // Pay type — radio toggle: 'hourly' | 'salaried'
+    const payTypeChecked = document.querySelector('input[name="emp-pay-type"]:checked');
+    const payType = payTypeChecked?.value === 'salaried' ? 'salaried' : 'hourly';
     const hourlyRateRaw = document.getElementById('emp-hourly-rate')?.value;
-    const hourlyRate = hourlyRateRaw ? Math.max(0, parseFloat(hourlyRateRaw) || 0) : null;
+    const hourlyRate = (payType === 'hourly' && hourlyRateRaw)
+      ? Math.max(0, parseFloat(hourlyRateRaw) || 0) : null;
+    const annualSalaryRaw = document.getElementById('emp-annual-salary')?.value;
+    const annualSalary = (payType === 'salaried' && annualSalaryRaw)
+      ? Math.max(0, parseFloat(annualSalaryRaw) || 0) : null;
     const hireDate = document.getElementById('emp-hire-date')?.value || null;
     const dob      = document.getElementById('emp-dob')?.value || null;
     const adminAccess = document.getElementById('emp-admin-access')?.value || 'full';
@@ -15386,7 +15591,15 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           matched.notifEmail = notifEmail; matched.notifSMS = notifSMS;
           matched.notifPrefs = prefs; matched.notifChannels = notifChannels;
           matched.initials = initials;
-          if (hourlyRate != null) matched.hourlyRate = hourlyRate;
+          // Pay setup — write payType + the matching rate field, clear the other.
+          matched.payType = payType;
+          if (payType === 'hourly') {
+            if (hourlyRate != null) matched.hourlyRate = hourlyRate;
+            delete matched.annualSalary;
+          } else {
+            if (annualSalary != null) matched.annualSalary = annualSalary;
+            delete matched.hourlyRate;
+          }
           if (hireDate) matched.rehireDate = hireDate;     // keep original hireDate; record rehire too
           if (dob) matched.dob = dob;
           // Disciplinary + terminationLog preserved automatically.
@@ -15394,7 +15607,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           this.persistData();
           this.closeModal('modal-add-emp');
           this.showToast(`${sanitize(name)} reactivated — prior history preserved`);
-          ['emp-name','emp-email','emp-phone','emp-hourly-rate','emp-hire-date','emp-dob','emp-license-number','emp-license-state','emp-license-expires'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+          ['emp-name','emp-email','emp-phone','emp-hourly-rate','emp-annual-salary','emp-hire-date','emp-dob','emp-license-number','emp-license-state','emp-license-expires'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
           document.getElementById('emp-position').value='';
           this.render();
           return;
@@ -15411,7 +15624,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         id:`e${Date.now()}`,name,group:pos,email,phone,buildingId:bId,
         notifEmail,notifSMS,notifPrefs:prefs,notifChannels,initials,
         terminationLog:termLog,inactive:false,employmentType,
-        hourlyRate, hireDate, dob,
+        payType, hourlyRate, annualSalary, hireDate, dob,
         licenseNumber, licenseExpiresAt, licenseState,
         disciplinary: [],
       });
