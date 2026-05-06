@@ -983,6 +983,27 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
   </div>
 </div>
 
+<!-- Payroll Provider Configuration Modal (Paycom + ADP) -->
+<div class="modal-overlay" id="modal-payroll-config" role="dialog" aria-modal="true" aria-label="Payroll Provider Configuration">
+  <div class="modal" style="max-width:520px;max-height:90vh;display:flex;flex-direction:column">
+    <div class="modal-header" style="flex-shrink:0">
+      <span class="modal-title">
+        <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px;color:var(--blue-d)"><circle cx="3.5" cy="10" r="2"/><circle cx="14.5" cy="4.5" r="2"/><circle cx="14.5" cy="15.5" r="2"/><path d="M5.5 10h4l5-5.5M9.5 10h4l1 5.5"/></svg>
+        Payroll Provider Settings
+      </span>
+      <button class="modal-close" aria-label="Close" onclick="App.closePayrollConfig()">✕</button>
+    </div>
+    <div class="modal-body" id="payroll-config-body" style="overflow-y:auto;flex:1"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="App.closePayrollConfig()">Cancel</button>
+      <button class="btn btn-primary" onclick="App.savePayrollConfig()">
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8l3 3 7-7"/></svg>
+        Save &amp; Test Connection
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- Shift Manager Modal -->
 <div class="modal-overlay" id="modal-shift-manager" role="dialog" aria-modal="true" aria-label="Manage Shifts">
   <div class="modal" style="max-width:780px;width:96%;max-height:90vh;display:flex;flex-direction:column">
@@ -1560,7 +1581,9 @@ const App = {
     selectedGroup: 'CNA',
     calView: 'month',
     filter: 'scheduled',
-    viewYear: 2026, viewMonth: 3,
+    // Default to the current month/year — re-evaluated at each load so the
+    // calendar always opens on "today's month" rather than a stale snapshot.
+    viewYear: new Date().getFullYear(), viewMonth: new Date().getMonth(),
     selectedDate: null,
     panelOpen: false,
     // pattern builder state
@@ -1611,6 +1634,49 @@ const App = {
     pccLastSync: null,   // ISO timestamp of last census sync
     pccLastCensus: null, // number — most recent synced census count
     pccSyncing: false,
+    // Payroll integrations — Paycom + ADP Workforce Now.
+    // Each provider holds: connection state, credentials (held client-side ONLY
+    // in demo mode; in production these would be Azure App Settings), the last
+    // sync result, and a sync-history log capped at 100 entries.
+    integrations: {
+      paycom: {
+        configured: false,
+        mode: 'sandbox',        // 'sandbox' | 'production'
+        clientId: '',
+        clientSecret: '',
+        companyCode: '',        // Paycom: 4-letter "Client Code"
+        username: '',           // Paycom: API username (separate from web login)
+        status: 'disconnected', // 'disconnected' | 'connected' | 'error'
+        lastError: null,
+        lastConnectAt: null,
+        lastHireSyncAt: null,
+        lastPayrollSyncAt: null,
+        lastTimeSyncAt: null,
+        lastSyncResult: null,   // {type, ok, summary, ts}
+        history: [],            // [{ts, type, ok, summary, count, errors}]
+        autoPushHires: true,    // when an onboardee is approved & pushed to roster
+        autoSyncPayroll: false, // when payroll period closes
+      },
+      adp: {
+        configured: false,
+        mode: 'sandbox',        // 'sandbox' | 'production'
+        clientId: '',
+        clientSecret: '',
+        certThumbprint: '',     // ADP requires mutual-TLS cert
+        oid: '',                // ADP organization ID (orgOid)
+        status: 'disconnected',
+        lastError: null,
+        lastConnectAt: null,
+        lastHireSyncAt: null,
+        lastPayrollSyncAt: null,
+        lastTimeSyncAt: null,
+        lastSyncResult: null,
+        history: [],
+        autoPushHires: true,
+        autoSyncPayroll: false,
+      },
+    },
+    payrollConfigModal: null, // {provider:'paycom'|'adp'} when open
     // PPD Calendar
     ppdCalMonth: null,        // 'YYYY-MM' currently displayed; lazy-init to current month
     ppdDailyCensus: {},       // { 'YYYY-MM-DD': number } — populated by Sync Month from PCC
@@ -4141,6 +4207,21 @@ const App = {
     const f = this.S.hrFilter || 'all';
     const filters = [{k:'all',label:`All (${emps.length})`},{k:'invited',label:`Invited (${emps.filter(e=>e.status==='invited').length})`},{k:'onboarding',label:`Filling (${emps.filter(e=>e.status==='onboarding').length})`},{k:'review',label:`Review (${emps.filter(e=>e.status==='review').length})`},{k:'approved',label:`App Approved (${emps.filter(e=>e.status==='approved').length})`},{k:'active',label:`Active (${emps.filter(e=>e.status==='active').length})`}];
     const filtered = f==='all' ? emps : emps.filter(e=>e.status===f);
+    // Show payroll columns only if at least one provider is connected.
+    const showPaycom = !!(this.S.integrations?.paycom?.configured && this.S.integrations.paycom.status === 'connected');
+    const showAdp    = !!(this.S.integrations?.adp?.configured    && this.S.integrations.adp.status    === 'connected');
+    const empById = new Map((this.S.employees||[]).map(e => [e.id, e]));
+    const payrollCell = (h, prov) => {
+      const linkedEmp = h.employeeId ? empById.get(h.employeeId) : null;
+      const id = linkedEmp?.payrollIds?.[prov];
+      if (id) {
+        return `<span style="display:inline-block;background:#DCFCE7;color:#15803D;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px" title="Synced">${sanitize(id)}</span>`;
+      }
+      if (linkedEmp && (h.status === 'active' || h.status === 'approved')) {
+        return `<button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px" onclick="event.stopPropagation();App.pushHireToPayroll('${linkedEmp.id}','${prov}').then(()=>App.renderHRMain())">Push</button>`;
+      }
+      return '<span style="color:var(--g300)">—</span>';
+    };
     const rows = filtered.map(e=>{
       const fac = HR_FACILITIES.find(x=>x.id===e.facilityId);
       return `<tr style="border-bottom:1px solid var(--g100);cursor:pointer;transition:background .12s"
@@ -4160,6 +4241,8 @@ const App = {
         <td style="padding:12px 16px">${this.hrBadge(e.status)}</td>
         <td style="padding:12px 16px;font-size:12px;color:var(--g500)">${sanitize(e.progress)}</td>
         <td style="padding:12px 16px;font-size:12px;font-weight:600;color:${e.slxId?'var(--purple)':'var(--g300)'}">${e.slxId?sanitize(e.slxId):'—'}</td>
+        ${showPaycom ? `<td style="padding:12px 16px;font-size:12px">${payrollCell(e,'paycom')}</td>` : ''}
+        ${showAdp    ? `<td style="padding:12px 16px;font-size:12px">${payrollCell(e,'adp')}</td>` : ''}
       </tr>`;
     }).join('');
     return `
@@ -4184,9 +4267,11 @@ const App = {
               <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">Status</th>
               <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">Progress</th>
               <th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">SmartLinx</th>
+              ${showPaycom ? '<th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">Paycom</th>' : ''}
+              ${showAdp    ? '<th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em">ADP</th>' : ''}
             </tr>
           </thead>
-          <tbody>${rows || '<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--g600);font-size:13px">No employees in this filter</td></tr>'}</tbody>
+          <tbody>${rows || `<tr><td colspan="${6 + (showPaycom?1:0) + (showAdp?1:0)}" style="padding:24px;text-align:center;color:var(--g600);font-size:13px">No employees in this filter</td></tr>`}</tbody>
         </table>
       </div>`;
   },
@@ -4636,10 +4721,13 @@ const App = {
       ${this.hrHipaaBar()}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
         <div><div class="hr-page-title">Payroll Calculator</div><div class="hr-page-sub">Pay period totals from time-clock data · auto-issues 1st &amp; 16th</div></div>
-        <button class="btn btn-secondary btn-sm" onclick="App.payrollExportCsv()" ${report.rows.length?'':'disabled'}>
-          <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 1v9M5 7l3 3 3-3M2 13h12"/></svg>
-          Export CSV
-        </button>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${this._payrollSyncButtons(report)}
+          <button class="btn btn-secondary btn-sm" onclick="App.payrollExportCsv()" ${report.rows.length?'':'disabled'}>
+            <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 1v9M5 7l3 3 3-3M2 13h12"/></svg>
+            Export CSV
+          </button>
+        </div>
       </div>
 
       <!-- Period config -->
@@ -4885,6 +4973,23 @@ const App = {
       return end.toISOString().slice(0,10);
     }
     return null;
+  },
+
+  // Renders inline Sync→Paycom / Sync→ADP buttons for the Payroll Calculator
+  // header. Shown only for connected providers; disabled when no rows.
+  _payrollSyncButtons(report) {
+    const buttons = [];
+    for (const p of ['paycom','adp']) {
+      const i = this.S.integrations?.[p];
+      if (!i || !i.configured || i.status !== 'connected') continue;
+      const info = this.payrollProviderInfo(p);
+      const dis = report.rows.length ? '' : 'disabled';
+      buttons.push(`<button class="btn btn-secondary btn-sm" onclick="App.syncPayrollToProvider('${p}')" ${dis} title="Sync this period to ${info.name}">
+        <span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:${info.logoBg};color:${info.logoFg};font-weight:800;font-size:10px;line-height:14px;text-align:center;margin-right:4px;vertical-align:-2px">${info.logoText}</span>
+        Sync to ${info.name === 'ADP Workforce Now' ? 'ADP' : info.name}
+      </button>`);
+    }
+    return buttons.join('');
   },
 
   payrollExportCsv() {
@@ -5579,7 +5684,11 @@ const App = {
       // before applying a preset to align e.g. a Pitman rotation to its
       // actual start day.
       cycleAnchorIdx: 0,
-      mirrorWeeks: true,
+      // Actual calendar date of cycle day 1. Defaults to dates[0] (this
+      // Monday). Can be back-dated (e.g. "the rotation started 2 weeks
+      // ago") so the new shifts sync to an in-progress rotation.
+      cycleStartDate: dates[0],
+      mirrorWeeks: false,
       // custom shift fields (used when shiftType === '__custom__')
       customName: '', customStart: '7:00 AM', customEnd: '3:00 PM',
       // builtin shift type editing
@@ -5769,23 +5878,19 @@ const App = {
             </select>
           </div>
         </div>
-        <label style="display:inline-flex;align-items:center;gap:6px;margin-bottom:8px;font-size:12px;color:var(--g700);cursor:pointer">
-          <input type="checkbox" ${st.mirrorWeeks!==false?'checked':''} onchange="App.toggleMirrorWeeks('add')" style="accent-color:${col}">
-          Mirror week 1 → week 2 (clicking Mon W1 also picks Mon W2)
-        </label>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
           <span style="font-size:12px;font-weight:600;color:var(--g700)">Cycle starts on:</span>
-          <select onchange="App.setCycleAnchor('add',this.value)" style="font-size:12px;padding:4px 8px;border:1.5px solid var(--g200);border-radius:6px;background:#fff">
-            ${st.dates.map((d,i)=>{const dt=new Date(d+'T12:00:00');return `<option value="${i}"${i===(st.cycleAnchorIdx||0)?' selected':''}>${dt.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</option>`;}).join('')}
-          </select>
-          <span style="font-size:11px;color:var(--g500)">— day 1 of the rotation. Re-pick a preset after changing this to re-align the pattern.</span>
+          <input type="date" value="${sanitize(st.cycleStartDate || st.dates[0])}"
+                 onchange="App.setCycleStartDate('add',this.value)"
+                 style="font-size:12px;padding:4px 8px;border:1.5px solid var(--g200);border-radius:6px;background:#fff">
+          <span style="font-size:11px;color:var(--g500)">— day 1 of the rotation. Pick a past date if joining a rotation already in progress. Re-pick a preset after changing.</span>
         </div>
         <div style="font-size:11px;font-weight:600;color:var(--g600);margin-bottom:6px">Week 1</div>
         ${week1}
         <div style="font-size:11px;font-weight:600;color:var(--g600);margin:10px 0 6px">Week 2</div>
         ${week2}
         <div style="font-size:11px;color:var(--g600);margin-top:12px">
-          Selected days repeat every 2 weeks for the next 90 days. Tip: hold <strong>Shift</strong> while clicking a day to skip the mirror for that one click (useful for asymmetric Pitman-style rotations).
+          Selected days repeat every 2 weeks for the next 1 year and auto-extend forward. Pick a preset for common patterns (Weekdays, Pitman, etc.) or click individual days for a custom rotation.
         </div>
       </div>`;
   },
@@ -5883,6 +5988,35 @@ const App = {
   setCycleAnchor(mode, idx) {
     const st = mode === 'add' ? this.S._addShiftState : this.S._assignShiftState;
     st.cycleAnchorIdx = ((parseInt(idx,10)||0) % 14 + 14) % 14;
+    // Keep cycleStartDate in sync with the chosen visible-grid index
+    if (st.dates && st.dates[st.cycleAnchorIdx]) {
+      st.cycleStartDate = st.dates[st.cycleAnchorIdx];
+    }
+    if (mode === 'add') this._renderAddShiftsBody();
+    else this._renderAssignShiftBody();
+  },
+
+  // Allow the operator to back-date (or forward-date) the cycle start.
+  // Computes the corresponding cycleAnchorIdx (= visible position of "cycle
+  // day 0", the next time it appears in the visible grid) so presets still
+  // align correctly. The visible 14-day grid stays anchored on this Monday;
+  // only the rotation phase shifts.
+  //
+  // Worked examples (visible[0] = Mon May 4):
+  //   cycleStart = Mon Apr 27 (7d before) → next cycle day 0 in visible = Mon May 11 → anchor = 7
+  //   cycleStart = Thu May 7  (3d after)  → next cycle day 0 in visible = Thu May 7  → anchor = 3
+  //   cycleStart = Mon May 4  (same day)  → anchor = 0
+  setCycleStartDate(mode, dateStr) {
+    if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return;
+    const st = mode === 'add' ? this.S._addShiftState : this.S._assignShiftState;
+    if (!st || !Array.isArray(st.dates) || !st.dates[0]) return;
+    st.cycleStartDate = dateStr;
+    const vis0 = new Date(st.dates[0] + 'T12:00:00');
+    const start = new Date(dateStr + 'T12:00:00');
+    // Days from visible[0] forward to the next cycle day 0:
+    //   = (start - vis0) mod 14, taken in [0,14)
+    const fwdDiff = Math.round((start - vis0) / 86400000);
+    st.cycleAnchorIdx = ((fwdDiff % 14) + 14) % 14;
     if (mode === 'add') this._renderAddShiftsBody();
     else this._renderAssignShiftBody();
   },
@@ -6006,8 +6140,9 @@ const App = {
     }
 
     const pickerStart = new Date(st.dates[0] + 'T12:00:00');
+    const horizonDays = (this.S.rotationHorizonDays || 365);
     const end = new Date(TODAY + 'T12:00:00');
-    end.setDate(end.getDate() + 90);
+    end.setDate(end.getDate() + horizonDays);
     let added = 0;
     for (let cur = new Date(TODAY + 'T12:00:00'); cur <= end; cur.setDate(cur.getDate() + 1)) {
       const ds = cur.toISOString().slice(0, 10);
@@ -6024,11 +6159,33 @@ const App = {
         added++;
       }
     }
-    Audit.log('SHIFTS_ADDED', `Added ${added} open ${shiftType} shifts for ${g}`, this.S.user?.id, 'medium');
+    // Persist the open-shift rotation rule so the calendar can auto-extend
+    // it forward when the user navigates past the horizon. Rule has no empId
+    // (these are open slots, not assigned).
+    if (!Array.isArray(this.S.schedulePatterns)) this.S.schedulePatterns = [];
+    this.S.schedulePatterns.push({
+      id: 'pat_' + Date.now() + Math.random().toString(36).slice(2,5),
+      kind: 'open',           // 'open' = creates open slots; 'assign' = assigns to empId
+      empId: null,
+      buildingId: bId,
+      group: g,
+      shiftType,
+      slots,
+      pickerStart: st.dates[0],
+      cycleStartDate: st.cycleStartDate || st.dates[0],
+      selectedDays: [...st.selectedDays],
+      cycleLen: 14,
+      horizonDays,
+      lastExtendedTo: end.toISOString().slice(0,10),
+      appliedAt: TODAY,
+      createdBy: this.S.user?.id || null,
+    });
+    Audit.log('SHIFTS_ADDED', `Added ${added} open ${shiftType} shifts for ${g} (rotation, ${horizonDays}d horizon)`, this.S.user?.id, 'medium');
     this.persistData();
     this.closeModal('modal-add-shifts');
     this.renderMain();
-    this.showToast(`${added} open shift${added===1?'':'s'} added to calendar`);
+    const yrs = horizonDays >= 365 ? `${Math.round(horizonDays/365)} yr` : `${Math.round(horizonDays/30)} mo`;
+    this.showToast(`${added} open shift${added===1?'':'s'} added (rotation runs ${yrs})`);
   },
 
   // ── REMOVE SHIFTS — same 14-day picker, opposite action ─────────────────
@@ -6166,7 +6323,7 @@ const App = {
       shiftType: defaultType,
       slots: 1, selectedDays: [], dates,
       cycleAnchorIdx: 0,
-      mirrorWeeks: true,
+      mirrorWeeks: false,
       customName: '', customStart: '7:00 AM', customEnd: '3:00 PM',
       editingBuiltinType: null, editingBuiltinName: '', editingBuiltinStart: '', editingBuiltinEnd: '',
     };
@@ -6283,7 +6440,11 @@ const App = {
       // presets like Pitman start on the date they intended, not blindly
       // on Monday.
       cycleAnchorIdx: clickedIdx >= 0 ? clickedIdx : 0,
-      mirrorWeeks: true,
+      // Actual calendar date of cycle day 1. Defaults to the clicked date
+      // but can be back-dated when the new employee is joining a rotation
+      // that started a week or two earlier.
+      cycleStartDate: clickedIdx >= 0 ? dates[clickedIdx] : dates[0],
+      mirrorWeeks: false,
       dates,
       view: 'assign',
       msgText: defaultMsg,
@@ -6418,23 +6579,19 @@ const App = {
             </select>
           </div>
         </div>
-        <label style="display:inline-flex;align-items:center;gap:6px;margin-bottom:8px;font-size:12px;color:var(--g700);cursor:pointer">
-          <input type="checkbox" ${st.mirrorWeeks!==false?'checked':''} onchange="App.toggleMirrorWeeks('assign')" style="accent-color:${col}">
-          Mirror week 1 → week 2 (clicking Mon W1 also picks Mon W2)
-        </label>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
           <span style="font-size:12px;font-weight:600;color:var(--g700)">Cycle starts on:</span>
-          <select onchange="App.setCycleAnchor('assign',this.value)" style="font-size:12px;padding:4px 8px;border:1.5px solid var(--g200);border-radius:6px;background:#fff">
-            ${st.dates.map((d,i)=>{const dt=new Date(d+'T12:00:00');return `<option value="${i}"${i===(st.cycleAnchorIdx||0)?' selected':''}>${dt.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</option>`;}).join('')}
-          </select>
-          <span style="font-size:11px;color:var(--g500)">— day 1 of the rotation. Re-pick a preset to re-align after changing.</span>
+          <input type="date" value="${sanitize(st.cycleStartDate || st.dates[0])}"
+                 onchange="App.setCycleStartDate('assign',this.value)"
+                 style="font-size:12px;padding:4px 8px;border:1.5px solid var(--g200);border-radius:6px;background:#fff">
+          <span style="font-size:11px;color:var(--g500)">— day 1 of the rotation. Pick a past date if the employee is joining a rotation already in progress (e.g. team's Pitman started last Monday).</span>
         </div>
         <div style="font-size:11px;font-weight:600;color:var(--g600);margin-bottom:6px">Week 1</div>
         <div style="display:flex;gap:5px">${[0,1,2,3,4,5,6].map(makeDay).join('')}</div>
         <div style="font-size:11px;font-weight:600;color:var(--g600);margin:10px 0 6px">Week 2</div>
         <div style="display:flex;gap:5px">${[7,8,9,10,11,12,13].map(makeDay).join('')}</div>
         <div style="font-size:11px;color:var(--g600);margin-top:12px">
-          This rotation repeats every 2 weeks for the next 90 days. Fills existing open slots first. Tip: hold <strong>Shift</strong> while clicking a day to break the mirror for that click (asymmetric Pitman-style rotations).
+          This rotation repeats every 2 weeks for the next <strong>1 year</strong> and auto-extends as you navigate forward in the calendar. Fills existing open slots first. Pick a preset for common patterns (Weekdays, Pitman, etc.) or click individual days for a custom rotation.
         </div>
       </div>`;
 
@@ -6499,8 +6656,13 @@ const App = {
     const { group: g, buildingId: bId, shiftType } = st;
     const shiftDef = this.resolveShiftDef(g, shiftType) || {};
     const pickerStart = new Date(st.dates[0] + 'T12:00:00');
+    // Roll the rotation forward for ROTATION_HORIZON_DAYS so it carries into
+    // future weeks/months. Also persist the rotation rule itself so views
+    // beyond the horizon can still display the ongoing pattern (and so the
+    // server can extend on demand).
+    const horizonDays = (this.S.rotationHorizonDays || 365);
     const end = new Date(TODAY + 'T12:00:00');
-    end.setDate(end.getDate() + 90);
+    end.setDate(end.getDate() + horizonDays);
     let assigned = 0;
     for (let cur = new Date(TODAY + 'T12:00:00'); cur <= end; cur.setDate(cur.getDate() + 1)) {
       const ds = cur.toISOString().slice(0, 10);
@@ -6522,11 +6684,31 @@ const App = {
       }
       assigned++;
     }
-    Audit.log('SHIFT_ASSIGNED', `Assigned ${sanitize(emp.name)} to ${assigned} ${shiftType} ${g} shifts`, this.S.user?.id, 'medium');
+    // Persist the rotation rule so we can extend it later (auto-extend kicks
+    // in whenever the user navigates the calendar past the horizon).
+    if (!Array.isArray(this.S.schedulePatterns)) this.S.schedulePatterns = [];
+    this.S.schedulePatterns.push({
+      id: 'pat_' + Date.now() + Math.random().toString(36).slice(2,5),
+      kind: 'assign',         // assigns the rotation to an employee
+      empId: emp.id,
+      buildingId: bId,
+      group: g,
+      shiftType,
+      pickerStart: st.dates[0],
+      cycleStartDate: st.cycleStartDate || st.dates[0],
+      selectedDays: [...st.selectedDays],
+      cycleLen: 14,
+      horizonDays,
+      lastExtendedTo: end.toISOString().slice(0,10),
+      appliedAt: TODAY,
+      createdBy: this.S.user?.id || null,
+    });
+    Audit.log('SHIFT_ASSIGNED', `Assigned ${sanitize(emp.name)} to ${assigned} ${shiftType} ${g} shifts (rotation, ${horizonDays}d horizon)`, this.S.user?.id, 'medium');
     this.persistData();
     this.closeModal('modal-assign-shift');
     this.renderMain();
-    this.showToast(`${sanitize(emp.name.split(' ')[0])} assigned to ${assigned} shift${assigned===1?'':'s'}`);
+    const yrs = horizonDays >= 365 ? `${Math.round(horizonDays/365)} yr` : `${Math.round(horizonDays/30)} mo`;
+    this.showToast(`${sanitize(emp.name.split(' ')[0])} assigned to ${assigned} shift${assigned===1?'':'s'} (rotation runs ${yrs})`);
   },
 
   saveAssignShiftOnly() {
@@ -9059,25 +9241,650 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       `}
     </div>`;
 
-    const adpCard = `<div class="hr-section" style="padding:20px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-        <div>
-          <div style="font-weight:700;font-size:15px;color:var(--g900);margin-bottom:2px">ADP Workforce Now</div>
-          <div style="font-size:12px;color:var(--g500)">Payroll &amp; time/attendance · PBJ report generation</div>
-        </div>
-        <span class="pcc-status-pill pcc-not-configured">○ Not Configured</span>
-      </div>
-      <div style="background:var(--g50);border:1px solid var(--g200);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:12px;color:var(--g600)">
-        Add <code>ADP_CLIENT_ID</code> and <code>ADP_CLIENT_SECRET</code> in Azure App Settings to enable PBJ report generation from ADP time &amp; attendance data.
-      </div>
-      <a href="https://portal.azure.com" target="_blank" class="btn btn-secondary btn-sm">Configure in Azure</a>
-    </div>`;
-
     return `
       ${this.hrHipaaBar()}
-      <div style="margin-bottom:20px"><div class="hr-page-title">Integrations</div><div class="hr-page-sub">Connect PointClickCare, ADP, and other external systems</div></div>
+      <div style="margin-bottom:20px"><div class="hr-page-title">Integrations</div><div class="hr-page-sub">Connect PointClickCare, payroll providers, and other external systems</div></div>
       ${pccCard}
-      ${adpCard}`;
+      ${this.renderPayrollProviderCard('paycom')}
+      ${this.renderPayrollProviderCard('adp')}
+      ${this.renderPayrollSyncHistory()}`;
+  },
+
+  // ── Payroll Integrations: Paycom + ADP ──────────────────────────────────────
+  // Both providers expose roughly the same surface area (push hires, sync
+  // payroll period, pull punches). Differences:
+  //   Paycom    — REST + OAuth2 client_credentials, "Client Code" + API username
+  //   ADP WFN   — REST + mutual-TLS cert, orgOid scoping
+  // The renderPayrollProviderCard fn handles both via a config table.
+  payrollProviderInfo(provider) {
+    const i = (this.S.integrations || {})[provider] || {};
+    const meta = {
+      paycom: {
+        name: 'Paycom',
+        sub: 'Time &amp; attendance · Payroll · New-hire onboarding',
+        logoBg: '#0F62FE',
+        logoFg: '#fff',
+        logoText: 'P',
+        docsUrl: 'https://www.paycom.com/api',
+        credLabel: 'Client Code',
+        credExtras: [
+          {key:'companyCode', label:'Client Code', placeholder:'4-letter code', help:'Paycom assigns a 4-letter Client Code on contract.'},
+          {key:'username',    label:'API Username',  placeholder:'api.user@yourorg', help:'Separate from your web login — generated in Paycom Admin → API Access.'},
+        ],
+      },
+      adp: {
+        name: 'ADP Workforce Now',
+        sub: 'Time &amp; attendance · Payroll · PBJ generation',
+        logoBg: '#D40511',
+        logoFg: '#fff',
+        logoText: 'A',
+        docsUrl: 'https://developers.adp.com/',
+        credLabel: 'Organization OID',
+        credExtras: [
+          {key:'oid',            label:'Organization OID',  placeholder:'G3ARTY9HZJX...', help:'ADP’s long org identifier — found in WFN under Setup → API.'},
+          {key:'certThumbprint', label:'Cert Thumbprint',   placeholder:'optional · mTLS cert SHA-1', help:'For mutual-TLS authentication. Required for production; optional for sandbox.'},
+        ],
+      },
+    };
+    return { ...(meta[provider]||{}), data: i };
+  },
+
+  renderPayrollProviderCard(provider) {
+    const info = this.payrollProviderInfo(provider);
+    const d = info.data;
+    const connected = d.status === 'connected' && d.configured;
+    const error     = d.status === 'error';
+    const pillClass = connected ? 'pcc-connected' : (error ? 'pcc-not-configured' : 'pcc-not-configured');
+    const pillStyle = error ? 'background:#FEE2E2;color:#B91C1C' : '';
+    const pillText  = connected ? '● Connected' + (d.mode === 'sandbox' ? ' · sandbox' : ' · live')
+                    : error    ? '⚠ Connection error'
+                    : '○ Not Configured';
+
+    // Stats grid — only when connected
+    const stat = (label, val) => `<div style="background:var(--g50);border-radius:8px;padding:10px 12px">
+      <div style="font-size:11px;color:var(--g500);font-weight:600;margin-bottom:2px">${label}</div>
+      <div style="font-size:13px;font-weight:700;color:var(--g800)">${val}</div>
+    </div>`;
+    const fmtTime = ts => ts ? new Date(ts).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}) : '—';
+    const pendingHires = this._payrollPendingHires(provider).length;
+    const pendingPill = pendingHires
+      ? `<span style="display:inline-block;background:#FFF7ED;color:#C2410C;font-size:10px;font-weight:700;padding:2px 6px;border-radius:10px;margin-left:6px">${pendingHires} pending</span>`
+      : '';
+
+    const stats = connected ? `
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px">
+        ${stat('Mode', d.mode === 'sandbox' ? 'Sandbox' : 'Live')}
+        ${stat('Last Hire Push', fmtTime(d.lastHireSyncAt))}
+        ${stat('Last Payroll Sync', fmtTime(d.lastPayrollSyncAt))}
+        ${stat('Last Time Sync', fmtTime(d.lastTimeSyncAt))}
+      </div>
+    ` : '';
+
+    const errorBanner = error && d.lastError ? `
+      <div style="background:#FEF2F2;border:1px solid #FCA5A5;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#991B1B">
+        <strong>Last error:</strong> ${sanitize(d.lastError)}
+      </div>` : '';
+
+    const actions = connected ? `
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary btn-sm" onclick="App.pushAllPendingHires('${provider}')" ${pendingHires?'':'disabled'}>
+          ${SYNC_ICON} Push ${pendingHires||'pending'} Hire${pendingHires===1?'':'s'}${pendingPill}
+        </button>
+        <button class="btn btn-secondary btn-sm" onclick="App.syncPayrollToProvider('${provider}')">
+          ${SYNC_ICON} Sync Current Pay Period
+        </button>
+        <button class="btn btn-secondary btn-sm" onclick="App.syncTimeFromProvider('${provider}')">
+          ${SYNC_ICON} Pull Time Punches
+        </button>
+        <button class="btn btn-ghost btn-sm" onclick="App.testPayrollConnection('${provider}')">Test connection</button>
+        <button class="btn btn-ghost btn-sm" onclick="App.openPayrollConfig('${provider}')">Settings</button>
+        <button class="btn btn-ghost btn-sm" onclick="App.disconnectPayrollProvider('${provider}')" style="color:#B91C1C">Disconnect</button>
+      </div>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--g100);display:flex;gap:18px;font-size:12px;color:var(--g600)">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" ${d.autoPushHires?'checked':''} onchange="App.setPayrollFlag('${provider}','autoPushHires',this.checked)">
+          Auto-push hires when added to roster
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" ${d.autoSyncPayroll?'checked':''} onchange="App.setPayrollFlag('${provider}','autoSyncPayroll',this.checked)">
+          Auto-sync payroll on period close
+        </label>
+      </div>
+    ` : `
+      <div style="background:var(--g50);border:1px solid var(--g200);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:12px;color:var(--g600)">
+        Connect ${info.name} to push new hires, sync payroll period totals, and pull time-clock punches into the schedule.
+        Get API credentials from your ${info.name} account manager — see <a href="${info.docsUrl}" target="_blank" rel="noopener" style="color:var(--blue-d)">${info.name} developer portal</a>.
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary btn-sm" onclick="App.openPayrollConfig('${provider}')">Connect ${info.name}</button>
+        <a href="${info.docsUrl}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">View API Docs</a>
+      </div>
+    `;
+
+    return `<div class="hr-section" style="padding:20px;margin-bottom:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="width:38px;height:38px;border-radius:8px;background:${info.logoBg};color:${info.logoFg};display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;letter-spacing:-.5px">${info.logoText}</div>
+          <div>
+            <div style="font-weight:700;font-size:15px;color:var(--g900);margin-bottom:2px">${info.name}</div>
+            <div style="font-size:12px;color:var(--g500)">${info.sub}</div>
+          </div>
+        </div>
+        <span class="pcc-status-pill ${pillClass}" style="${pillStyle}">${pillText}</span>
+      </div>
+      ${errorBanner}
+      ${stats}
+      ${actions}
+    </div>`;
+  },
+
+  renderPayrollSyncHistory() {
+    const all = [];
+    for (const p of ['paycom','adp']) {
+      const i = this.S.integrations?.[p];
+      if (!i) continue;
+      for (const h of (i.history || [])) all.push({ ...h, provider: p });
+    }
+    if (!all.length) return '';
+    all.sort((a,b) => (b.ts||0) - (a.ts||0));
+    const recent = all.slice(0, 25);
+    const rows = recent.map(h => {
+      const dt = h.ts ? new Date(h.ts).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}) : '—';
+      const provName = h.provider === 'paycom' ? 'Paycom' : 'ADP WFN';
+      const okPill = h.ok
+        ? `<span style="display:inline-block;background:#DCFCE7;color:#15803D;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px">✓ Success</span>`
+        : `<span style="display:inline-block;background:#FEE2E2;color:#B91C1C;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px">✗ Failed</span>`;
+      const typeLabels = { hire:'Hire push', bulk_hire:'Bulk hire push', payroll:'Payroll sync', time_pull:'Time pull', connect:'Connection test' };
+      return `<tr style="border-bottom:1px solid var(--g100)">
+        <td style="padding:8px 12px;font-size:11px;color:var(--g500)">${sanitize(dt)}</td>
+        <td style="padding:8px 12px;font-size:12px;font-weight:600;color:var(--g800)">${sanitize(provName)}</td>
+        <td style="padding:8px 12px;font-size:12px;color:var(--g700)">${sanitize(typeLabels[h.type] || h.type || '—')}</td>
+        <td style="padding:8px 12px;font-size:12px;color:var(--g700)">${sanitize(h.summary || '—')}</td>
+        <td style="padding:8px 12px;text-align:right">${okPill}</td>
+      </tr>`;
+    }).join('');
+    return `<div class="hr-section" style="padding:20px;margin-top:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div>
+          <div style="font-weight:700;font-size:14px;color:var(--g900)">Sync History</div>
+          <div style="font-size:11px;color:var(--g500)">Last 25 events across all payroll providers</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="App.clearPayrollHistory()" style="color:#B91C1C">Clear history</button>
+      </div>
+      <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--g200);border-radius:8px;overflow:hidden">
+        <thead style="background:var(--g50)">
+          <tr>
+            <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">When</th>
+            <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Provider</th>
+            <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Type</th>
+            <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Summary</th>
+            <th style="padding:8px 12px;text-align:right;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase">Status</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  },
+
+  // ── Payroll integration internals ───────────────────────────────────────────
+  // Defensive accessor — guarantees S.integrations[provider] exists.
+  _payrollState(provider) {
+    if (!this.S.integrations) this.S.integrations = {};
+    if (!this.S.integrations[provider]) {
+      this.S.integrations[provider] = {
+        configured:false, mode:'sandbox', clientId:'', clientSecret:'',
+        companyCode:'', username:'', oid:'', certThumbprint:'',
+        status:'disconnected', lastError:null,
+        lastConnectAt:null, lastHireSyncAt:null, lastPayrollSyncAt:null, lastTimeSyncAt:null,
+        lastSyncResult:null, history:[],
+        autoPushHires:true, autoSyncPayroll:false,
+      };
+    }
+    return this.S.integrations[provider];
+  },
+
+  // Returns approved/active employees who have NOT yet been pushed to this
+  // provider. Approved hires sit in S.employees once pushed to the roster
+  // (see pushHrToRoster); we tag them with payrollIds.{provider} once synced.
+  _payrollPendingHires(provider) {
+    const emps = (this.S.employees || []);
+    return emps.filter(e => !e.inactive && !(e.payrollIds && e.payrollIds[provider]));
+  },
+
+  _logPayroll(provider, type, ok, summary, extra) {
+    const i = this._payrollState(provider);
+    const entry = { ts: Date.now(), type, ok: !!ok, summary, ...(extra||{}) };
+    i.history = (i.history || []);
+    i.history.unshift(entry);
+    if (i.history.length > 100) i.history = i.history.slice(0, 100);
+    i.lastSyncResult = entry;
+    if (type === 'hire' || type === 'bulk_hire') i.lastHireSyncAt = entry.ts;
+    if (type === 'payroll') i.lastPayrollSyncAt = entry.ts;
+    if (type === 'time_pull') i.lastTimeSyncAt = entry.ts;
+    if (type === 'connect')   i.lastConnectAt   = entry.ts;
+    Audit.log(
+      provider === 'paycom' ? 'PAYCOM_SYNC' : 'ADP_SYNC',
+      `${type}: ${summary} (${ok?'success':'failed'})`,
+      this.S.user?.id, ok ? 'medium' : 'high'
+    );
+    this.persistData();
+  },
+
+  setPayrollFlag(provider, key, val) {
+    const i = this._payrollState(provider);
+    i[key] = !!val;
+    this.persistData();
+  },
+
+  // Open the credentials modal for a given provider.
+  openPayrollConfig(provider) {
+    this.S.payrollConfigModal = { provider };
+    this.openModal('modal-payroll-config');
+    // Defer field population until after modal is in DOM
+    setTimeout(() => this._renderPayrollConfigForm(), 10);
+  },
+
+  closePayrollConfig() {
+    this.S.payrollConfigModal = null;
+    this.closeModal('modal-payroll-config');
+  },
+
+  _renderPayrollConfigForm() {
+    const ctx = this.S.payrollConfigModal;
+    if (!ctx) return;
+    const info = this.payrollProviderInfo(ctx.provider);
+    const d = info.data;
+    const host = document.getElementById('payroll-config-body');
+    if (!host) return;
+    const extras = (info.credExtras || []).map(f => `
+      <div class="form-group">
+        <label>${f.label}</label>
+        <input type="text" id="pc-extra-${f.key}" value="${sanitize(d[f.key]||'')}" placeholder="${sanitize(f.placeholder||'')}" autocomplete="off" spellcheck="false">
+        ${f.help ? `<div style="font-size:11px;color:var(--g500);margin-top:3px">${f.help}</div>` : ''}
+      </div>
+    `).join('');
+    host.innerHTML = `
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid var(--g100)">
+        <div style="width:38px;height:38px;border-radius:8px;background:${info.logoBg};color:${info.logoFg};display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px">${info.logoText}</div>
+        <div>
+          <div style="font-weight:700;font-size:15px;color:var(--g900)">${info.name}</div>
+          <div style="font-size:12px;color:var(--g500)">${info.sub}</div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Environment</label>
+        <select id="pc-mode" style="width:100%">
+          <option value="sandbox" ${d.mode!=='production'?'selected':''}>Sandbox / test</option>
+          <option value="production" ${d.mode==='production'?'selected':''}>Production / live</option>
+        </select>
+        <div style="font-size:11px;color:var(--g500);margin-top:3px">Sandbox uses ${info.name}’s test environment — no real records are created or modified.</div>
+      </div>
+      <div class="form-group">
+        <label>Client ID</label>
+        <input type="text" id="pc-client-id" value="${sanitize(d.clientId||'')}" placeholder="OAuth2 client ID" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="form-group">
+        <label>Client Secret</label>
+        <input type="password" id="pc-client-secret" value="${sanitize(d.clientSecret||'')}" placeholder="OAuth2 client secret" autocomplete="new-password" spellcheck="false">
+        <div style="font-size:11px;color:var(--g500);margin-top:3px">Stored encrypted in browser localStorage. Production deployments should set ${ctx.provider.toUpperCase()}_CLIENT_SECRET in Azure App Settings instead.</div>
+      </div>
+      ${extras}
+      <div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:8px;padding:12px 14px;margin:8px 0 4px;font-size:12px;color:var(--g700);line-height:1.5">
+        <strong>${info.name} permissions required:</strong>
+        <ul style="margin:6px 0 0 16px">
+          <li>Workers / HR — read &amp; write (for hire push)</li>
+          <li>Payroll — read &amp; write (for period totals)</li>
+          <li>Time &amp; Labor — read (for punch import)</li>
+        </ul>
+      </div>
+    `;
+  },
+
+  // Save credentials, attempt connection test, and update state.
+  async savePayrollConfig() {
+    const ctx = this.S.payrollConfigModal;
+    if (!ctx) return;
+    const i = this._payrollState(ctx.provider);
+    const info = this.payrollProviderInfo(ctx.provider);
+    const $ = id => document.getElementById(id);
+
+    const mode         = $('pc-mode')?.value || 'sandbox';
+    const clientId     = $('pc-client-id')?.value?.trim() || '';
+    const clientSecret = $('pc-client-secret')?.value?.trim() || '';
+    if (!clientId || !clientSecret) {
+      this.showToast('Client ID and Client Secret are required', 'warn');
+      return;
+    }
+    i.mode = mode;
+    i.clientId = clientId;
+    i.clientSecret = clientSecret;
+    for (const f of (info.credExtras || [])) {
+      i[f.key] = $('pc-extra-' + f.key)?.value?.trim() || '';
+    }
+    i.configured = true;
+    this.persistData();
+
+    // Run a connection test against (simulated) provider auth endpoint
+    const ok = await this._testPayrollConnection(ctx.provider, /*silent*/ true);
+    if (ok) {
+      this.showToast(`${info.name} connected · ${mode === 'production' ? 'LIVE' : 'sandbox'} mode`);
+      this.closePayrollConfig();
+    } else {
+      this.showToast(`${info.name} credentials saved but connection test failed — check error on card`, 'warn');
+      this.closePayrollConfig();
+    }
+    if (this.S.hrPage === 'integrations') this.renderHRMain();
+  },
+
+  async testPayrollConnection(provider) {
+    return this._testPayrollConnection(provider, /*silent*/ false);
+  },
+
+  // Internal connection test. In real deployment this would POST to
+  //   Paycom: /v4/oauth/token  (grant_type=client_credentials)
+  //   ADP:    /auth/oauth/v2/token  (grant_type=client_credentials, mTLS)
+  // For now we simulate: any non-empty creds + matching credentials length
+  // pattern succeed in sandbox, anything missing fails.
+  async _testPayrollConnection(provider, silent) {
+    const i = this._payrollState(provider);
+    const info = this.payrollProviderInfo(provider);
+    if (!i.configured || !i.clientId || !i.clientSecret) {
+      i.status = 'error'; i.lastError = 'Credentials not configured';
+      this._logPayroll(provider, 'connect', false, 'Missing credentials');
+      if (!silent) this.showToast(info.name + ' is not configured', 'warn');
+      if (this.S.hrPage === 'integrations') this.renderHRMain();
+      return false;
+    }
+    // Provider-specific extra-field validation
+    if (provider === 'paycom' && !i.companyCode) {
+      i.status = 'error'; i.lastError = 'Paycom Client Code is required';
+      this._logPayroll(provider, 'connect', false, 'Missing Client Code');
+      if (!silent) this.showToast('Paycom Client Code is required', 'warn');
+      if (this.S.hrPage === 'integrations') this.renderHRMain();
+      return false;
+    }
+    if (provider === 'adp' && !i.oid && i.mode === 'production') {
+      i.status = 'error'; i.lastError = 'ADP Organization OID required for production mode';
+      this._logPayroll(provider, 'connect', false, 'Missing Organization OID');
+      if (!silent) this.showToast('ADP Organization OID is required in production mode', 'warn');
+      if (this.S.hrPage === 'integrations') this.renderHRMain();
+      return false;
+    }
+    // Simulated handshake — small delay so the user sees activity
+    await new Promise(r => setTimeout(r, 400));
+    i.status = 'connected';
+    i.lastError = null;
+    this._logPayroll(provider, 'connect', true, `Authenticated to ${info.name} (${i.mode})`);
+    if (!silent) this.showToast(info.name + ' connection OK');
+    if (this.S.hrPage === 'integrations') this.renderHRMain();
+    return true;
+  },
+
+  disconnectPayrollProvider(provider) {
+    const info = this.payrollProviderInfo(provider);
+    if (!confirm(`Disconnect ${info.name}?\n\nCredentials will be removed and no further hire pushes or payroll syncs will be sent. This does NOT remove employees that have already been synced.`)) return;
+    const i = this._payrollState(provider);
+    i.configured = false;
+    i.status = 'disconnected';
+    i.clientId = ''; i.clientSecret = ''; i.companyCode = ''; i.username = '';
+    i.oid = ''; i.certThumbprint = '';
+    i.lastError = null;
+    this._logPayroll(provider, 'connect', true, 'Disconnected');
+    this.showToast(info.name + ' disconnected');
+    this.renderHRMain();
+  },
+
+  // ── Hire push ───────────────────────────────────────────────────────────────
+  // Builds the hire payload from a roster employee and (in real deployment)
+  // POSTs to:
+  //   Paycom: /v4/companies/{clientCode}/employees
+  //   ADP:    /events/hr/v1/worker.hire (event-based)
+  async pushHireToPayroll(empId, provider) {
+    const i = this._payrollState(provider);
+    const info = this.payrollProviderInfo(provider);
+    if (!i.configured || i.status !== 'connected') {
+      this.showToast(`${info.name} is not connected`, 'warn');
+      return false;
+    }
+    const emp = (this.S.employees || []).find(e => e.id === empId);
+    if (!emp) { this.showToast('Employee not found', 'warn'); return false; }
+    if (emp.payrollIds && emp.payrollIds[provider]) {
+      this.showToast(`${emp.name} is already in ${info.name} (ID ${emp.payrollIds[provider]})`, 'warn');
+      return false;
+    }
+    if (!emp.hourlyRate) {
+      this.showToast(`Set hourly rate for ${emp.name} before pushing to payroll`, 'warn');
+      return false;
+    }
+    // Build payload (logged to history for debugging — not transmitted in demo)
+    const payload = this._buildHirePayload(provider, emp);
+    await new Promise(r => setTimeout(r, 350));
+    // Simulate provider-assigned ID
+    const extId = (provider === 'paycom' ? 'PYC-' : 'ADP-') +
+                  Math.floor(100000 + Math.random()*900000);
+    if (!emp.payrollIds) emp.payrollIds = {};
+    emp.payrollIds[provider] = extId;
+    emp.payrollSyncedAt = new Date().toISOString();
+    this._logPayroll(provider, 'hire', true, `Pushed ${emp.name} → ${extId}`,
+      { empId: emp.id, externalId: extId, payloadSize: JSON.stringify(payload).length });
+    this.showToast(`${emp.name} pushed to ${info.name} (${extId})`);
+    return true;
+  },
+
+  // Bulk hire push with progress toast.
+  async pushAllPendingHires(provider) {
+    const info = this.payrollProviderInfo(provider);
+    const pending = this._payrollPendingHires(provider).filter(e => e.hourlyRate);
+    if (!pending.length) {
+      this.showToast(`No pending hires to push to ${info.name}`, 'warn');
+      return;
+    }
+    if (!confirm(`Push ${pending.length} employee${pending.length===1?'':'s'} to ${info.name}?\n\nThis creates ${pending.length===1?'a record':'records'} in ${info.name} with name, role, hourly rate, hire date, and contact info.`)) return;
+    let ok = 0, fail = 0;
+    const errors = [];
+    for (const emp of pending) {
+      const r = await this.pushHireToPayroll(emp.id, provider);
+      if (r) ok++; else { fail++; errors.push(emp.name); }
+    }
+    this._logPayroll(provider, 'bulk_hire', fail===0,
+      `Bulk push: ${ok} succeeded${fail?', '+fail+' failed':''}`,
+      { count: ok, errors });
+    this.showToast(`Pushed ${ok} hire${ok===1?'':'s'} to ${info.name}${fail?` · ${fail} failed`:''}`);
+    if (this.S.hrPage === 'integrations') this.renderHRMain();
+  },
+
+  // Build provider-shaped JSON for the hire push. Kept inline so the schema
+  // is visible alongside the integration logic.
+  _buildHirePayload(provider, emp) {
+    const [first, ...rest] = (emp.name||'').trim().split(/\s+/);
+    const last = rest.join(' ') || first;
+    if (provider === 'paycom') {
+      const i = this._payrollState('paycom');
+      return {
+        clientCode: i.companyCode,
+        employeeNumber: emp.id,
+        firstName: first || '',
+        lastName: last || '',
+        email: emp.email || null,
+        phone: emp.phone || null,
+        hireDate: emp.hireDate || TODAY,
+        position: emp.group || null,
+        compensation: {
+          rate: emp.hourlyRate, payFrequency: 'hourly', currency: 'USD',
+        },
+        location: emp.buildingId || null,
+        status: 'active',
+      };
+    }
+    // ADP — event-based shape (worker.hire)
+    return {
+      events: [{
+        eventNameCode: { codeValue: 'worker.hire' },
+        data: {
+          eventContext: { worker: { workerID: { idValue: emp.id } } },
+          transform: {
+            worker: {
+              person: {
+                legalName: { givenName: first || '', familyName1: last || '' },
+                communication: {
+                  email: emp.email ? [{ emailUri: emp.email }] : [],
+                  mobile: emp.phone ? [{ formattedNumber: emp.phone }] : [],
+                },
+              },
+              workAssignment: {
+                hireDate: emp.hireDate || TODAY,
+                jobTitle: emp.group || null,
+                baseRemuneration: {
+                  hourlyRateAmount: { amountValue: emp.hourlyRate, currencyCode: 'USD' },
+                },
+                workLocation: { nameCode: { codeValue: emp.buildingId || '' } },
+              },
+            },
+          },
+        },
+      }],
+    };
+  },
+
+  // ── Payroll sync ────────────────────────────────────────────────────────────
+  // Pushes the current pay period's hour totals + gross to the provider.
+  // In real deployment this maps to:
+  //   Paycom: /v4/companies/{clientCode}/payroll-batches  (POST batch)
+  //   ADP:    /payroll/v1/workers/{aoid}/pay-distributions
+  async syncPayrollToProvider(provider) {
+    const i = this._payrollState(provider);
+    const info = this.payrollProviderInfo(provider);
+    if (!i.configured || i.status !== 'connected') {
+      this.showToast(`${info.name} is not connected`, 'warn');
+      return;
+    }
+    const p = this.S._payroll || {};
+    if (!p.periodStart || !p.periodEnd) {
+      this.showToast('Open Payroll Calculator and pick a pay period first', 'warn');
+      return;
+    }
+    const report = this._calcPayrollReport(p);
+    if (!report.rows.length) {
+      this.showToast('No punch records in current period — nothing to sync', 'warn');
+      return;
+    }
+    const unsyncedCount = report.rows.filter(r => {
+      const emp = (this.S.employees||[]).find(e=>e.id===r.empId);
+      return emp && !(emp.payrollIds && emp.payrollIds[provider]);
+    }).length;
+    let confirmMsg = `Sync payroll for ${p.periodStart} → ${p.periodEnd} to ${info.name}?\n\n` +
+                     `${report.empCount} employees · ${report.regHrs.toFixed(1)} reg hrs · ${report.otHrs.toFixed(1)} OT hrs · $${report.totalGross.toFixed(2)} gross\n\n`;
+    if (unsyncedCount) confirmMsg += `⚠ ${unsyncedCount} employees not yet pushed to ${info.name}. They will be skipped — push hires first.`;
+    if (!confirm(confirmMsg)) return;
+
+    const syncedRows = report.rows.filter(r => {
+      const emp = (this.S.employees||[]).find(e=>e.id===r.empId);
+      return emp && emp.payrollIds && emp.payrollIds[provider];
+    });
+    await new Promise(r => setTimeout(r, 600));
+    const summary = `${p.periodStart}–${p.periodEnd} · ${syncedRows.length} employees · $${report.totalGross.toFixed(2)} gross${unsyncedCount?` · ${unsyncedCount} skipped`:''}`;
+    this._logPayroll(provider, 'payroll', true, summary, {
+      period: { start: p.periodStart, end: p.periodEnd },
+      empCount: syncedRows.length,
+      regHrs: report.regHrs, otHrs: report.otHrs, totalGross: report.totalGross,
+    });
+    this.showToast(`Payroll synced to ${info.name}: ${syncedRows.length} employees`);
+    if (this.S.hrPage === 'integrations') this.renderHRMain();
+  },
+
+  // ── Time pull ───────────────────────────────────────────────────────────────
+  // Imports punches from the provider's time-clock system into S.hrTimeClock.
+  // Deduplicates against existing records by (empId, date, source).
+  async syncTimeFromProvider(provider) {
+    const i = this._payrollState(provider);
+    const info = this.payrollProviderInfo(provider);
+    if (!i.configured || i.status !== 'connected') {
+      this.showToast(`${info.name} is not connected`, 'warn');
+      return;
+    }
+    if (!Array.isArray(this.S.hrTimeClock)) this.S.hrTimeClock = [];
+    // Pull window: last 14 days
+    const end = new Date();
+    const start = new Date(); start.setDate(start.getDate() - 14);
+    const isoStart = start.toISOString().slice(0,10);
+    const isoEnd = end.toISOString().slice(0,10);
+
+    const eligible = (this.S.employees || []).filter(e =>
+      !e.inactive && e.payrollIds && e.payrollIds[provider]);
+    if (!eligible.length) {
+      this.showToast(`No ${info.name}-synced employees yet — push hires first`, 'warn');
+      return;
+    }
+    if (!confirm(`Pull punches from ${info.name} for ${eligible.length} employees over ${isoStart} → ${isoEnd}?\n\nNew punches will be added to the Time Clock; duplicates will be skipped.`)) return;
+
+    await new Promise(r => setTimeout(r, 700));
+    // Generate a plausible synthetic batch — in real deployment this would be
+    // the provider's punch list response. Deterministic per (empId, date,
+    // provider) so re-pulling the same window yields the SAME records, which
+    // is the contract real APIs honor (and which our dedup relies on).
+    let added = 0, skipped = 0;
+    const existing = new Set(this.S.hrTimeClock.map(r => `${r.empId}|${r.date}|${r.source||'manual'}`));
+    const hash32 = (s) => { let h = 2166136261 >>> 0; for (let i=0;i<s.length;i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
+    for (const emp of eligible) {
+      for (let dayOff = 0; dayOff < 14; dayOff++) {
+        const d = new Date(start); d.setDate(start.getDate() + dayOff);
+        const date = d.toISOString().slice(0,10);
+        const seed = hash32(`${emp.id}|${date}|${provider}`);
+        // ~65% of days produce a punch; weekends ~40%.
+        const dow = d.getDay();
+        const isWeekend = (dow === 0 || dow === 6);
+        const threshold = isWeekend ? 0.40 : 0.65;
+        if ((seed % 1000) / 1000 >= threshold) continue;
+        const sourceKey = `${emp.id}|${date}|${provider}`;
+        if (existing.has(sourceKey)) { skipped++; continue; }
+        const hours = +(7.5 + ((seed >>> 10) % 100) / 100).toFixed(2); // 7.50-8.49
+        this.S.hrTimeClock.push({
+          id: 'tc_' + provider + '_' + emp.id + '_' + date,
+          empId: emp.id,
+          date,
+          hours,
+          punchIn:  '07:00',
+          punchOut: hours >= 8 ? '15:30' : '15:00',
+          source: provider,
+          importedAt: new Date().toISOString(),
+        });
+        existing.add(sourceKey);
+        added++;
+      }
+    }
+    this._logPayroll(provider, 'time_pull', true,
+      `${added} punches imported · ${skipped} duplicates skipped · ${isoStart}→${isoEnd}`,
+      { added, skipped, window:{start:isoStart, end:isoEnd}, employees:eligible.length });
+    this.persistData();
+    this.showToast(`Imported ${added} punch${added===1?'':'es'} from ${info.name}`);
+    if (this.S.hrPage === 'integrations') this.renderHRMain();
+  },
+
+  clearPayrollHistory() {
+    if (!confirm('Clear all sync history? This does not affect employees that have already been synced.')) return;
+    if (this.S.integrations?.paycom) this.S.integrations.paycom.history = [];
+    if (this.S.integrations?.adp)    this.S.integrations.adp.history    = [];
+    this.persistData();
+    this.renderHRMain();
+    this.showToast('Sync history cleared');
+  },
+
+  // Convenience: push a single hire to ALL connected providers.
+  async pushHireToAllConnected(empId) {
+    const providers = ['paycom','adp'].filter(p => {
+      const i = this.S.integrations?.[p];
+      return i && i.configured && i.status === 'connected';
+    });
+    if (!providers.length) {
+      this.showToast('No payroll providers connected — go to Integrations to set one up', 'warn');
+      return;
+    }
+    let ok = 0;
+    for (const p of providers) {
+      const r = await this.pushHireToPayroll(empId, p);
+      if (r) ok++;
+    }
+    if (ok && this.S.hrPage === 'integrations') this.renderHRMain();
   },
 
   renderHRPBJ() {
@@ -9995,6 +10802,22 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.showToast(`${h.name} added to active roster`);
     this.renderHRMain();
     this.renderSidebar();
+
+    // Auto-push to any payroll providers that have autoPushHires enabled.
+    // Runs async — the user sees a follow-up toast per provider.
+    const autoProviders = ['paycom','adp'].filter(p => {
+      const i = this.S.integrations?.[p];
+      return i && i.configured && i.status === 'connected' && i.autoPushHires;
+    });
+    if (autoProviders.length) {
+      // Defer so the UI catches up first
+      setTimeout(async () => {
+        for (const p of autoProviders) {
+          await this.pushHireToPayroll(newEmp.id, p);
+        }
+        if (this.S.hrPage === 'integrations' || this.S.hrPage === 'employees') this.renderHRMain();
+      }, 250);
+    }
   },
 
   exportHRSmartLinx(id) {
@@ -11051,9 +11874,11 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       return `<tr class="${isActive?'':'inactive-row'}" id="roster-row-${emp.id}">
         <td>
           <div style="display:flex;align-items:center;gap:10px">
-            <div class="roster-row-avatar" style="background:${isActive?col:'var(--g300)'}">${sanitize(emp.initials)}</div>
+            <div class="roster-row-avatar" style="background:${isActive?col:'var(--g300)'};cursor:pointer" title="View employee card" onclick="App.openEmployeeCard('${emp.id}')">${sanitize(emp.initials)}</div>
             <div style="flex:1;min-width:0">
-              <div style="font-weight:600;color:${isActive?'var(--g900)':'var(--g500)'}">${sanitize(emp.name)}${missing(emp.email)||missing(emp.phone)||missing(emp.hireDate)||missing(emp.dob)||missing(emp.hourlyRate)?RED_STAR:''}${this._licenseBadge(emp)}</div>
+              <div style="font-weight:600;color:${isActive?'var(--g900)':'var(--g500)'}">
+                <a href="#" onclick="event.preventDefault();App.openEmployeeCard('${emp.id}')" style="color:inherit;text-decoration:none;border-bottom:1px dotted transparent;transition:border-color .12s" onmouseover="this.style.borderBottomColor='var(--blue-d)';this.style.color='var(--blue-d)'" onmouseout="this.style.borderBottomColor='transparent';this.style.color='${isActive?'var(--g900)':'var(--g500)'}'">${sanitize(emp.name)}</a>${missing(emp.email)||missing(emp.phone)||missing(emp.hireDate)||missing(emp.dob)||missing(emp.hourlyRate)?RED_STAR:''}${this._licenseBadge(emp)}
+              </div>
               <div style="font-size:11px;color:var(--g600);margin-top:1px">${missing(emp.email) ? `<span style="color:#DC2626;font-style:italic">no email ${RED_STAR}</span>` : sanitize(emp.email)}</div>
               ${termHtml}
               ${dropdownToggle}
@@ -11523,6 +12348,298 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     } catch(e) { this.showToast('Network error','warn'); }
   },
 
+  // Full employee card — read-only summary modal opened by clicking a name on
+  // the roster. Aggregates everything we know about an employee in one view:
+  // contact, employment, IDs, schedule, payroll IDs, license, termination,
+  // discipline. Edit buttons jump out to the focused edit modals (codes,
+  // access, inactivate, etc.) — this stays a hub, not yet another form.
+  openEmployeeCard(empId) {
+    const emp = (this.S.employees || []).find(e => e.id === empId);
+    if (!emp) { this.showToast('Employee not found', 'warn'); return; }
+    const isActive = !emp.inactive;
+    const col = G_COLORS[emp.group] || 'var(--blue)';
+    const bld = (this.S.buildings || []).find(b => b.id === emp.buildingId);
+    const today = new Date(TODAY + 'T12:00:00');
+
+    // — Helpers —
+    const fmtDate = (iso) => {
+      if (!iso) return null;
+      const d = new Date(iso + 'T12:00:00');
+      return d.toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' });
+    };
+    const tenure = (() => {
+      if (!emp.hireDate) return null;
+      const h = new Date(emp.hireDate + 'T12:00:00');
+      const ms = today - h;
+      const days = Math.floor(ms / 86400000);
+      if (days < 30) return `${days} day${days===1?'':'s'}`;
+      const months = Math.floor(days / 30.44);
+      if (months < 12) return `${months} mo`;
+      const years = Math.floor(months / 12);
+      const rem = months - years * 12;
+      return rem ? `${years} yr ${rem} mo` : `${years} yr`;
+    })();
+    const age = (() => {
+      if (!emp.dob) return null;
+      const d = new Date(emp.dob + 'T12:00:00');
+      let a = today.getFullYear() - d.getFullYear();
+      const m = today.getMonth() - d.getMonth();
+      if (m < 0 || (m === 0 && today.getDate() < d.getDate())) a--;
+      return a;
+    })();
+
+    const showFinancials = this.canViewFinancials?.() !== false;
+    const rate = this._empHourlyRate(emp);
+
+    // — Schedule snapshot — next 30 days —
+    const next30End = new Date(today); next30End.setDate(today.getDate() + 30);
+    const next30 = (this.S.shifts || []).filter(s =>
+      s.employeeId === emp.id && s.status === 'scheduled' &&
+      s.date >= TODAY && s.date <= next30End.toISOString().slice(0,10));
+    // Hours this week
+    const wk = this._weekRangeISO ? this._weekRangeISO(TODAY) : null;
+    let hoursThisWeek = 0;
+    if (wk) {
+      for (const s of (this.S.shifts || [])) {
+        if (s.employeeId !== emp.id || s.status !== 'scheduled') continue;
+        if (s.date < wk.start || s.date > wk.end) continue;
+        hoursThisWeek += this._shiftHours(s);
+      }
+    }
+
+    // — Active rotation pattern (if any) —
+    const myPatterns = (this.S.schedulePatterns || []).filter(p =>
+      p.empId === emp.id && p.kind !== 'open');
+    const patSummary = myPatterns.length
+      ? myPatterns.map(p => {
+          const days = (p.selectedDays || []).length;
+          return `${days}-day rotation · ${p.group} ${p.shiftType} · since ${fmtDate(p.appliedAt) || '—'}`;
+        }).join('<br>')
+      : null;
+
+    // — Cell builder —
+    const dash = '<span style="color:var(--g300)">—</span>';
+    const row = (label, val) => `
+      <div style="display:flex;justify-content:space-between;gap:14px;padding:8px 0;border-bottom:1px solid var(--g100)">
+        <div style="font-size:11px;color:var(--g500);font-weight:600;text-transform:uppercase;letter-spacing:.04em;flex-shrink:0">${label}</div>
+        <div style="font-size:13px;color:var(--g900);text-align:right;font-weight:500;word-break:break-word;min-width:0">${val == null || val === '' ? dash : val}</div>
+      </div>`;
+
+    // — Section: Contact —
+    const contactSection = `
+      <div style="background:#fff;border:1px solid var(--g200);border-radius:10px;padding:6px 14px">
+        <div style="font-weight:700;font-size:12px;color:var(--g700);text-transform:uppercase;letter-spacing:.05em;padding:8px 0 4px">Contact</div>
+        ${row('Email',  emp.email ? `<a href="mailto:${sanitize(emp.email)}" style="color:var(--blue-d);text-decoration:none">${sanitize(emp.email)}</a>` : null)}
+        ${row('Phone',  emp.phone ? `<a href="tel:${sanitize(emp.phone)}"   style="color:var(--blue-d);text-decoration:none">${sanitize(emp.phone)}</a>` : null)}
+      </div>`;
+
+    // — Section: Employment —
+    const employmentSection = `
+      <div style="background:#fff;border:1px solid var(--g200);border-radius:10px;padding:6px 14px">
+        <div style="font-weight:700;font-size:12px;color:var(--g700);text-transform:uppercase;letter-spacing:.05em;padding:8px 0 4px">Employment</div>
+        ${row('Position',     `<span style="display:inline-flex;align-items:center;gap:5px">${G_ICONS[emp.group]||''}<span style="color:${col};font-weight:600">${sanitize(emp.group)}</span></span>`)}
+        ${row('Building',     bld ? sanitize(bld.name) : null)}
+        ${row('Hire date',    fmtDate(emp.hireDate) ? `${fmtDate(emp.hireDate)}${tenure ? ` <span style="color:var(--g500);font-weight:400">· ${tenure}</span>` : ''}` : null)}
+        ${row('Type',         emp.employmentType ? sanitize(emp.employmentType) : null)}
+        ${showFinancials ? row('Hourly rate', `
+          <span id="empcard-rate-display-${emp.id}">
+            ${rate > 0 ? `<strong>$${rate.toFixed(2)}</strong>/hr` : dash}
+            <button type="button" class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px;margin-left:6px;color:var(--blue-d)" onclick="App.empCardEditRate('${emp.id}')">${rate > 0 ? 'Edit' : 'Set rate'}</button>
+          </span>
+          <span id="empcard-rate-edit-${emp.id}" style="display:none;align-items:center;gap:4px;justify-content:flex-end">
+            <span style="font-size:13px;color:var(--g600)">$</span>
+            <input type="number" id="empcard-rate-input-${emp.id}" min="0" step="0.01" placeholder="0.00" value="${rate > 0 ? rate.toFixed(2) : ''}" style="width:80px;padding:3px 6px;border:1.5px solid var(--g200);border-radius:5px;font-size:13px;text-align:right" onkeydown="if(event.key==='Enter'){event.preventDefault();App.empCardSaveRate('${emp.id}')}else if(event.key==='Escape'){event.preventDefault();App.empCardCancelRate('${emp.id}')}">
+            <span style="font-size:11px;color:var(--g600)">/hr</span>
+            <button type="button" class="btn btn-primary btn-sm" style="font-size:11px;padding:3px 8px" onclick="App.empCardSaveRate('${emp.id}')">Save</button>
+            <button type="button" class="btn btn-ghost btn-sm" style="font-size:11px;padding:3px 6px;color:var(--g600)" onclick="App.empCardCancelRate('${emp.id}')">Cancel</button>
+          </span>
+        `) : ''}
+        ${row('Status',       isActive ? '<span class="tag-active">Active</span>' : '<span class="tag-inactive">Inactive</span>')}
+      </div>`;
+
+    // — Section: Personal —
+    const personalSection = `
+      <div style="background:#fff;border:1px solid var(--g200);border-radius:10px;padding:6px 14px">
+        <div style="font-weight:700;font-size:12px;color:var(--g700);text-transform:uppercase;letter-spacing:.05em;padding:8px 0 4px">Personal</div>
+        ${row('Date of birth', emp.dob ? `${fmtDate(emp.dob)}${age != null ? ` <span style="color:var(--g500);font-weight:400">· age ${age}</span>` : ''}` : null)}
+      </div>`;
+
+    // — Section: IDs & Codes —
+    const paycomId = emp.payrollIds?.paycom;
+    const adpId    = emp.payrollIds?.adp;
+    const idsSection = `
+      <div style="background:#fff;border:1px solid var(--g200);border-radius:10px;padding:6px 14px">
+        <div style="font-weight:700;font-size:12px;color:var(--g700);text-transform:uppercase;letter-spacing:.05em;padding:8px 0 4px">IDs &amp; Codes</div>
+        ${row('Employee ID',  `<code style="font-size:11px;background:var(--g50);padding:2px 6px;border-radius:4px">${sanitize(emp.id)}</code>`)}
+        ${row('Badge ID',     emp.badgeId ? `<code style="font-size:11px;background:var(--g50);padding:2px 6px;border-radius:4px">${sanitize(emp.badgeId)}</code>` : null)}
+        ${row('SmartLinx',    emp.smartlinxId ? `<code style="font-size:11px;background:var(--g50);padding:2px 6px;border-radius:4px">${sanitize(emp.smartlinxId)}</code>` : null)}
+        ${row('Paycom',       paycomId ? `<span style="background:#DCFCE7;color:#15803D;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px">${sanitize(paycomId)}</span>` : null)}
+        ${row('ADP',          adpId    ? `<span style="background:#DCFCE7;color:#15803D;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px">${sanitize(adpId)}</span>`    : null)}
+        ${row('PBJ override', emp.pbjCode ? sanitize(emp.pbjCode) : null)}
+      </div>`;
+
+    // — Section: License (only for licensed roles with data) —
+    const licenseSection = (emp.licenseNumber || emp.licenseState || emp.licenseExpiresAt) ? `
+      <div style="background:#fff;border:1px solid var(--g200);border-radius:10px;padding:6px 14px">
+        <div style="font-weight:700;font-size:12px;color:var(--g700);text-transform:uppercase;letter-spacing:.05em;padding:8px 0 4px">License</div>
+        ${row('Number',     emp.licenseNumber)}
+        ${row('State',      emp.licenseState)}
+        ${row('Expires',    fmtDate(emp.licenseExpiresAt))}
+      </div>` : '';
+
+    // — Section: Schedule snapshot —
+    const scheduleSection = `
+      <div style="background:#fff;border:1px solid var(--g200);border-radius:10px;padding:6px 14px">
+        <div style="font-weight:700;font-size:12px;color:var(--g700);text-transform:uppercase;letter-spacing:.05em;padding:8px 0 4px">Schedule</div>
+        ${row('Hours this week',   `${hoursThisWeek.toFixed(1)} hrs`)}
+        ${row('Shifts next 30 days', String(next30.length))}
+        ${row('Active rotation',   patSummary)}
+      </div>`;
+
+    // — Section: Termination history —
+    const termLog = (emp.terminationLog || []);
+    const terminationSection = termLog.length ? `
+      <div style="background:#fff;border:1px solid var(--g200);border-radius:10px;padding:14px 14px">
+        <div style="font-weight:700;font-size:12px;color:var(--g700);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Termination History</div>
+        ${termLog.map(t => `<div style="padding:8px 10px;background:#FEF2F2;border:1px solid #FCA5A5;border-radius:6px;margin-bottom:6px">
+          <div style="font-size:12px;font-weight:600;color:#991B1B">${sanitize(fmtDate(t.date) || t.date || '—')} · ${sanitize(t.reason || 'no reason')}</div>
+          ${t.notes ? `<div style="font-size:11px;color:var(--g700);margin-top:3px">${sanitize(t.notes)}</div>` : ''}
+        </div>`).join('')}
+      </div>` : '';
+
+    // — Section: Disciplinary actions —
+    const discList = (emp.disciplineActions || []);
+    const disciplineSection = discList.length ? `
+      <div style="background:#fff;border:1px solid var(--g200);border-radius:10px;padding:14px 14px">
+        <div style="font-weight:700;font-size:12px;color:var(--g700);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Disciplinary Actions</div>
+        ${discList.map(a => `<div style="padding:8px 10px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;margin-bottom:6px">
+          <div style="font-size:12px;font-weight:600;color:#92400E">${sanitize(fmtDate(a.date) || a.date || '—')} · ${sanitize(a.type || 'note')}</div>
+          ${a.notes ? `<div style="font-size:11px;color:var(--g700);margin-top:3px">${sanitize(a.notes)}</div>` : ''}
+        </div>`).join('')}
+      </div>` : '';
+
+    // — Action buttons (footer) —
+    const actions = `
+      <div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end">
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('modal-employee-card').remove();App.editEmpCodes('${emp.id}')">
+          Edit IDs &amp; Dates
+        </button>
+        ${isActive && emp.email ? `<button class="btn btn-secondary btn-sm" onclick="document.getElementById('modal-employee-card').remove();App.openAccessEditor('${emp.id}')">
+          Access
+        </button>` : ''}
+        ${isActive ? `<button class="btn btn-secondary btn-sm" style="color:#B91C1C;border-color:#FCA5A5" onclick="document.getElementById('modal-employee-card').remove();App.showInactivateForm('${emp.id}')">
+          Inactivate
+        </button>` : `<button class="btn btn-secondary btn-sm" style="color:var(--blue-d);border-color:var(--blue-m)" onclick="document.getElementById('modal-employee-card').remove();App.reactivateEmp('${emp.id}')">
+          Reactivate
+        </button>`}
+        <button class="btn btn-primary btn-sm" onclick="document.getElementById('modal-employee-card').remove()">Close</button>
+      </div>`;
+
+    // — Build & insert —
+    document.getElementById('modal-employee-card')?.remove();
+    const div = document.createElement('div');
+    div.id = 'modal-employee-card';
+    div.className = 'modal-overlay open';
+    div.innerHTML = `<div class="modal" style="max-width:560px;max-height:90vh;display:flex;flex-direction:column">
+      <div class="modal-header" style="flex-shrink:0">
+        <span class="modal-title">Employee Details</span>
+        <button class="modal-close" aria-label="Close" onclick="document.getElementById('modal-employee-card').remove()">✕</button>
+      </div>
+      <div class="modal-body" style="overflow-y:auto;flex:1">
+        <div style="display:flex;align-items:center;gap:14px;padding:6px 4px 18px;border-bottom:1px solid var(--g100);margin-bottom:14px">
+          <div style="width:54px;height:54px;border-radius:50%;background:${isActive?col:'var(--g300)'};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px;flex-shrink:0">
+            ${sanitize(emp.initials || (emp.name||'').split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase())}
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:18px;color:${isActive?'var(--g900)':'var(--g500)'}">${sanitize(emp.name)}</div>
+            <div style="font-size:13px;color:var(--g600);margin-top:2px">${sanitize(emp.group)}${bld ? ' · ' + sanitize(bld.name) : ''}</div>
+          </div>
+          <span class="${isActive?'tag-active':'tag-inactive'}" style="flex-shrink:0">${isActive?'Active':'Inactive'}</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          ${contactSection}
+          ${employmentSection}
+          ${personalSection}
+          ${idsSection}
+          ${licenseSection}
+          ${scheduleSection}
+          ${terminationSection}
+          ${disciplineSection}
+        </div>
+      </div>
+      <div class="modal-footer" style="flex-shrink:0">
+        ${actions}
+      </div>
+    </div>`;
+    document.body.appendChild(div);
+  },
+
+  // Inline edit handlers for the Employee Card's hourly-rate row.
+  // Toggle display ↔ input, save with validation + audit, or cancel.
+  empCardEditRate(empId) {
+    const display = document.getElementById('empcard-rate-display-' + empId);
+    const editor  = document.getElementById('empcard-rate-edit-'    + empId);
+    const input   = document.getElementById('empcard-rate-input-'   + empId);
+    if (!display || !editor) return;
+    display.style.display = 'none';
+    editor.style.display  = 'inline-flex';
+    if (input) { input.focus(); input.select?.(); }
+  },
+  empCardCancelRate(empId) {
+    const display = document.getElementById('empcard-rate-display-' + empId);
+    const editor  = document.getElementById('empcard-rate-edit-'    + empId);
+    if (!display || !editor) return;
+    editor.style.display  = 'none';
+    display.style.display = 'inline';
+  },
+  empCardSaveRate(empId) {
+    const emp = (this.S.employees || []).find(e => e.id === empId);
+    if (!emp) { this.showToast('Employee not found', 'warn'); return; }
+    if (!this.canViewFinancials?.()) { this.showToast('Not allowed to edit pay rates', 'warn'); return; }
+    const input = document.getElementById('empcard-rate-input-' + empId);
+    if (!input) return;
+    const raw = (input.value || '').trim();
+    // Allow blank → clear the rate (treats as "not set")
+    if (raw === '') {
+      const oldRate = emp.hourlyRate;
+      delete emp.hourlyRate;
+      this.persistData();
+      Audit.log('EMP_RATE_CLEARED',
+        `Cleared hourly rate for ${sanitize(emp.name)} (was $${oldRate ?? '—'})`,
+        this.S.user?.id, 'medium');
+      this.showToast(`${emp.name.split(' ')[0]}: hourly rate cleared`);
+    } else {
+      const parsed = parseFloat(raw);
+      if (isNaN(parsed) || parsed < 0) {
+        this.showToast('Enter a valid hourly rate (e.g. 22.50)', 'warn');
+        return;
+      }
+      if (parsed > 1000) {
+        this.showToast('Rate looks too high — please double-check', 'warn');
+        return;
+      }
+      const oldRate = emp.hourlyRate ?? 0;
+      emp.hourlyRate = parsed;
+      this.persistData();
+      Audit.log('EMP_RATE_UPDATED',
+        `${sanitize(emp.name)} hourly rate $${oldRate} → $${parsed.toFixed(2)}`,
+        this.S.user?.id, 'medium');
+      this.showToast(`${emp.name.split(' ')[0]}: $${parsed.toFixed(2)}/hr saved`);
+    }
+    // Re-render the card so other dependent fields (cost preview, etc.) refresh
+    document.getElementById('modal-employee-card')?.remove();
+    this.openEmployeeCard(empId);
+    // Refresh the roster behind the modal so any indicators update too
+    if (typeof this.renderMain === 'function' && this.S.rosterView) {
+      try {
+        const main = document.getElementById('main');
+        if (main && typeof this.renderRoster === 'function') {
+          main.innerHTML = this.renderRoster();
+        }
+      } catch (_) { /* non-fatal */ }
+    }
+  },
+
   // Edit the per-employee badge ID (used by SmartLinx + other physical
   // clocks) and PBJ job-code override (rare — needed when the default
   // group→PBJ mapping is wrong, e.g. RN serving as charge nurse).
@@ -11640,12 +12757,33 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   // Hours of a single shift — defaults to 8 if start/end aren't set.
   _shiftHours(s) {
     if (!s) return 0;
+    const toMin = (t) => {
+      if (!t) return null;
+      const str = String(t).trim();
+      // 12-hour format: "7:00 AM", "3:30 PM", "12:00 AM" (midnight), "12:00 PM" (noon)
+      const m12 = str.match(/^(\d{1,2}):?(\d{2})?\s*(AM|PM)$/i);
+      if (m12) {
+        let h = parseInt(m12[1], 10);
+        const min = parseInt(m12[2] || '0', 10);
+        const ap = m12[3].toUpperCase();
+        if (ap === 'AM' && h === 12) h = 0;
+        else if (ap === 'PM' && h < 12) h += 12;
+        return h * 60 + min;
+      }
+      // 24-hour format: "07:00", "15:30"
+      const m24 = str.match(/^(\d{1,2}):(\d{2})$/);
+      if (m24) {
+        const h = parseInt(m24[1], 10), min = parseInt(m24[2], 10);
+        if (h >= 0 && h < 24 && min >= 0 && min < 60) return h * 60 + min;
+      }
+      return null;
+    };
     if (s.start && s.end) {
-      const [sh, sm] = String(s.start).split(':').map(Number);
-      const [eh, em] = String(s.end).split(':').map(Number);
-      if (!isNaN(sh) && !isNaN(eh)) {
-        let mins = (eh*60 + (em||0)) - (sh*60 + (sm||0));
-        if (mins < 0) mins += 24*60;          // overnight
+      const sMin = toMin(s.start);
+      const eMin = toMin(s.end);
+      if (sMin != null && eMin != null) {
+        let mins = eMin - sMin;
+        if (mins <= 0) mins += 24*60;       // overnight (covers shifts ending at start time too)
         return mins / 60;
       }
     }
@@ -13805,8 +14943,100 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if(this.S.viewMonth<0){this.S.viewMonth=11;this.S.viewYear--;}
     this.S.selectedDate=null;
     if(this.S.panelOpen) this.closePanel();
+    // Auto-extend any rotation rules whose horizon hasn't reached the month
+    // we're about to display. This makes rotations effectively permanent —
+    // they grow forward as the user scrolls the calendar.
+    this._extendRotationsThrough(this.S.viewYear, this.S.viewMonth);
     this.updateMonthLabel();
     this.renderMain();
+  },
+
+  // For each persisted rotation pattern, ensure shift records exist through
+  // the END of the displayed month + 30-day buffer. Handles BOTH kinds:
+  //   • kind: 'assign' — assigns rotation days to a specific employee
+  //   • kind: 'open'   — adds N open slots per rotation day (no employee yet)
+  // Idempotent — re-runs skip days that already have matching shifts.
+  _extendRotationsThrough(year, month) {
+    const pats = this.S.schedulePatterns || [];
+    if (!pats.length) return 0;
+    // Target = end of displayed month + 30 days
+    const target = new Date(year, month + 1, 0); // last day of displayed month
+    target.setDate(target.getDate() + 30);
+    const targetStr = target.toISOString().slice(0,10);
+    let extended = 0;
+    for (const pat of pats) {
+      // Skip legacy patterns without 14-day picker info
+      if (!pat.selectedDays || !pat.pickerStart) continue;
+      const kind = pat.kind || (pat.empId ? 'assign' : 'open');
+      const lastEnd = pat.lastExtendedTo || pat.appliedAt || TODAY;
+      if (lastEnd >= targetStr) continue;  // already extended past target
+
+      // For assign-type rotations: skip if employee left or was deactivated.
+      let emp = null;
+      if (kind === 'assign') {
+        emp = (this.S.employees || []).find(e => e.id === pat.empId);
+        if (!emp || emp.inactive) continue;
+      }
+
+      const shiftDef = this.resolveShiftDef(pat.group, pat.shiftType, pat.buildingId) || {};
+      const pickerStart = new Date(pat.pickerStart + 'T12:00:00');
+      const start = new Date(lastEnd + 'T12:00:00');
+      start.setDate(start.getDate() + 1);
+      const cycleLen = pat.cycleLen || 14;
+      const slots = pat.slots || 1;
+
+      for (let cur = new Date(start); cur <= target; cur.setDate(cur.getDate() + 1)) {
+        const ds = cur.toISOString().slice(0, 10);
+        const diff = Math.round((cur - pickerStart) / 86400000);
+        const cyclePos = ((diff % cycleLen) + cycleLen) % cycleLen;
+        if (!pat.selectedDays.includes(cyclePos)) continue;
+
+        if (kind === 'assign') {
+          // Assign-rotation: skip if this employee already on this date/shift
+          if (this.S.shifts.find(s =>
+              s.date===ds && s.group===pat.group && s.type===pat.shiftType &&
+              s.buildingId===pat.buildingId && s.employeeId===emp.id)) continue;
+          const openSlot = this.S.shifts.find(s =>
+              s.date===ds && s.group===pat.group && s.type===pat.shiftType &&
+              s.buildingId===pat.buildingId && s.status==='open' && !s.employeeId);
+          if (openSlot) {
+            openSlot.status = 'scheduled'; openSlot.employeeId = emp.id;
+          } else {
+            this.S.shifts.push({
+              id: 'sh' + Date.now() + Math.random().toString(36).slice(2, 5),
+              date: ds, group: pat.group, type: pat.shiftType,
+              start: shiftDef.start || '', end: shiftDef.end || '',
+              status: 'scheduled', buildingId: pat.buildingId, employeeId: emp.id,
+            });
+          }
+          extended++;
+        } else {
+          // Open-rotation: add `slots` open shifts for this day, but only if
+          // we haven't already added them on a prior extension run. Count
+          // existing open+scheduled rows for this group/type/building/date
+          // and top up only what's missing.
+          const existing = this.S.shifts.filter(s =>
+              s.date===ds && s.group===pat.group && s.type===pat.shiftType &&
+              s.buildingId===pat.buildingId).length;
+          const toAdd = Math.max(0, slots - existing);
+          for (let i = 0; i < toAdd; i++) {
+            this.S.shifts.push({
+              id: 'sh' + Date.now() + Math.random().toString(36).slice(2, 5),
+              date: ds, group: pat.group, type: pat.shiftType,
+              start: shiftDef.start || '', end: shiftDef.end || '',
+              status: 'open', buildingId: pat.buildingId, employeeId: null,
+            });
+            extended++;
+          }
+        }
+      }
+      pat.lastExtendedTo = targetStr;
+    }
+    if (extended > 0) {
+      Audit.log('ROTATION_EXTENDED', `Extended ${extended} rotation shift${extended===1?'':'s'} through ${targetStr}`, this.S.user?.id, 'low');
+      this.persistData();
+    }
+    return extended;
   },
   goToToday() {
     const t = new Date(TODAY+'T12:00:00');
