@@ -401,6 +401,10 @@ a:active{opacity:.6}
     </div>
     <div style="display:flex;align-items:center;gap:6px">
       <div class="who" id="who-text"></div>
+      <button id="bell-btn" class="icon-btn" aria-label="Notification settings" title="Notifications" hidden>
+        <svg id="bell-on"  viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        <svg id="bell-off" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="display:none"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/><line x1="3" y1="3" x2="21" y2="21"/></svg>
+      </button>
       <button id="logout-btn" class="icon-btn" aria-label="Sign out" title="Sign out">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
       </button>
@@ -1645,11 +1649,149 @@ document.addEventListener('visibilitychange', () => {
 // Service worker — caches the app shell for offline / instant repeat loads.
 // Only registers when served over HTTPS (or localhost). Failures are silent
 // so a misbehaving SW never blocks the app from loading.
+let _swRegistration = null;
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/app/sw.js', { scope: '/app' }).catch(() => {});
+    navigator.serviceWorker.register('/app/sw.js', { scope: '/app' })
+      .then(reg => { _swRegistration = reg; })
+      .catch(() => {});
   });
 }
+
+// ── Push notifications ───────────────────────────────────────────
+// Three-state UI:
+//   default — show "Enable notifications" prompt subtly the first time,
+//             user can also tap the bell to enable
+//   granted — bell shows "on", tap to unsubscribe
+//   denied  — bell hidden (browser blocked permission, can't recover)
+const PUSH_PROMPT_KEY = 'mms.app.push.promptedAt';
+const PUSH_LASTSUB_KEY = 'mms.app.push.endpoint';
+
+function pushSupported() {
+  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+async function refreshPushBell() {
+  const btn = $('#bell-btn');
+  if (!btn || !pushSupported() || Notification.permission === 'denied') {
+    if (btn) btn.hidden = true;
+    return;
+  }
+  btn.hidden = false;
+  const reg = _swRegistration || (await navigator.serviceWorker.ready.catch(() => null));
+  const sub = reg ? await reg.pushManager.getSubscription().catch(() => null) : null;
+  const isOn = !!sub && Notification.permission === 'granted';
+  $('#bell-on').style.display  = isOn ? '' : 'none';
+  $('#bell-off').style.display = isOn ? 'none' : '';
+  btn.title = isOn ? 'Notifications on (tap to turn off)' : 'Enable notifications';
+}
+
+async function enablePush() {
+  if (!pushSupported()) { toast('Notifications not supported on this device','warn'); return; }
+  if (Notification.permission === 'denied') { toast('Notifications blocked in browser settings','warn'); return; }
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { toast('Notifications not enabled'); refreshPushBell(); return; }
+    const reg = _swRegistration || (await navigator.serviceWorker.ready);
+    // Get VAPID public key
+    const r = await apiFetch('/api/push/vapid-public-key');
+    if (!r.ok) { toast('Push not configured on the server','warn'); return; }
+    const { publicKey } = await r.json();
+    if (!publicKey) { toast('Push not configured','warn'); return; }
+    // Subscribe (or fetch existing)
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+    }
+    // Send to server
+    const subJson = sub.toJSON();
+    const sr = await apiFetch('/api/push/subscribe', {
+      method:'POST',
+      body:{ endpoint: subJson.endpoint, keys: subJson.keys },
+    });
+    if (!sr.ok) { toast('Server rejected subscription','warn'); return; }
+    try { localStorage.setItem(PUSH_LASTSUB_KEY, subJson.endpoint); } catch (_) {}
+    toast('Notifications on');
+  } catch (e) {
+    console.warn('[push] enable failed', e);
+    toast('Could not enable notifications','warn');
+  } finally {
+    refreshPushBell();
+  }
+}
+
+async function disablePush() {
+  try {
+    const reg = _swRegistration || (await navigator.serviceWorker.ready);
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      const endpoint = sub.endpoint;
+      await sub.unsubscribe().catch(() => {});
+      apiFetch('/api/push/unsubscribe', { method:'POST', body:{ endpoint } }).catch(() => {});
+    }
+    try { localStorage.removeItem(PUSH_LASTSUB_KEY); } catch (_) {}
+    toast('Notifications off');
+  } catch (e) {
+    console.warn('[push] disable failed', e);
+  } finally {
+    refreshPushBell();
+  }
+}
+
+async function togglePush() {
+  if (!pushSupported() || Notification.permission === 'denied') return;
+  const reg = _swRegistration || (await navigator.serviceWorker.ready.catch(() => null));
+  const sub = reg ? await reg.pushManager.getSubscription().catch(() => null) : null;
+  const isOn = !!sub && Notification.permission === 'granted';
+  if (isOn) await disablePush();
+  else      await enablePush();
+}
+
+$('#bell-btn').addEventListener('click', togglePush);
+
+// First-run prompt: a few seconds after a successful login, if push is
+// supported, permission is still 'default' (never asked), and the user
+// hasn't been prompted in the last 7 days, gently suggest enabling.
+function maybePromptPush() {
+  if (!pushSupported()) return;
+  if (Notification.permission !== 'default') return;
+  let last = 0;
+  try { last = Number(localStorage.getItem(PUSH_PROMPT_KEY) || 0); } catch (_) {}
+  if (Date.now() - last < 7 * 24 * 3600 * 1000) return;
+  setTimeout(() => {
+    if (Notification.permission !== 'default') return;
+    if (confirm('Enable notifications so you get alerts when shifts open up or messages arrive?')) {
+      try { localStorage.setItem(PUSH_PROMPT_KEY, String(Date.now())); } catch (_) {}
+      enablePush();
+    } else {
+      try { localStorage.setItem(PUSH_PROMPT_KEY, String(Date.now())); } catch (_) {}
+    }
+  }, 4000);
+}
+
+// Refresh bell state whenever the app becomes visible / SW changes
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshPushBell(); });
+if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('controllerchange', refreshPushBell);
+
+// Also refresh after every login & re-render
+const _origShowApp = showApp;
+showApp = function() {
+  _origShowApp.apply(this, arguments);
+  refreshPushBell();
+  maybePromptPush();
+};
 
 // Boot
 boot();

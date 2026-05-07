@@ -54,6 +54,7 @@ const rateLimit  = require('express-rate-limit');
 const bcrypt     = require('bcrypt');
 const otplib     = require('otplib');
 const QRCode     = require('qrcode');
+const webpush    = require('web-push');
 
 // otplib v13+ exports flat functions; wrap to match the older `authenticator` API
 const authenticator = {
@@ -1619,7 +1620,7 @@ app.get('/app/apple-touch-icon.png', (_req, res) => {
 // instantly. Network-first for /api/* (so live data wins when online),
 // cache-first for the static shell. Shipped from the same /app scope so
 // browsers register it for the right path.
-const APP_CACHE_VERSION = 'mms-app-v2';
+const APP_CACHE_VERSION = 'mms-app-v3';
 app.get('/app/sw.js', (_req, res) => {
   res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
   // SW must NOT be cached or you can never roll out a new one.
@@ -1662,6 +1663,39 @@ self.addEventListener('fetch', e => {
       return cached || fetched;
     })());
   }
+});
+
+// Web Push: server sends { title, body, tag, url } via webpush.sendNotification
+self.addEventListener('push', e => {
+  let data = {};
+  try { data = e.data ? e.data.json() : {}; } catch (_) {
+    try { data = { body: e.data ? e.data.text() : '' }; } catch (__) {}
+  }
+  const title = data.title || 'ManageMyStaffing';
+  const opts = {
+    body: data.body || '',
+    icon: '/app/icon.svg',
+    badge: '/app/icon.svg',
+    tag: data.tag || 'mms',
+    renotify: true,
+    data: { url: data.url || '/app' },
+  };
+  e.waitUntil(self.registration.showNotification(title, opts));
+});
+
+// Tapping a notification: focus an existing /app tab if one's open, else
+// open a new one. Uses includeUncontrolled so we find tabs that loaded
+// before this SW activated (PWAs that install the SW lazily).
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const target = e.notification?.data?.url || '/app';
+  e.waitUntil((async () => {
+    const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of list) {
+      if (c.url.includes('/app')) { c.focus(); c.navigate(target).catch(()=>{}); return; }
+    }
+    if (self.clients.openWindow) await self.clients.openWindow(target);
+  })());
 });
 `);
 });
@@ -3559,8 +3593,152 @@ app.post('/api/dm', requireAuth, async (req, res) => {
   if (data.directMessages.length > 5000) data.directMessages = data.directMessages.slice(-5000);
   markDirty();
   auditLog('DM_SENT', me, { toId, threadId: msg.threadId, len: text.length });
+  // Fire-and-forget push to recipient. Body is the message preview — kept
+  // generic enough that a lock-screen notification doesn't leak PHI.
+  sendPushTo(toId, {
+    title: me.name || me.email || 'New message',
+    body: text.length > 140 ? text.slice(0, 137) + '…' : text,
+    tag: 'dm:' + msg.threadId,
+    url: '/app',
+  }).catch(() => {});
   res.json({ ok: true, message: msg });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WEB PUSH NOTIFICATIONS — companion app (PWA)
+// ─────────────────────────────────────────────────────────────────────────────
+// VAPID keys: env vars take precedence (production). If missing, generate
+// once and persist alongside other server data. Persisting to the data
+// store survives restarts (would otherwise invalidate every existing
+// subscription) without needing extra Azure config.
+//
+// Subscriptions are stored on data.pushSubscriptions:
+//   { id, userId, endpoint, keys:{p256dh,auth}, addedAt, userAgent }
+//
+// Sending: sendPushTo(userId, payload) looks up all of that user's
+// subscriptions and fires them in parallel. 410/404 responses mean the
+// subscription was unsubscribed on the device side; we prune those.
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@managemystaffing.com';
+let _vapidKeys = null;
+
+async function ensureVapidKeys() {
+  if (_vapidKeys) return _vapidKeys;
+  if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+    _vapidKeys = {
+      publicKey: process.env.VAPID_PUBLIC_KEY,
+      privateKey: process.env.VAPID_PRIVATE_KEY,
+    };
+  } else {
+    const data = await loadData();
+    if (data.vapidKeys?.publicKey && data.vapidKeys?.privateKey) {
+      _vapidKeys = data.vapidKeys;
+    } else {
+      const generated = webpush.generateVAPIDKeys();
+      data.vapidKeys = generated;
+      markDirty();
+      _vapidKeys = generated;
+      console.log('[push] Generated VAPID keys (saved to data store). To pin them across redeploys, set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY env vars.');
+    }
+  }
+  webpush.setVapidDetails(VAPID_SUBJECT, _vapidKeys.publicKey, _vapidKeys.privateKey);
+  return _vapidKeys;
+}
+
+// Fire-and-forget. Never throws — push failures should never break the
+// underlying business action that triggered the push.
+async function sendPushTo(userId, payload) {
+  if (!userId) return;
+  try {
+    await ensureVapidKeys();
+    const data = await loadData();
+    const subs = (data.pushSubscriptions || []).filter(s => s.userId === userId);
+    if (!subs.length) return;
+    const json = JSON.stringify(payload || {});
+    const stale = [];
+    await Promise.all(subs.map(async sub => {
+      try {
+        await webpush.sendNotification(
+          { endpoint: sub.endpoint, keys: sub.keys },
+          json,
+          { TTL: 60 * 60 * 24 * 3 } // 3-day TTL
+        );
+      } catch (e) {
+        if (e?.statusCode === 410 || e?.statusCode === 404) {
+          stale.push(sub.id);
+        } else {
+          console.warn('[push] send failed', { userId, status: e?.statusCode, body: e?.body });
+        }
+      }
+    }));
+    if (stale.length) {
+      data.pushSubscriptions = (data.pushSubscriptions || []).filter(s => !stale.includes(s.id));
+      markDirty();
+    }
+  } catch (e) {
+    console.warn('[push] sendPushTo failed', e?.message || e);
+  }
+}
+
+// GET /api/push/vapid-public-key — client needs this to subscribe
+app.get('/api/push/vapid-public-key', requireAuth, async (_req, res) => {
+  try {
+    const k = await ensureVapidKeys();
+    res.json({ publicKey: k.publicKey });
+  } catch (e) {
+    res.status(503).json({ error: 'Push not configured' });
+  }
+});
+
+// POST /api/push/subscribe — register a PushSubscription for the caller
+app.post('/api/push/subscribe', requireAuth, async (req, res) => {
+  const { endpoint, keys } = req.body || {};
+  if (!endpoint || !keys?.p256dh || !keys?.auth) {
+    return res.status(400).json({ error: 'endpoint and keys.{p256dh,auth} required' });
+  }
+  await ensureVapidKeys();
+  const data = await loadData();
+  if (!Array.isArray(data.pushSubscriptions)) data.pushSubscriptions = [];
+  // De-dupe by endpoint — repeat installs from the same device shouldn't
+  // create stacking subscriptions.
+  data.pushSubscriptions = data.pushSubscriptions.filter(s => s.endpoint !== endpoint);
+  data.pushSubscriptions.push({
+    id: 'pushsub_' + crypto.randomBytes(6).toString('hex'),
+    userId: req.user.id,
+    endpoint,
+    keys: { p256dh: String(keys.p256dh).slice(0, 256), auth: String(keys.auth).slice(0, 64) },
+    addedAt: new Date().toISOString(),
+    userAgent: String(req.get('user-agent') || '').slice(0, 200),
+  });
+  // Cap to 10 per user to bound storage (Chrome rotates endpoints)
+  const myCount = data.pushSubscriptions.filter(s => s.userId === req.user.id).length;
+  if (myCount > 10) {
+    const mine = data.pushSubscriptions.filter(s => s.userId === req.user.id)
+      .sort((a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''));
+    const drop = mine.slice(0, myCount - 10).map(s => s.id);
+    data.pushSubscriptions = data.pushSubscriptions.filter(s => !drop.includes(s.id));
+  }
+  markDirty();
+  auditLog('PUSH_SUBSCRIBED', req.user, { endpoint: endpoint.slice(0, 80) + '…' });
+  res.json({ ok: true });
+});
+
+// POST /api/push/unsubscribe — remove a PushSubscription by endpoint
+app.post('/api/push/unsubscribe', requireAuth, async (req, res) => {
+  const { endpoint } = req.body || {};
+  if (!endpoint) return res.status(400).json({ error: 'endpoint required' });
+  const data = await loadData();
+  const before = (data.pushSubscriptions || []).length;
+  data.pushSubscriptions = (data.pushSubscriptions || []).filter(s =>
+    !(s.endpoint === endpoint && s.userId === req.user.id));
+  if (data.pushSubscriptions.length !== before) markDirty();
+  auditLog('PUSH_UNSUBSCRIBED', req.user, { endpoint: endpoint.slice(0, 80) + '…' });
+  res.json({ ok: true });
+});
+
+// Initialize VAPID keys at boot (lazy — first /api/push/* call triggers it).
+// Doing this here too means dev gets the "generated keys" log line on first
+// run instead of on first user interaction.
+ensureVapidKeys().catch(() => {});
 
 // POST /api/dm/read — mark a thread as read up to a given timestamp
 app.post('/api/dm/read', requireAuth, async (req, res) => {
@@ -3774,6 +3952,23 @@ app.post('/api/shifts/:id/claim', requireAuth, async (req, res) => {
   auditLog('SHIFT_CLAIM_REQUESTED', me, {
     shiftId, date: shift.date, type: shift.type, group: shift.group,
   });
+  // Push to building admins so they can approve from the app
+  try {
+    const adminAccts = (data.accounts || []).filter(a =>
+      ['admin','hradmin','scheduler','superadmin','regionaladmin'].includes(a.role) &&
+      (a.role === 'superadmin' ||
+       a.buildingId === shift.buildingId ||
+       (Array.isArray(a.buildingIds) && a.buildingIds.includes(shift.buildingId))));
+    const summary = `${me.name || 'An employee'} wants the ${shift.type || ''} ${shift.group || ''} shift on ${shift.date}.`.replace(/\s+/g,' ').trim();
+    for (const a of adminAccts) {
+      sendPushTo(a.id, {
+        title: 'New shift claim',
+        body: summary,
+        tag: 'claim-req:' + shift.id,
+        url: '/app',
+      }).catch(() => {});
+    }
+  } catch (e) {}
   res.json({ ok: true, shift });
 });
 
@@ -3799,6 +3994,13 @@ app.post('/api/shifts/:id/claim/approve', requireAuth, requireAdmin, async (req,
   delete shift.claimRequest;
   markDirty();
   auditLog('SHIFT_CLAIM_APPROVED', me, { shiftId: shift.id, empId, empName, date: shift.date, type: shift.type, group: shift.group });
+  // Notify the employee whose claim was approved.
+  sendPushTo(empId, {
+    title: 'Shift claim approved',
+    body: `Your ${shift.type || ''} ${shift.group || ''} shift on ${shift.date} is confirmed.`.replace(/\s+/g,' ').trim(),
+    tag: 'claim:' + shift.id,
+    url: '/app',
+  }).catch(() => {});
   res.json({ ok: true, shift });
 });
 
@@ -3820,6 +4022,12 @@ app.post('/api/shifts/:id/claim/reject', requireAuth, requireAdmin, async (req, 
   delete shift.claimRequest;
   markDirty();
   auditLog('SHIFT_CLAIM_REJECTED', me, { shiftId: shift.id, empId, empName, date: shift.date, type: shift.type, group: shift.group });
+  sendPushTo(empId, {
+    title: 'Shift claim not approved',
+    body: `Your claim for ${shift.type || ''} ${shift.group || ''} on ${shift.date} was not approved.`.replace(/\s+/g,' ').trim(),
+    tag: 'claim:' + shift.id,
+    url: '/app',
+  }).catch(() => {});
   res.json({ ok: true, shift });
 });
 
@@ -3884,6 +4092,15 @@ app.post('/api/shifts/trade/:id/decide', requireAuth, requireAdmin, async (req, 
     trade.status = 'rejected';
     markDirty();
     auditLog('SHIFT_TRADE_REJECTED', req.user, { tradeId: trade.id });
+    // Notify both employees that the trade was rejected
+    [trade.fromEmpId, trade.toEmpId].filter(Boolean).forEach(uid => {
+      sendPushTo(uid, {
+        title: 'Shift trade rejected',
+        body: 'Your trade request was not approved.',
+        tag: 'trade:' + trade.id,
+        url: '/app',
+      }).catch(() => {});
+    });
     return res.json({ ok: true, trade });
   }
   // Approve: swap employeeIds atomically.
@@ -3897,6 +4114,15 @@ app.post('/api/shifts/trade/:id/decide', requireAuth, requireAdmin, async (req, 
   trade.status = 'approved';
   markDirty();
   auditLog('SHIFT_TRADE_APPROVED', req.user, { tradeId: trade.id, fromShiftId: trade.fromShiftId, toShiftId: trade.toShiftId });
+  // Notify both employees that the swap is now in effect.
+  [trade.fromEmpId, trade.toEmpId].filter(Boolean).forEach(uid => {
+    sendPushTo(uid, {
+      title: 'Shift trade approved',
+      body: 'Your schedule has been updated.',
+      tag: 'trade:' + trade.id,
+      url: '/app',
+    }).catch(() => {});
+  });
   res.json({ ok: true, trade });
 });
 
