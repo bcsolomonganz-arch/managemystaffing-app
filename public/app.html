@@ -9,6 +9,8 @@
 <meta name="apple-mobile-web-app-title" content="MMS">
 <title>ManageMyStaffing</title>
 <link rel="manifest" href="/app/manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="/app/icon.svg">
+<link rel="apple-touch-icon" href="/app/apple-touch-icon.png">
 <style>
 :root{
   --green:#1B5E3B;       /* primary brand */
@@ -790,8 +792,15 @@ function renderDayPanel(iso) {
   const rows = shifts.map(s => {
     const e = empMap.get(s.employeeId);
     let statusPill = '';
+    let actions = '';
     if (s.status === 'open' && s.claimRequest) {
       statusPill = `<span class="pill pending">Claim from ${escapeHTML(s.claimRequest.empName||'')}</span>`;
+      // Inline approve/reject so admins don't have to bounce to the main site
+      actions = `
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <button class="claim-btn" style="background:var(--g100);color:var(--g700);flex:1" data-reject="${escapeHTML(s.id)}">Reject</button>
+          <button class="claim-btn" style="flex:1" data-approve="${escapeHTML(s.id)}">Approve</button>
+        </div>`;
     } else if (s.status === 'open') {
       statusPill = '<span class="pill open">Open</span>';
     } else if (e) {
@@ -799,11 +808,14 @@ function renderDayPanel(iso) {
     } else {
       statusPill = `<span class="pill">${escapeHTML(s.type||'Scheduled')}</span>`;
     }
-    return `<div class="shift-card" style="margin-bottom:6px">
-      <div class="info" style="margin-left:0">
-        <div class="ttl">${escapeHTML(s.type||'')} ${escapeHTML(groupLabel(s.group))} ${statusPill}</div>
-        <div class="meta">${escapeHTML((s.start||'') + (s.end?' – '+s.end:''))}</div>
+    return `<div class="shift-card" style="margin-bottom:6px;flex-direction:column;align-items:stretch;gap:0">
+      <div style="display:flex;align-items:center;gap:12px;width:100%">
+        <div class="info" style="margin-left:0">
+          <div class="ttl">${escapeHTML(s.type||'')} ${escapeHTML(groupLabel(s.group))} ${statusPill}</div>
+          <div class="meta">${escapeHTML((s.start||'') + (s.end?' – '+s.end:''))}</div>
+        </div>
       </div>
+      ${actions}
     </div>`;
   }).join('');
 
@@ -813,6 +825,41 @@ function renderDayPanel(iso) {
       ${rows || '<div class="empty" style="padding:14px 0"><div class="sub">No shifts for this group on this day</div></div>'}
     </div>
   `;
+
+  // Wire admin claim approve/reject buttons (only present when there's a pending claim)
+  $$('#day-panel [data-approve]').forEach(btn => {
+    btn.addEventListener('click', () => decideClaim(btn.dataset.approve, 'approve'));
+  });
+  $$('#day-panel [data-reject]').forEach(btn => {
+    btn.addEventListener('click', () => decideClaim(btn.dataset.reject, 'reject'));
+  });
+}
+
+async function decideClaim(shiftId, action) {
+  const shift = (State.data?.shifts || []).find(s => s.id === shiftId);
+  if (!shift?.claimRequest) return;
+  const empName = shift.claimRequest.empName || 'this employee';
+  const verb = action === 'approve' ? 'Approve' : 'Reject';
+  if (!confirm(`${verb} ${empName}'s claim for the ${shift.type||''} ${groupLabel(shift.group||'')} shift on ${fmtDateLong(shift.date)}?`)) return;
+
+  try {
+    const r = await apiFetch('/api/shifts/' + encodeURIComponent(shiftId) + '/claim/' + action, { method:'POST', body:{} });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { toast(j.error || (verb + ' failed'), 'warn'); return; }
+    // Patch local state so UI updates instantly without waiting for the next poll
+    Object.assign(shift, j.shift || {});
+    if (action === 'approve') {
+      delete shift.claimRequest;
+      shift.status = 'scheduled';
+    } else {
+      delete shift.claimRequest;
+    }
+    toast(action === 'approve' ? `Approved — ${empName} now on the schedule` : `Claim rejected`);
+    if (State.selectedDate) renderDayPanel(State.selectedDate);
+    render();
+  } catch (e) {
+    toast('Network error', 'error');
+  }
 }
 
 // Sidebar
@@ -1327,6 +1374,15 @@ document.addEventListener('visibilitychange', () => {
     apiFetch('/api/data').then(r => r.json()).then(d => { State.data = d; render(); }).catch(()=>{});
   }
 });
+
+// Service worker — caches the app shell for offline / instant repeat loads.
+// Only registers when served over HTTPS (or localhost). Failures are silent
+// so a misbehaving SW never blocks the app from loading.
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/app/sw.js', { scope: '/app' }).catch(() => {});
+  });
+}
 
 // Boot
 boot();

@@ -1562,13 +1562,108 @@ app.get('/app/manifest.webmanifest', (_req, res) => {
     scope: '/app',
     display: 'standalone',
     orientation: 'portrait',
-    background_color: '#ffffff',
+    background_color: '#1B5E3B',
     theme_color: '#1B5E3B',
     icons: [
-      { src: '/app/icon-192.png', sizes: '192x192', type: 'image/png' },
-      { src: '/app/icon-512.png', sizes: '512x512', type: 'image/png' },
+      { src: '/app/icon.svg',          sizes: 'any',     type: 'image/svg+xml', purpose: 'any' },
+      { src: '/app/icon-maskable.svg', sizes: 'any',     type: 'image/svg+xml', purpose: 'maskable' },
     ],
   }));
+});
+
+// Inline SVG app icon (vector — scales for any required size).
+// Same medical-house silhouette as the main site's LOGO_SVG, recolored
+// with a solid green background for the maskable PWA tile.
+app.get('/app/icon.svg', (_req, res) => {
+  res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.send(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#1B5E3B"/>
+  <g transform="translate(76 88) scale(3.6)">
+    <rect x="70" y="2" width="14" height="26" rx="5" fill="#fff" opacity=".9"/>
+    <path d="M50 5 L0 52 Q0 56 4 56 L96 56 Q100 56 100 52 Z" fill="#fff"/>
+    <rect x="3" y="50" width="94" height="42" rx="6" fill="#fff"/>
+    <rect x="42" y="64" width="16" height="6" rx="1" fill="#1B5E3B"/>
+    <rect x="47" y="59" width="6" height="16" rx="1" fill="#1B5E3B"/>
+  </g>
+</svg>`);
+});
+
+// Maskable variant — same art with a 12% safe-area inset so OS tiles can
+// crop without clipping the logo. Required for Android adaptive icons.
+app.get('/app/icon-maskable.svg', (_req, res) => {
+  res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.send(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#1B5E3B"/>
+  <g transform="translate(112 124) scale(2.88)">
+    <rect x="70" y="2" width="14" height="26" rx="5" fill="#fff" opacity=".9"/>
+    <path d="M50 5 L0 52 Q0 56 4 56 L96 56 Q100 56 100 52 Z" fill="#fff"/>
+    <rect x="3" y="50" width="94" height="42" rx="6" fill="#fff"/>
+    <rect x="42" y="64" width="16" height="6" rx="1" fill="#1B5E3B"/>
+    <rect x="47" y="59" width="6" height="16" rx="1" fill="#1B5E3B"/>
+  </g>
+</svg>`);
+});
+
+// Apple touch icon — iOS still prefers a square PNG-shaped art; SVG works
+// in modern Safari. We serve the same icon under the iOS-specific path so
+// "Add to Home Screen" picks it up.
+app.get('/app/apple-touch-icon.png', (_req, res) => {
+  // 304 redirects to the SVG keep iOS happy on iOS 16+; older devices
+  // fall back to the brand-color splash.
+  res.redirect(302, '/app/icon.svg');
+});
+
+// Service worker — caches the app shell so /app loads offline and reloads
+// instantly. Network-first for /api/* (so live data wins when online),
+// cache-first for the static shell. Shipped from the same /app scope so
+// browsers register it for the right path.
+const APP_CACHE_VERSION = 'mms-app-v2';
+app.get('/app/sw.js', (_req, res) => {
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+  // SW must NOT be cached or you can never roll out a new one.
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Service-Worker-Allowed', '/app');
+  res.send(`'use strict';
+const CACHE = '${APP_CACHE_VERSION}';
+const SHELL = ['/app', '/app/manifest.webmanifest', '/app/icon.svg'];
+
+self.addEventListener('install', e => {
+  self.skipWaiting();
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL).catch(()=>{})));
+});
+
+self.addEventListener('activate', e => {
+  e.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)));
+    await self.clients.claim();
+  })());
+});
+
+self.addEventListener('fetch', e => {
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+
+  // Live data: network first, no cache fallback (don't show stale shifts/messages)
+  if (url.pathname.startsWith('/api/')) return;
+
+  // App shell: cache first, network fallback
+  if (url.pathname === '/app' || url.pathname.startsWith('/app/')) {
+    e.respondWith((async () => {
+      const cache = await caches.open(CACHE);
+      const cached = await cache.match(req);
+      const fetched = fetch(req).then(r => {
+        if (r && r.ok && r.type === 'basic') cache.put(req, r.clone()).catch(()=>{});
+        return r;
+      }).catch(() => cached);
+      return cached || fetched;
+    })());
+  }
+});
+`);
 });
 
 // ── PUBLIC LEGAL PAGES (privacy, terms) ───────────────────────────────────
@@ -3679,6 +3774,52 @@ app.post('/api/shifts/:id/claim', requireAuth, async (req, res) => {
   auditLog('SHIFT_CLAIM_REQUESTED', me, {
     shiftId, date: shift.date, type: shift.type, group: shift.group,
   });
+  res.json({ ok: true, shift });
+});
+
+// POST /api/shifts/:id/claim/approve — admin approves a pending claim
+// Mirrors the in-page approveShiftClaim flow: sets the shift's employeeId
+// to the requester, flips status to 'scheduled', drops claimRequest.
+app.post('/api/shifts/:id/claim/approve', requireAuth, requireAdmin, async (req, res) => {
+  const data = await loadData();
+  const shift = (data.shifts || []).find(s => s.id === req.params.id);
+  if (!shift) return res.status(404).json({ error: 'Shift not found' });
+  if (!shift.claimRequest) return res.status(400).json({ error: 'No pending claim on this shift' });
+
+  // Same building scoping as the rest of the admin endpoints
+  const me = req.user;
+  const callerBIds = new Set([me.buildingId, ...(me.buildingIds||[])].filter(Boolean));
+  if (me.role !== 'superadmin' && shift.buildingId && !callerBIds.has(shift.buildingId)) {
+    return res.status(403).json({ error: 'Out of scope' });
+  }
+
+  const { empId, empName } = shift.claimRequest;
+  shift.status = 'scheduled';
+  shift.employeeId = empId;
+  delete shift.claimRequest;
+  markDirty();
+  auditLog('SHIFT_CLAIM_APPROVED', me, { shiftId: shift.id, empId, empName, date: shift.date, type: shift.type, group: shift.group });
+  res.json({ ok: true, shift });
+});
+
+// POST /api/shifts/:id/claim/reject — admin rejects a pending claim
+// Drops claimRequest; shift stays open for someone else to claim.
+app.post('/api/shifts/:id/claim/reject', requireAuth, requireAdmin, async (req, res) => {
+  const data = await loadData();
+  const shift = (data.shifts || []).find(s => s.id === req.params.id);
+  if (!shift) return res.status(404).json({ error: 'Shift not found' });
+  if (!shift.claimRequest) return res.status(400).json({ error: 'No pending claim on this shift' });
+
+  const me = req.user;
+  const callerBIds = new Set([me.buildingId, ...(me.buildingIds||[])].filter(Boolean));
+  if (me.role !== 'superadmin' && shift.buildingId && !callerBIds.has(shift.buildingId)) {
+    return res.status(403).json({ error: 'Out of scope' });
+  }
+
+  const { empId, empName } = shift.claimRequest;
+  delete shift.claimRequest;
+  markDirty();
+  auditLog('SHIFT_CLAIM_REJECTED', me, { shiftId: shift.id, empId, empName, date: shift.date, type: shift.type, group: shift.group });
   res.json({ ok: true, shift });
 });
 
