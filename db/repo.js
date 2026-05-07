@@ -196,6 +196,60 @@ async function ensureSchema() {
       FOR EACH ROW EXECUTE FUNCTION log_building_change()
   `);
 
+  // ── Append-only shift history ──────────────────────────────────────────
+  // Every shift insert/update/delete logged here with full before/after.
+  // NEVER deleted from. Even if the live `shifts` table is wiped tomorrow,
+  // recovery is possible by replaying this log via
+  // POST /api/admin/recover-shifts-from-history.
+  await _pool.query(`
+    CREATE TABLE IF NOT EXISTS shift_history (
+      id           BIGSERIAL PRIMARY KEY,
+      ts           TIMESTAMPTZ NOT NULL DEFAULT now(),
+      op           TEXT NOT NULL,
+      shift_id     TEXT NOT NULL,
+      building_id  TEXT,
+      employee_id  TEXT,
+      shift_date   DATE,
+      "group"      TEXT,
+      shift_type   TEXT,
+      status       TEXT,
+      actor        TEXT,
+      before_row   JSONB,
+      after_row    JSONB
+    )
+  `);
+  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_shift_hist_shift ON shift_history(shift_id, ts DESC)`);
+  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_shift_hist_building ON shift_history(building_id, ts DESC)`);
+  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_shift_hist_date ON shift_history(shift_date, "group", shift_type)`);
+  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_shift_hist_ts ON shift_history(ts DESC)`);
+
+  await _pool.query(`
+    CREATE OR REPLACE FUNCTION log_shift_change() RETURNS TRIGGER AS $$
+    BEGIN
+      IF TG_OP = 'INSERT' THEN
+        INSERT INTO shift_history (op, shift_id, building_id, employee_id, shift_date, "group", shift_type, status, after_row)
+          VALUES ('insert', NEW.id, NEW.building_id, NEW.employee_id, NEW.shift_date, NEW."group", NEW.shift_type, NEW.status, to_jsonb(NEW));
+        RETURN NEW;
+      ELSIF TG_OP = 'UPDATE' THEN
+        INSERT INTO shift_history (op, shift_id, building_id, employee_id, shift_date, "group", shift_type, status, before_row, after_row)
+          VALUES ('update', NEW.id, NEW.building_id, NEW.employee_id, NEW.shift_date, NEW."group", NEW.shift_type, NEW.status, to_jsonb(OLD), to_jsonb(NEW));
+        RETURN NEW;
+      ELSIF TG_OP = 'DELETE' THEN
+        INSERT INTO shift_history (op, shift_id, building_id, employee_id, shift_date, "group", shift_type, status, before_row)
+          VALUES ('delete', OLD.id, OLD.building_id, OLD.employee_id, OLD.shift_date, OLD."group", OLD.shift_type, OLD.status, to_jsonb(OLD));
+        RETURN OLD;
+      END IF;
+      RETURN NULL;
+    END;
+    $$ LANGUAGE plpgsql;
+  `);
+  await _pool.query(`DROP TRIGGER IF EXISTS trg_shift_history ON shifts`);
+  await _pool.query(`
+    CREATE TRIGGER trg_shift_history
+      AFTER INSERT OR UPDATE OR DELETE ON shifts
+      FOR EACH ROW EXECUTE FUNCTION log_shift_change()
+  `);
+
   await _pool.query(`
     CREATE TABLE IF NOT EXISTS pattern_history (
       id BIGSERIAL PRIMARY KEY,
@@ -646,6 +700,49 @@ async function saveAll(data) {
             `staff, use the explicit DELETE endpoint.`
           );
         }
+        if (n > prev) {
+          await c.query(
+            `INSERT INTO row_high_water (scope, max_count) VALUES ($1, $2)
+             ON CONFLICT (scope) DO UPDATE SET max_count = GREATEST(row_high_water.max_count, $2),
+             observed_at = now()`,
+            [scope, n]
+          );
+        }
+      }
+    }
+
+    // ── Shift shrink + HWM guard ──────────────────────────────────────
+    // Same protection as employees. The /api/data POST path is upsert-only
+    // for shifts; the only legitimate way for shifts.shrink is the explicit
+    // per-row remove flows. saveAll itself NEVER deletes — but it can be
+    // called with a smaller cache than the DB, which is exactly the
+    // pattern that wiped data on 2026-04-30. This guard catches it.
+    if (Array.isArray(data.shifts)) {
+      const incomingByBld = new Map();
+      for (const s of data.shifts) {
+        const bid = s.building_id || s.buildingId;
+        if (!bid) continue;
+        incomingByBld.set(bid, (incomingByBld.get(bid) || 0) + 1);
+      }
+      const dbCounts = await c.query(`SELECT building_id, COUNT(*)::int AS n FROM shifts GROUP BY building_id`);
+      for (const row of dbCounts.rows) {
+        const incoming = incomingByBld.get(row.building_id) || 0;
+        if (incoming < row.n) {
+          throw new Error(
+            `saveAll refused to shrink shifts in building ${row.building_id}: ` +
+            `db has ${row.n}, incoming has ${incoming}. ` +
+            `Per-shift removes go through /api/admin/shifts/:id/delete.`
+          );
+        }
+      }
+      for (const [bid, n] of incomingByBld) {
+        const scope = `shifts:${bid}`;
+        const hw = await c.query(`SELECT max_count FROM row_high_water WHERE scope = $1`, [scope]);
+        const prev = hw.rows[0]?.max_count || 0;
+        // We allow shifts to drop below HWM (unlike employees) because
+        // legitimate per-shift removes happen often (kept by HTTP-layer
+        // tripwire only). HWM tracks the trend instead — exceed it and
+        // we update; we don't fail on shrink.
         if (n > prev) {
           await c.query(
             `INSERT INTO row_high_water (scope, max_count) VALUES ($1, $2)
