@@ -1,0 +1,1335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1B5E3B">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="MMS">
+<title>ManageMyStaffing</title>
+<link rel="manifest" href="/app/manifest.webmanifest">
+<style>
+:root{
+  --green:#1B5E3B;       /* primary brand */
+  --green-d:#0F3D24;
+  --green-l:#E8F5EF;
+  --blue:#0E7490;
+  --blue-d:#075F73;
+  --blue-l:#E0F2FE;
+  --g50:#F8FAFC;
+  --g100:#F1F5F9;
+  --g200:#E2E8F0;
+  --g300:#CBD5E1;
+  --g500:#64748B;
+  --g600:#475569;
+  --g700:#334155;
+  --g800:#1E293B;
+  --g900:#0F172A;
+  --orange:#D97706;
+  --red:#B91C1C;
+  --red-l:#FEE2E2;
+  --shadow:0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.04);
+  --shadow-lg:0 8px 24px rgba(0,0,0,.12);
+}
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;padding:0;height:100%;background:var(--g50);color:var(--g900);
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased;
+  -webkit-tap-highlight-color:transparent;
+  padding-top:env(safe-area-inset-top);
+  padding-bottom:env(safe-area-inset-bottom);
+}
+button{font:inherit;cursor:pointer;border:none;background:none;color:inherit;padding:0}
+input,textarea,select{font:inherit}
+a{color:var(--blue-d);text-decoration:none}
+a:active{opacity:.6}
+
+/* ── App shell ───────────────────────────────────────────── */
+#app{display:flex;flex-direction:column;height:100vh;height:100dvh;max-width:560px;margin:0 auto;background:#fff}
+@media(min-width:760px){#app{box-shadow:var(--shadow-lg)}}
+
+/* Top header */
+.app-header{display:flex;align-items:center;justify-content:space-between;
+  padding:14px 16px;background:var(--green);color:#fff;flex-shrink:0;
+  box-shadow:var(--shadow)}
+.app-header .brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:16px}
+.app-header .brand-logo{width:28px;height:28px;background:#fff;border-radius:7px;
+  display:flex;align-items:center;justify-content:center;color:var(--green);font-weight:900;font-size:14px}
+.app-header .who{font-size:11px;opacity:.85;text-align:right;line-height:1.2}
+.app-header button.icon-btn{padding:6px 8px;border-radius:7px;color:#fff}
+.app-header button.icon-btn:active{background:rgba(255,255,255,.15)}
+
+/* Tab bar (admin only: schedule | messages) */
+.tabs{display:flex;background:#fff;border-bottom:1px solid var(--g200);flex-shrink:0}
+.tabs button{flex:1;padding:13px 8px;font-size:13px;font-weight:700;color:var(--g500);
+  border-bottom:3px solid transparent;transition:color .15s, border-color .15s;
+  display:flex;align-items:center;justify-content:center;gap:6px}
+.tabs button.active{color:var(--green);border-bottom-color:var(--green)}
+.tabs .tab-badge{background:var(--red);color:#fff;font-size:10px;font-weight:700;
+  padding:1px 6px;border-radius:99px;min-width:18px;text-align:center}
+
+/* Main scroll surface */
+.scroll{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+
+/* Generic card / section */
+.section{padding:14px 16px}
+.section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:10px}
+.section-title{font-size:11px;font-weight:800;color:var(--g500);text-transform:uppercase;letter-spacing:.06em}
+.section-meta{font-size:11px;color:var(--g500);font-weight:600}
+
+/* Shift card */
+.shift-card{background:#fff;border:1px solid var(--g200);border-radius:10px;
+  padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;gap:12px;
+  box-shadow:var(--shadow);transition:transform .1s, box-shadow .15s}
+.shift-card:active{transform:scale(.99)}
+.shift-card .date-blk{flex-shrink:0;text-align:center;width:46px;
+  background:var(--g50);border-radius:8px;padding:6px 4px;border:1px solid var(--g100)}
+.shift-card .date-blk .mo{font-size:9px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.04em}
+.shift-card .date-blk .day{font-size:18px;font-weight:800;color:var(--g900);line-height:1}
+.shift-card .date-blk .wk{font-size:9px;color:var(--g500);text-transform:uppercase;margin-top:1px}
+.shift-card .info{flex:1;min-width:0}
+.shift-card .info .ttl{font-size:13px;font-weight:700;color:var(--g900);
+  display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.shift-card .info .meta{font-size:11px;color:var(--g500);margin-top:2px}
+.shift-card .pill{display:inline-block;padding:2px 7px;border-radius:99px;font-size:10px;font-weight:700;
+  background:var(--green-l);color:var(--green-d);text-transform:uppercase;letter-spacing:.04em}
+.shift-card .pill.open{background:#FEF3C7;color:#92400E}
+.shift-card .pill.pending{background:var(--blue-l);color:var(--blue-d)}
+.shift-card .pill.mine{background:var(--green);color:#fff}
+.shift-card .right{flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.shift-card .claim-btn{background:var(--green);color:#fff;font-size:11px;font-weight:700;
+  padding:6px 12px;border-radius:7px}
+.shift-card .claim-btn:active{background:var(--green-d)}
+.shift-card .claim-btn:disabled{opacity:.5}
+
+/* Date header inside lists (sticky group) */
+.date-header{padding:8px 16px;font-size:11px;font-weight:700;color:var(--g500);
+  background:var(--g50);text-transform:uppercase;letter-spacing:.05em;
+  position:sticky;top:0;border-bottom:1px solid var(--g100);z-index:1}
+
+/* Empty state */
+.empty{padding:48px 24px;text-align:center;color:var(--g500)}
+.empty svg{width:42px;height:42px;color:var(--g300);margin-bottom:10px}
+.empty .ttl{font-size:14px;font-weight:700;color:var(--g700);margin-bottom:4px}
+.empty .sub{font-size:12px;color:var(--g500)}
+
+/* ── Login ──────────────────────────────────────────────── */
+.login-wrap{min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;
+  justify-content:center;align-items:center;padding:24px;background:linear-gradient(180deg,var(--green) 0,var(--green-d) 100%);color:#fff}
+.login-card{width:100%;max-width:380px;background:#fff;color:var(--g900);
+  border-radius:14px;padding:28px 24px;box-shadow:var(--shadow-lg)}
+.login-card .logo{width:56px;height:56px;background:var(--green);border-radius:14px;
+  display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;
+  font-size:24px;margin:0 auto 14px}
+.login-card h1{font-size:20px;font-weight:800;text-align:center;margin:0 0 4px}
+.login-card .sub{text-align:center;color:var(--g500);font-size:12px;margin-bottom:22px}
+.field{margin-bottom:14px}
+.field label{display:block;font-size:11px;font-weight:700;color:var(--g600);
+  text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px}
+.field input{width:100%;padding:11px 12px;border:1.5px solid var(--g200);
+  border-radius:9px;font-size:14px;background:#fff}
+.field input:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 3px rgba(27,94,59,.12)}
+.btn-primary{width:100%;background:var(--green);color:#fff;padding:12px 14px;
+  border-radius:9px;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px}
+.btn-primary:active{background:var(--green-d)}
+.btn-primary:disabled{opacity:.6}
+.btn-secondary{background:var(--g100);color:var(--g700);padding:10px 14px;
+  border-radius:9px;font-size:13px;font-weight:700}
+.btn-ghost{background:none;color:var(--green);font-size:13px;font-weight:700;padding:8px 12px}
+.btn-ghost:active{background:var(--g100);border-radius:7px}
+.error-msg{background:var(--red-l);color:var(--red);padding:10px 12px;border-radius:8px;
+  font-size:12px;margin-bottom:14px;display:none}
+.error-msg.show{display:block}
+
+/* ── Sidebar (admin schedule) ──────────────────────────── */
+.sidebar-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:90;display:none}
+.sidebar-overlay.open{display:block}
+.sidebar{position:fixed;top:0;left:0;bottom:0;width:280px;background:#fff;z-index:91;
+  transform:translateX(-100%);transition:transform .25s ease;display:flex;flex-direction:column;
+  padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}
+.sidebar.open{transform:translateX(0);box-shadow:var(--shadow-lg)}
+.sidebar-head{padding:16px 18px;border-bottom:1px solid var(--g200);
+  display:flex;align-items:center;justify-content:space-between}
+.sidebar-head .ttl{font-size:13px;font-weight:800;color:var(--g700);text-transform:uppercase;letter-spacing:.05em}
+.sidebar-list{flex:1;overflow-y:auto;padding:8px 0}
+.sb-section{padding:10px 18px 4px;font-size:10px;font-weight:800;color:var(--g500);
+  text-transform:uppercase;letter-spacing:.05em}
+.sb-item{display:flex;align-items:center;gap:10px;padding:11px 18px;
+  font-size:13px;color:var(--g700);font-weight:600;cursor:pointer}
+.sb-item:active{background:var(--g100)}
+.sb-item.active{background:var(--green-l);color:var(--green-d);border-left:3px solid var(--green);padding-left:15px}
+.sb-item .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.sb-item .count{margin-left:auto;font-size:11px;color:var(--g500);font-weight:700}
+
+/* ── Calendar (admin schedule) ─────────────────────────── */
+.cal-toolbar{display:flex;align-items:center;justify-content:space-between;
+  padding:12px 14px;border-bottom:1px solid var(--g200);background:#fff}
+.cal-toolbar .month{font-size:15px;font-weight:800;color:var(--g900)}
+.cal-toolbar button{padding:7px 10px;border-radius:7px;color:var(--g700);font-weight:700;font-size:13px}
+.cal-toolbar button:active{background:var(--g100)}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;background:var(--g200);
+  border-bottom:1px solid var(--g200)}
+.cal-dow{background:#fff;text-align:center;padding:8px 0;font-size:10px;font-weight:800;
+  color:var(--g500);text-transform:uppercase;letter-spacing:.06em}
+.cal-cell{background:#fff;min-height:64px;padding:5px 4px;cursor:pointer;
+  display:flex;flex-direction:column;gap:2px;font-size:11px;position:relative}
+.cal-cell:active{background:var(--g50)}
+.cal-cell.muted{background:var(--g50);color:var(--g300)}
+.cal-cell.today .num{background:var(--green);color:#fff;border-radius:50%}
+.cal-cell .num{display:inline-flex;width:20px;height:20px;align-items:center;justify-content:center;
+  font-weight:800;color:var(--g700);font-size:11px}
+.cal-cell .pip{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--green);
+  margin:0 1px}
+.cal-cell .pip.open{background:var(--orange)}
+.cal-cell .pip.pending{background:var(--blue-d)}
+.cal-cell .open-count{font-size:9px;color:var(--orange);font-weight:800;margin-top:auto}
+
+/* Day detail panel */
+.day-panel{padding:12px 14px;border-top:1px solid var(--g200);background:#fff}
+.day-panel .day-ttl{font-size:14px;font-weight:800;color:var(--g900);margin-bottom:8px}
+
+/* ── Messages ─────────────────────────────────────────── */
+.msg-list{display:flex;flex-direction:column}
+.thread-row{display:flex;align-items:center;gap:12px;padding:12px 16px;
+  border-bottom:1px solid var(--g100);cursor:pointer;background:#fff}
+.thread-row:active{background:var(--g50)}
+.thread-row .avatar{width:42px;height:42px;border-radius:50%;background:var(--blue);
+  color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;flex-shrink:0}
+.thread-row .body{flex:1;min-width:0}
+.thread-row .body .top{display:flex;align-items:baseline;justify-content:space-between;gap:6px}
+.thread-row .body .name{font-size:14px;font-weight:700;color:var(--g900);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.thread-row .body .time{font-size:11px;color:var(--g500);flex-shrink:0}
+.thread-row .body .preview{font-size:12px;color:var(--g500);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
+.thread-row.unread .body .name,
+.thread-row.unread .body .preview{font-weight:700;color:var(--g900)}
+.thread-row .badge{background:var(--green);color:#fff;font-size:10px;font-weight:800;
+  padding:2px 7px;border-radius:99px;flex-shrink:0}
+
+/* Message thread (one conversation) */
+.thread-view{display:flex;flex-direction:column;height:100%}
+.thread-head{display:flex;align-items:center;gap:10px;padding:12px 14px;
+  background:#fff;border-bottom:1px solid var(--g200);flex-shrink:0}
+.thread-head .back-btn{padding:6px;border-radius:7px;color:var(--g700)}
+.thread-head .back-btn:active{background:var(--g100)}
+.thread-head .name{font-size:15px;font-weight:700;color:var(--g900)}
+.thread-head .sub{font-size:11px;color:var(--g500)}
+.thread-body{flex:1;overflow-y:auto;background:var(--g50);padding:12px 14px;
+  display:flex;flex-direction:column;gap:6px}
+.bubble{max-width:80%;padding:9px 13px;border-radius:16px;font-size:14px;
+  line-height:1.35;word-break:break-word;box-shadow:var(--shadow)}
+.bubble.out{align-self:flex-end;background:var(--green);color:#fff;border-bottom-right-radius:5px}
+.bubble.in{align-self:flex-start;background:#fff;color:var(--g900);border-bottom-left-radius:5px}
+.bubble .t{font-size:10px;opacity:.7;margin-top:3px;text-align:right}
+.bubble.in .t{text-align:left}
+.thread-input{display:flex;align-items:flex-end;gap:8px;padding:10px 12px;
+  background:#fff;border-top:1px solid var(--g200);flex-shrink:0;
+  padding-bottom:max(10px,env(safe-area-inset-bottom))}
+.thread-input textarea{flex:1;resize:none;border:1.5px solid var(--g200);border-radius:18px;
+  padding:9px 14px;font-size:14px;max-height:120px;min-height:38px;font-family:inherit;line-height:1.3}
+.thread-input textarea:focus{outline:none;border-color:var(--green)}
+.thread-input .send{background:var(--green);color:#fff;width:38px;height:38px;
+  border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.thread-input .send:active{background:var(--green-d)}
+.thread-input .send:disabled{opacity:.4}
+
+/* New message / new conversation pickers */
+.composer-people{padding:8px 0;background:#fff}
+.composer-search{padding:10px 14px;background:var(--g50);border-bottom:1px solid var(--g200)}
+.composer-search input{width:100%;padding:9px 12px;border:1.5px solid var(--g200);
+  border-radius:8px;font-size:13px}
+.fab{position:absolute;bottom:24px;right:24px;width:54px;height:54px;border-radius:50%;
+  background:var(--green);color:#fff;display:flex;align-items:center;justify-content:center;
+  box-shadow:var(--shadow-lg);z-index:5}
+.fab:active{background:var(--green-d)}
+
+/* Group message composer modal */
+.modal-back{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:60;display:none;
+  align-items:flex-end;justify-content:center}
+.modal-back.open{display:flex}
+.modal-sheet{width:100%;max-width:560px;background:#fff;border-radius:16px 16px 0 0;
+  max-height:85vh;display:flex;flex-direction:column;
+  padding-bottom:env(safe-area-inset-bottom)}
+.sheet-head{display:flex;align-items:center;justify-content:space-between;
+  padding:14px 18px;border-bottom:1px solid var(--g200)}
+.sheet-head .ttl{font-size:15px;font-weight:800;color:var(--g900)}
+.sheet-body{flex:1;overflow-y:auto}
+.sheet-foot{padding:12px 16px;border-top:1px solid var(--g200);display:flex;gap:8px}
+
+/* Toast */
+.toast{position:fixed;bottom:30px;left:50%;transform:translateX(-50%) translateY(80px);
+  background:var(--g900);color:#fff;padding:11px 18px;border-radius:99px;font-size:13px;
+  font-weight:600;box-shadow:var(--shadow-lg);z-index:200;opacity:0;
+  transition:opacity .25s, transform .25s;pointer-events:none;max-width:90%}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast.warn{background:var(--orange)}
+.toast.error{background:var(--red)}
+
+/* Spinner */
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.4);
+  border-top-color:#fff;border-radius:50%;animation:spin .9s linear infinite}
+.center-spinner{display:flex;align-items:center;justify-content:center;padding:48px;color:var(--g500)}
+.center-spinner .spinner{border-color:var(--g200);border-top-color:var(--green);width:22px;height:22px;border-width:3px}
+
+/* Hidden helper */
+.hidden{display:none !important}
+</style>
+</head>
+<body>
+
+<!-- Login screen -->
+<div id="login-screen" class="login-wrap hidden">
+  <div class="login-card">
+    <div class="logo">M</div>
+    <h1>ManageMyStaffing</h1>
+    <p class="sub">Sign in with your work email</p>
+    <div id="login-error" class="error-msg"></div>
+    <form id="login-form" autocomplete="on">
+      <div class="field">
+        <label for="login-email">Email</label>
+        <input id="login-email" name="email" type="email" autocomplete="email" required inputmode="email" autocapitalize="off" autocorrect="off">
+      </div>
+      <div class="field">
+        <label for="login-password">Password</label>
+        <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <button id="login-submit" type="submit" class="btn-primary">
+        <span id="login-submit-text">Sign in</span>
+      </button>
+    </form>
+    <p style="text-align:center;margin-top:18px;font-size:12px;color:var(--g500)">
+      <a href="/" style="color:var(--green-d);font-weight:700">Use the full website →</a>
+    </p>
+  </div>
+</div>
+
+<!-- App shell -->
+<div id="app" class="hidden">
+  <header class="app-header">
+    <div style="display:flex;align-items:center;gap:10px">
+      <button id="menu-btn" class="icon-btn hidden" aria-label="Open menu">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <div class="brand">
+        <div class="brand-logo">M</div>
+        <span id="brand-text">ManageMyStaffing</span>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <div class="who" id="who-text"></div>
+      <button id="logout-btn" class="icon-btn" aria-label="Sign out" title="Sign out">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Admin only: tabs -->
+  <nav class="tabs hidden" id="admin-tabs">
+    <button id="tab-schedule" class="active" data-tab="schedule">
+      <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="2" y="3" width="16" height="14" rx="1.5"/><path d="M2 7h16M6 3v4M14 3v4"/></svg>
+      Schedule
+    </button>
+    <button id="tab-messages" data-tab="messages">
+      <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 4h16v11H6l-4 4z"/></svg>
+      Messages
+      <span id="tab-msg-badge" class="tab-badge hidden">0</span>
+    </button>
+  </nav>
+
+  <main id="main" class="scroll" style="position:relative">
+    <!-- View content rendered here -->
+  </main>
+</div>
+
+<!-- Sidebar (admin schedule) -->
+<div id="sb-overlay" class="sidebar-overlay"></div>
+<aside id="sb" class="sidebar">
+  <div class="sidebar-head">
+    <span class="ttl">Filter by group</span>
+    <button id="sb-close" class="icon-btn" aria-label="Close">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <div id="sb-list" class="sidebar-list"></div>
+</aside>
+
+<!-- Bottom-sheet modal (used for new messages, group composer) -->
+<div id="sheet" class="modal-back" role="dialog" aria-modal="true">
+  <div class="modal-sheet">
+    <div class="sheet-head">
+      <span class="ttl" id="sheet-title">Modal</span>
+      <button id="sheet-close" class="icon-btn" aria-label="Close">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="sheet-body" id="sheet-body"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+// ════════════════════════════════════════════════════════════
+//  ManageMyStaffing — companion app (PWA)
+//  Backend: shares /api/* endpoints with the main site.
+//  Auth:    same httpOnly cookie session as the main site.
+// ════════════════════════════════════════════════════════════
+
+const State = {
+  user: null,
+  data: null,         // {employees, shifts, accounts, buildings, directMessages, ...}
+  view: 'schedule',   // admin only: 'schedule' | 'messages'
+  // Schedule
+  selectedGroup: null,    // for admin sidebar filter
+  viewYear:  new Date().getFullYear(),
+  viewMonth: new Date().getMonth(),
+  selectedDate: null,
+  // Messages
+  activeThreadId: null,
+  activeOtherId: null,
+  newMessageMode: false,
+  pollTimer: null,
+};
+
+const GROUPS = ['Nurse Management','Charge Nurse','CNA','CMA','Housekeeping','Laundry','Cook','Dietary Aid','Therapy','Office','Maintenance','Marketing'];
+const GROUP_LABEL = { 'Office':'Administration' };
+const groupLabel = g => GROUP_LABEL[g] || g;
+const DISPLAY_GROUPS = ['Nurse Management','Charge Nurse','CNA','CMA','Housekeeping','Laundry','Dietary','Therapy','Office','Maintenance','Marketing'];
+const GROUP_MAP = {'Dietary':['Cook','Dietary Aid']};
+const getActualGroups = g => GROUP_MAP[g] || [g];
+const G_COLORS = {
+  'Nurse Management':'#1A3C34','Charge Nurse':'#2D6A4F','CNA':'#6B9E7A','CMA':'#40916C',
+  'Housekeeping':'#52B788','Laundry':'#3D7A52','Cook':'#1B5E3B','Dietary Aid':'#4A8A5E','Dietary':'#1B5E3B',
+  'Therapy':'#7E22CE','Office':'#0E7490','Maintenance':'#365E47','Marketing':'#74A98F',
+};
+const TODAY = () => new Date().toISOString().slice(0,10);
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+// ── Helpers ──────────────────────────────────────────────────────
+function $(sel, root) { return (root||document).querySelector(sel); }
+function $$(sel, root) { return Array.from((root||document).querySelectorAll(sel)); }
+function escapeHTML(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function initials(name) {
+  return String(name||'?').split(/\s+/).filter(Boolean).map(w=>w[0]).join('').slice(0,2).toUpperCase();
+}
+function fmtDateLong(iso) {
+  if (!iso) return '';
+  const d = new Date(iso + 'T12:00:00');
+  return d.toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' });
+}
+function fmtDateShort(iso) {
+  if (!iso) return '';
+  const d = new Date(iso + 'T12:00:00');
+  return d.toLocaleDateString('en-US', { month:'short', day:'numeric' });
+}
+function fmtTimeAgo(iso) {
+  if (!iso) return '';
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60_000) return 'now';
+  const m = Math.floor(ms / 60_000);
+  if (m < 60) return m + 'm';
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + 'h';
+  const d = Math.floor(h / 24);
+  if (d < 7) return d + 'd';
+  return new Date(iso).toLocaleDateString('en-US', { month:'short', day:'numeric' });
+}
+
+function toast(msg, kind) {
+  const el = $('#toast');
+  el.className = 'toast' + (kind ? ' ' + kind : '');
+  el.textContent = msg;
+  requestAnimationFrame(() => el.classList.add('show'));
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => el.classList.remove('show'), 2400);
+}
+
+async function apiFetch(url, opts = {}) {
+  opts.credentials = opts.credentials || 'include';
+  opts.headers = Object.assign({
+    'X-Requested-With': 'XMLHttpRequest',
+  }, opts.headers || {});
+  if (opts.body && typeof opts.body !== 'string' && !(opts.body instanceof FormData)) {
+    opts.body = JSON.stringify(opts.body);
+    opts.headers['Content-Type'] = 'application/json';
+  } else if (opts.body && typeof opts.body === 'string' && !opts.headers['Content-Type']) {
+    opts.headers['Content-Type'] = 'application/json';
+  }
+  const r = await fetch(url, opts);
+  if (r.status === 401) {
+    State.user = null;
+    showLogin();
+    throw new Error('Not authenticated');
+  }
+  return r;
+}
+
+// ── Boot ─────────────────────────────────────────────────────────
+async function boot() {
+  try {
+    const r = await fetch('/api/auth/verify', { credentials:'include', headers:{'X-Requested-With':'XMLHttpRequest'} });
+    if (!r.ok) { showLogin(); return; }
+    const j = await r.json();
+    if (!j || !j.user) { showLogin(); return; }
+    State.user = j.user;
+    await loadAndRender();
+    startPolling();
+  } catch (e) {
+    showLogin();
+  }
+}
+
+async function loadAndRender() {
+  await loadData();
+  showApp();
+}
+
+async function loadData() {
+  const r = await apiFetch('/api/data');
+  if (!r.ok) {
+    toast('Could not load data', 'error');
+    return;
+  }
+  State.data = await r.json();
+  // Ensure user object has up-to-date fields used later
+  State.user = Object.assign({}, State.user, State.data.user || {});
+  // Default selected group for admin = first DISPLAY group with employees
+  if (isAdmin() && !State.selectedGroup) {
+    State.selectedGroup = DISPLAY_GROUPS.find(g => {
+      const ag = getActualGroups(g);
+      return (State.data.employees || []).some(e => ag.includes(e.group) && !e.inactive
+        && e.buildingId === effectiveBuildingId());
+    }) || DISPLAY_GROUPS[0];
+  }
+}
+
+function isAdmin() {
+  const r = State.user?.role;
+  return r === 'admin' || r === 'superadmin' || r === 'regionaladmin' || r === 'scheduler' || r === 'hradmin';
+}
+function effectiveBuildingId() {
+  return State.user?.buildingId || (State.data?.buildings?.[0]?.id) || 'b1';
+}
+
+function showLogin() {
+  $('#login-screen').classList.remove('hidden');
+  $('#app').classList.add('hidden');
+  stopPolling();
+}
+
+function showApp() {
+  $('#login-screen').classList.add('hidden');
+  $('#app').classList.remove('hidden');
+
+  // Header who text
+  const u = State.user || {};
+  const bld = (State.data?.buildings || []).find(b => b.id === u.buildingId);
+  $('#who-text').innerHTML = `${escapeHTML(u.name || u.email || '')}<br><span style="opacity:.7">${escapeHTML(bld?.name || u.role || '')}</span>`;
+
+  if (isAdmin()) {
+    $('#admin-tabs').classList.remove('hidden');
+    $('#menu-btn').classList.remove('hidden');
+    State.view = State.view || 'schedule';
+    setActiveTab(State.view);
+  } else {
+    $('#admin-tabs').classList.add('hidden');
+    $('#menu-btn').classList.add('hidden');
+    State.view = 'employee';
+  }
+  render();
+}
+
+function setActiveTab(name) {
+  State.view = name;
+  $$('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  render();
+}
+
+// ── Render dispatcher ───────────────────────────────────────────
+function render() {
+  if (!State.user) { showLogin(); return; }
+  if (!isAdmin()) {
+    renderEmployeeView();
+  } else if (State.view === 'messages') {
+    renderMessagesView();
+  } else {
+    renderAdminScheduleView();
+  }
+  updateMessageBadge();
+}
+
+// ════════════════════════════════════════════════════════════
+//  EMPLOYEE VIEW — My Shifts (top) + Open Shifts (bottom)
+// ════════════════════════════════════════════════════════════
+function renderEmployeeView() {
+  const u = State.user;
+  const today = TODAY();
+  const shifts = State.data?.shifts || [];
+
+  const myUpcoming = shifts.filter(s =>
+    s.employeeId === u.id && s.status === 'scheduled' && s.date >= today
+  ).sort((a,b) => a.date.localeCompare(b.date) || (a.start||'').localeCompare(b.start||''));
+
+  const myGroup = u.group;
+  const openShifts = shifts.filter(s =>
+    s.status === 'open' && s.group === myGroup && s.date >= today &&
+    (!s.buildingId || s.buildingId === effectiveBuildingId())
+  ).sort((a,b) => a.date.localeCompare(b.date) || (a.start||'').localeCompare(b.start||''));
+
+  const main = $('#main');
+  main.innerHTML = `
+    <div class="section">
+      <div class="section-head">
+        <span class="section-title">My upcoming shifts</span>
+        <span class="section-meta">${myUpcoming.length} scheduled</span>
+      </div>
+      ${myUpcoming.length
+        ? myUpcoming.slice(0, 60).map(renderShiftCard).join('')
+        : emptyBlock('calendar', 'No upcoming shifts', "You'll see your scheduled shifts here.")}
+    </div>
+
+    <div class="section" style="border-top:8px solid var(--g100);background:var(--g50)">
+      <div class="section-head">
+        <span class="section-title">Open shifts in ${escapeHTML(groupLabel(myGroup||'your role'))}</span>
+        <span class="section-meta">${openShifts.length} available</span>
+      </div>
+      ${openShifts.length
+        ? openShifts.slice(0, 80).map(s => renderShiftCard(s, { open:true, claimable:true })).join('')
+        : emptyBlock('inbox', 'No open shifts right now', 'Check back soon — open shifts in your role show up here.')}
+    </div>
+  `;
+
+  // Wire claim buttons
+  $$('[data-claim-id]', main).forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      claimShift(btn.dataset.claimId);
+    });
+  });
+}
+
+function renderShiftCard(s, opts) {
+  opts = opts || {};
+  const d = new Date(s.date + 'T12:00:00');
+  const mo = d.toLocaleString('en-US', { month:'short' });
+  const day = d.getDate();
+  const wk  = d.toLocaleString('en-US', { weekday:'short' });
+  const time = (s.start && s.end) ? `${s.start} – ${s.end}` : (s.type || '');
+  const u = State.user;
+  const isMine = u && s.employeeId === u.id;
+  const isPending = !!s.claimRequest;
+  const claimable = opts.claimable && !isPending && s.status === 'open';
+  const isMineClaim = isPending && s.claimRequest.empId === u?.id;
+
+  let pill = '';
+  if (opts.open || s.status === 'open') {
+    if (isMineClaim) pill = '<span class="pill pending">Your request pending</span>';
+    else if (isPending) pill = '<span class="pill pending">Claim pending</span>';
+    else pill = '<span class="pill open">Open</span>';
+  } else if (isMine) {
+    pill = `<span class="pill mine">${escapeHTML(s.type || 'Scheduled')}</span>`;
+  } else {
+    pill = `<span class="pill">${escapeHTML(s.type || 'Scheduled')}</span>`;
+  }
+
+  const right = claimable
+    ? `<button class="claim-btn" data-claim-id="${escapeHTML(s.id)}">Claim</button>`
+    : '';
+
+  return `
+    <div class="shift-card">
+      <div class="date-blk">
+        <div class="mo">${mo}</div>
+        <div class="day">${day}</div>
+        <div class="wk">${wk}</div>
+      </div>
+      <div class="info">
+        <div class="ttl">${escapeHTML(s.type || '')} ${escapeHTML(groupLabel(s.group || ''))} ${pill}</div>
+        <div class="meta">${escapeHTML(time)}${s.buildingId ? ' · ' + escapeHTML(buildingName(s.buildingId)) : ''}</div>
+      </div>
+      <div class="right">${right}</div>
+    </div>
+  `;
+}
+
+function buildingName(id) {
+  const b = (State.data?.buildings || []).find(x => x.id === id);
+  return b?.name || '';
+}
+
+function emptyBlock(icon, ttl, sub) {
+  const icons = {
+    calendar: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>`,
+    inbox:    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>`,
+    chat:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
+  };
+  return `<div class="empty">${icons[icon] || icons.inbox}<div class="ttl">${escapeHTML(ttl)}</div><div class="sub">${escapeHTML(sub)}</div></div>`;
+}
+
+async function claimShift(shiftId) {
+  const shift = (State.data?.shifts || []).find(s => s.id === shiftId);
+  if (!shift) return;
+  if (!confirm("Request to claim this " + (shift.type||"") + " " + (groupLabel(shift.group||"")) + " shift on " + fmtDateLong(shift.date) + "?\n\nYour supervisor will review before it's confirmed.")) return;
+
+  try {
+    const r = await apiFetch('/api/shifts/' + encodeURIComponent(shiftId) + '/claim', { method:'POST', body:{} });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { toast(j.error || 'Claim failed', 'warn'); return; }
+    // Patch local state so UI updates instantly
+    Object.assign(shift, j.shift || {});
+    toast('Claim submitted — waiting for approval');
+    render();
+  } catch (e) {
+    toast('Network error', 'error');
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  ADMIN SCHEDULE VIEW
+// ════════════════════════════════════════════════════════════
+function renderAdminScheduleView() {
+  const main = $('#main');
+  const monthLabel = MONTHS[State.viewMonth] + ' ' + State.viewYear;
+  main.innerHTML = `
+    <div class="cal-toolbar">
+      <button id="cal-prev" aria-label="Previous month">‹</button>
+      <div class="month">${escapeHTML(monthLabel)}</div>
+      <button id="cal-next" aria-label="Next month">›</button>
+    </div>
+    <div style="padding:8px 14px;background:#fff;border-bottom:1px solid var(--g200);font-size:12px;color:var(--g600);display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span style="font-weight:700;color:var(--g700)">Group:</span>
+      <span style="background:var(--green-l);color:var(--green-d);font-weight:700;padding:3px 10px;border-radius:99px">${escapeHTML(groupLabel(State.selectedGroup||'—'))}</span>
+      <button id="open-sb" class="btn-ghost" style="margin-left:auto;font-size:12px">Change</button>
+    </div>
+    ${renderCalendarGrid()}
+    <div id="day-panel"></div>
+  `;
+  $('#cal-prev').addEventListener('click', () => navMonth(-1));
+  $('#cal-next').addEventListener('click', () => navMonth(1));
+  $('#open-sb').addEventListener('click', openSidebar);
+  $$('.cal-cell[data-date]').forEach(el => {
+    el.addEventListener('click', () => selectDate(el.dataset.date));
+  });
+  if (State.selectedDate) renderDayPanel(State.selectedDate);
+}
+
+function renderCalendarGrid() {
+  const y = State.viewYear, m = State.viewMonth;
+  const firstDow = new Date(y, m, 1).getDay();
+  const daysInMonth = new Date(y, m+1, 0).getDate();
+  const today = TODAY();
+  const ag = getActualGroups(State.selectedGroup);
+  const buildId = effectiveBuildingId();
+
+  const cells = [];
+  // Header row
+  let html = '<div class="cal-grid">';
+  html += DOW.map(d => `<div class="cal-dow">${d}</div>`).join('');
+  // Leading blanks
+  for (let i = 0; i < firstDow; i++) html += '<div class="cal-cell muted"></div>';
+  // Day cells
+  for (let day = 1; day <= daysInMonth; day++) {
+    const iso = `${y}-${String(m+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const dayShifts = (State.data?.shifts || []).filter(s =>
+      s.date === iso && ag.includes(s.group) && (!s.buildingId || s.buildingId === buildId));
+    const open = dayShifts.filter(s => s.status === 'open').length;
+    const sched = dayShifts.filter(s => s.status === 'scheduled').length;
+    const pending = dayShifts.filter(s => s.claimRequest).length;
+    const isToday = iso === today;
+    let pips = '';
+    if (sched) pips += `<span class="pip" title="${sched} scheduled"></span>`;
+    if (pending) pips += `<span class="pip pending" title="${pending} pending claim"></span>`;
+    html += `<div class="cal-cell${isToday ? ' today' : ''}" data-date="${iso}">
+      <span class="num">${day}</span>
+      <div>${pips}</div>
+      ${open ? `<span class="open-count">${open} open</span>` : ''}
+    </div>`;
+  }
+  // Trailing blanks
+  const total = firstDow + daysInMonth;
+  const pad = (7 - (total % 7)) % 7;
+  for (let i = 0; i < pad; i++) html += '<div class="cal-cell muted"></div>';
+  html += '</div>';
+  return html;
+}
+
+function navMonth(delta) {
+  let y = State.viewYear, m = State.viewMonth + delta;
+  if (m < 0) { m = 11; y--; }
+  if (m > 11) { m = 0; y++; }
+  State.viewYear = y;
+  State.viewMonth = m;
+  State.selectedDate = null;
+  render();
+}
+
+function selectDate(iso) {
+  State.selectedDate = iso;
+  renderDayPanel(iso);
+  // Scroll panel into view
+  setTimeout(() => $('#day-panel')?.scrollIntoView({ behavior:'smooth', block:'start' }), 30);
+}
+
+function renderDayPanel(iso) {
+  const ag = getActualGroups(State.selectedGroup);
+  const bId = effectiveBuildingId();
+  const shifts = (State.data?.shifts || []).filter(s =>
+    s.date === iso && ag.includes(s.group) && (!s.buildingId || s.buildingId === bId)
+  ).sort((a,b) => (a.type||'').localeCompare(b.type||''));
+
+  const empMap = new Map((State.data?.employees || []).map(e => [e.id, e]));
+  const rows = shifts.map(s => {
+    const e = empMap.get(s.employeeId);
+    let statusPill = '';
+    if (s.status === 'open' && s.claimRequest) {
+      statusPill = `<span class="pill pending">Claim from ${escapeHTML(s.claimRequest.empName||'')}</span>`;
+    } else if (s.status === 'open') {
+      statusPill = '<span class="pill open">Open</span>';
+    } else if (e) {
+      statusPill = `<span class="pill">${escapeHTML(e.name)}</span>`;
+    } else {
+      statusPill = `<span class="pill">${escapeHTML(s.type||'Scheduled')}</span>`;
+    }
+    return `<div class="shift-card" style="margin-bottom:6px">
+      <div class="info" style="margin-left:0">
+        <div class="ttl">${escapeHTML(s.type||'')} ${escapeHTML(groupLabel(s.group))} ${statusPill}</div>
+        <div class="meta">${escapeHTML((s.start||'') + (s.end?' – '+s.end:''))}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  $('#day-panel').innerHTML = `
+    <div class="day-panel">
+      <div class="day-ttl">${escapeHTML(fmtDateLong(iso))}</div>
+      ${rows || '<div class="empty" style="padding:14px 0"><div class="sub">No shifts for this group on this day</div></div>'}
+    </div>
+  `;
+}
+
+// Sidebar
+function openSidebar() {
+  // Build group list with counts
+  const u = State.user;
+  const bId = effectiveBuildingId();
+  const list = DISPLAY_GROUPS.map(g => {
+    const ag = getActualGroups(g);
+    const count = (State.data?.employees || []).filter(e =>
+      ag.includes(e.group) && !e.inactive && e.buildingId === bId).length;
+    if (!count) return null;
+    const dot = G_COLORS[g] || G_COLORS[ag[0]] || 'var(--green)';
+    return { g, count, dot };
+  }).filter(Boolean);
+
+  $('#sb-list').innerHTML = `
+    <div class="sb-section">Departments</div>
+    ${list.map(x => `
+      <div class="sb-item${x.g === State.selectedGroup ? ' active' : ''}" data-g="${escapeHTML(x.g)}">
+        <span class="dot" style="background:${x.dot}"></span>
+        <span>${escapeHTML(groupLabel(x.g))}</span>
+        <span class="count">${x.count}</span>
+      </div>
+    `).join('')}
+  `;
+  $$('.sb-item').forEach(el => {
+    el.addEventListener('click', () => {
+      State.selectedGroup = el.dataset.g;
+      State.selectedDate = null;
+      closeSidebar();
+      render();
+    });
+  });
+  $('#sb').classList.add('open');
+  $('#sb-overlay').classList.add('open');
+}
+function closeSidebar() {
+  $('#sb').classList.remove('open');
+  $('#sb-overlay').classList.remove('open');
+}
+
+// ════════════════════════════════════════════════════════════
+//  ADMIN MESSAGES VIEW
+// ════════════════════════════════════════════════════════════
+function renderMessagesView() {
+  if (State.activeThreadId) {
+    renderActiveThread();
+    return;
+  }
+  if (State.newMessageMode) {
+    renderNewMessagePicker();
+    return;
+  }
+
+  const me = State.user;
+  const dms = State.data?.directMessages || [];
+  // Build threads
+  const threadMap = new Map();
+  for (const m of dms) {
+    if (m.fromId !== me.id && m.toId !== me.id) continue;
+    const otherId = m.fromId === me.id ? m.toId : m.fromId;
+    const tid = m.threadId;
+    if (!threadMap.has(tid)) threadMap.set(tid, { tid, otherId, msgs:[], unread:0 });
+    const t = threadMap.get(tid);
+    t.msgs.push(m);
+    if (m.toId === me.id && !m.readAt) t.unread++;
+  }
+  const threads = Array.from(threadMap.values())
+    .map(t => {
+      t.msgs.sort((a,b) => a.sentAt.localeCompare(b.sentAt));
+      t.last = t.msgs[t.msgs.length-1];
+      return t;
+    })
+    .sort((a,b) => b.last.sentAt.localeCompare(a.last.sentAt));
+
+  const main = $('#main');
+  main.innerHTML = `
+    <div class="msg-list">
+      ${threads.length
+        ? threads.map(threadRow).join('')
+        : emptyBlock('chat', 'No conversations yet', 'Tap the + button to start one.')}
+    </div>
+    <button class="fab" id="fab-new" aria-label="New message">
+      <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+  `;
+  $('#fab-new').addEventListener('click', () => {
+    State.newMessageMode = true;
+    render();
+  });
+  $$('.thread-row[data-tid]').forEach(el => {
+    el.addEventListener('click', () => {
+      State.activeThreadId = el.dataset.tid;
+      State.activeOtherId = el.dataset.other;
+      render();
+    });
+  });
+}
+
+function threadRow(t) {
+  const otherName = nameOfId(t.otherId) || 'Unknown';
+  const last = t.last;
+  const preview = (last.fromId === State.user.id ? 'You: ' : '') + (last.body || '');
+  return `
+    <div class="thread-row${t.unread ? ' unread' : ''}" data-tid="${escapeHTML(t.tid)}" data-other="${escapeHTML(t.otherId)}">
+      <div class="avatar" style="background:${avatarColor(t.otherId)}">${escapeHTML(initials(otherName))}</div>
+      <div class="body">
+        <div class="top">
+          <span class="name">${escapeHTML(otherName)}</span>
+          <span class="time">${escapeHTML(fmtTimeAgo(last.sentAt))}</span>
+        </div>
+        <div class="preview">${escapeHTML(preview.slice(0, 80))}${preview.length>80?'…':''}</div>
+      </div>
+      ${t.unread ? `<span class="badge">${t.unread}</span>` : ''}
+    </div>
+  `;
+}
+
+function nameOfId(id) {
+  if (!id) return '';
+  const e = (State.data?.employees || []).find(x => x.id === id);
+  if (e) return e.name;
+  const a = (State.data?.accounts || []).find(x => x.id === id);
+  if (a) return a.name || a.email;
+  return '';
+}
+function avatarColor(id) {
+  // Pick a stable color from the employee group or fallback hash
+  const e = (State.data?.employees || []).find(x => x.id === id);
+  if (e && G_COLORS[e.group]) return G_COLORS[e.group];
+  let h = 0;
+  for (const c of String(id||'')) h = (h*31 + c.charCodeAt(0)) | 0;
+  const palette = ['#0E7490','#7E22CE','#1B5E3B','#2D6A4F','#0F3D24','#365E47','#0F172A'];
+  return palette[Math.abs(h) % palette.length];
+}
+
+function renderActiveThread() {
+  const me = State.user;
+  const otherId = State.activeOtherId;
+  const otherName = nameOfId(otherId) || 'Unknown';
+  const e = (State.data?.employees || []).find(x => x.id === otherId);
+  const sub = e ? (groupLabel(e.group||'') + (e.buildingId?(' · '+buildingName(e.buildingId)):'')) : '';
+
+  const msgs = (State.data?.directMessages || [])
+    .filter(m => m.threadId === State.activeThreadId)
+    .sort((a,b) => a.sentAt.localeCompare(b.sentAt));
+
+  const bubbles = msgs.map(m => {
+    const out = m.fromId === me.id;
+    return `<div class="bubble ${out?'out':'in'}">${escapeHTML(m.body)}<div class="t">${escapeHTML(fmtTimeAgo(m.sentAt))}</div></div>`;
+  }).join('');
+
+  const main = $('#main');
+  main.innerHTML = `
+    <div class="thread-view">
+      <div class="thread-head">
+        <button class="back-btn" id="thread-back" aria-label="Back">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+        <div class="avatar" style="background:${avatarColor(otherId)};width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:13px">${escapeHTML(initials(otherName))}</div>
+        <div style="flex:1;min-width:0">
+          <div class="name">${escapeHTML(otherName)}</div>
+          <div class="sub">${escapeHTML(sub)}</div>
+        </div>
+      </div>
+      <div class="thread-body" id="thread-body">${bubbles || '<div class="empty"><div class="sub">No messages yet — say hi!</div></div>'}</div>
+      <div class="thread-input">
+        <textarea id="thread-input" rows="1" placeholder="Message…" maxlength="4000"></textarea>
+        <button class="send" id="thread-send" aria-label="Send">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2" fill="currentColor" stroke="none"/></svg>
+        </button>
+      </div>
+    </div>
+  `;
+
+  // Mark thread read
+  apiFetch('/api/dm/read', { method:'POST', body:{ threadId: State.activeThreadId } }).catch(()=>{});
+  // Locally mark messages from other as read so badge updates immediately
+  for (const m of (State.data?.directMessages || [])) {
+    if (m.threadId === State.activeThreadId && m.toId === me.id && !m.readAt) {
+      m.readAt = new Date().toISOString();
+    }
+  }
+  updateMessageBadge();
+
+  $('#thread-back').addEventListener('click', () => {
+    State.activeThreadId = null;
+    State.activeOtherId = null;
+    render();
+  });
+
+  const ta = $('#thread-input');
+  ta.addEventListener('input', () => {
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
+  });
+  ta.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendThreadMessage();
+    }
+  });
+  $('#thread-send').addEventListener('click', sendThreadMessage);
+
+  // Scroll to bottom
+  const tb = $('#thread-body');
+  tb.scrollTop = tb.scrollHeight;
+}
+
+async function sendThreadMessage() {
+  const ta = $('#thread-input');
+  const body = (ta.value || '').trim();
+  if (!body) return;
+  const sendBtn = $('#thread-send');
+  sendBtn.disabled = true;
+  try {
+    const r = await apiFetch('/api/dm', {
+      method:'POST',
+      body:{ toId: State.activeOtherId, body },
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { toast(j.error || 'Send failed', 'warn'); return; }
+    // Optimistic append
+    if (!Array.isArray(State.data.directMessages)) State.data.directMessages = [];
+    State.data.directMessages.push(j.message);
+    ta.value = '';
+    ta.style.height = 'auto';
+    renderActiveThread();
+  } catch (e) {
+    toast('Network error', 'error');
+  } finally {
+    sendBtn.disabled = false;
+  }
+}
+
+function renderNewMessagePicker() {
+  const me = State.user;
+  const bId = effectiveBuildingId();
+  const people = [
+    ...(State.data?.employees || []).filter(e => !e.inactive && e.buildingId === bId && e.id !== me.id),
+    ...(State.data?.accounts  || []).filter(a => a.buildingId === bId && a.id !== me.id),
+  ];
+  const groups = (State.data?.textGroups || []).filter(g => !g.inactive);
+  const main = $('#main');
+  main.innerHTML = `
+    <div class="thread-head" style="border-bottom:1px solid var(--g200)">
+      <button class="back-btn" id="new-back" aria-label="Back">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div style="font-size:15px;font-weight:800;color:var(--g900)">New message</div>
+    </div>
+    <div class="composer-search">
+      <input id="new-search" type="search" placeholder="Search people or groups…" autocomplete="off">
+    </div>
+    ${groups.length ? `
+      <div class="section-head" style="padding:10px 16px 4px;margin:0">
+        <span class="section-title">Group messages</span>
+      </div>
+      <div id="new-groups" class="msg-list">
+        ${groups.map(g => `
+          <div class="thread-row" data-gid="${escapeHTML(g.id)}">
+            <div class="avatar" style="background:var(--green)"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="7" r="3"/><path d="M2 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2"/><circle cx="17" cy="7" r="2"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg></div>
+            <div class="body">
+              <div class="top"><span class="name">${escapeHTML(g.name)}</span></div>
+              <div class="preview">${escapeHTML((g.autoFromGroups||[]).map(groupLabel).join(', ') || 'Custom list')}</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    ` : ''}
+    <div class="section-head" style="padding:10px 16px 4px;margin:0;border-top:8px solid var(--g100)">
+      <span class="section-title">People</span>
+    </div>
+    <div id="new-people" class="msg-list">
+      ${people.map(p => `
+        <div class="thread-row" data-pid="${escapeHTML(p.id)}" data-name="${escapeHTML(p.name||p.email||'')}">
+          <div class="avatar" style="background:${avatarColor(p.id)}">${escapeHTML(initials(p.name||p.email||''))}</div>
+          <div class="body">
+            <div class="top"><span class="name">${escapeHTML(p.name||p.email)}</span></div>
+            <div class="preview">${escapeHTML(groupLabel(p.group||'') || (p.role||''))}</div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  $('#new-back').addEventListener('click', () => {
+    State.newMessageMode = false;
+    render();
+  });
+  $('#new-search').addEventListener('input', filterNewPicker);
+  $$('[data-pid]').forEach(el => {
+    el.addEventListener('click', () => {
+      State.newMessageMode = false;
+      State.activeOtherId = el.dataset.pid;
+      State.activeThreadId = dmThreadId(State.user.id, el.dataset.pid);
+      render();
+    });
+  });
+  $$('[data-gid]').forEach(el => {
+    el.addEventListener('click', () => {
+      openGroupComposer(el.dataset.gid);
+    });
+  });
+}
+
+function filterNewPicker() {
+  const q = ($('#new-search').value || '').toLowerCase();
+  $$('[data-pid], [data-gid]').forEach(el => {
+    const t = (el.textContent || '').toLowerCase();
+    el.style.display = t.includes(q) ? '' : 'none';
+  });
+}
+
+function dmThreadId(a, b) {
+  return [a,b].sort().join('::');
+}
+
+// Group composer (bottom sheet)
+function openGroupComposer(gid) {
+  const g = (State.data?.textGroups || []).find(x => x.id === gid);
+  if (!g) { toast('Group not found','warn'); return; }
+  // Resolve members same way the main site does
+  const memberIds = resolveGroupMemberIds(g);
+  const bId = effectiveBuildingId();
+  const reachable = (State.data?.employees || []).filter(e =>
+    memberIds.includes(e.id) && !e.inactive && e.buildingId === bId);
+  const smsCount = reachable.filter(e => e.notifSMS && e.phone).length;
+  const emailCount = reachable.filter(e => e.notifEmail && e.email).length;
+
+  $('#sheet-title').textContent = 'Message ' + g.name;
+  $('#sheet-body').innerHTML = `
+    <div style="padding:14px 16px">
+      <div style="font-size:12px;color:var(--g500);margin-bottom:10px">
+        ${reachable.length} member${reachable.length===1?'':'s'} in ${escapeHTML(buildingName(bId)||'this building')}
+      </div>
+      <textarea id="gc-body" rows="4" maxlength="1000" placeholder="Type your message — kept generic, no PHI." style="width:100%;padding:10px 12px;border:1.5px solid var(--g200);border-radius:9px;font-size:14px;font-family:inherit;resize:vertical;box-sizing:border-box"></textarea>
+      <div style="display:flex;align-items:center;gap:14px;margin-top:10px;font-size:13px;color:var(--g700);flex-wrap:wrap">
+        <label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="gc-sms" checked> SMS <span style="color:var(--g500)">(${smsCount})</span></label>
+        <label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="gc-email"> Email <span style="color:var(--g500)">(${emailCount})</span></label>
+      </div>
+      <p style="font-size:11px;color:var(--g500);margin-top:8px">SMS is unencrypted — never include patient names or PHI.</p>
+    </div>
+    <div class="sheet-foot">
+      <button id="gc-cancel" class="btn-secondary" style="flex:1">Cancel</button>
+      <button id="gc-send" class="btn-primary" style="flex:2">Send to ${reachable.length}</button>
+    </div>
+  `;
+  openSheet();
+  $('#gc-cancel').addEventListener('click', closeSheet);
+  $('#gc-send').addEventListener('click', () => sendGroupMessage(gid, reachable.map(e => e.id)));
+}
+
+async function sendGroupMessage(gid, empIds) {
+  const message = ($('#gc-body').value || '').trim();
+  if (!message) { toast('Type a message first','warn'); return; }
+  const viaSMS   = $('#gc-sms').checked;
+  const viaEmail = $('#gc-email').checked;
+  if (!viaSMS && !viaEmail) { toast('Pick SMS, Email, or both','warn'); return; }
+  const sendBtn = $('#gc-send');
+  sendBtn.disabled = true;
+  sendBtn.textContent = 'Sending…';
+  try {
+    const g = (State.data?.textGroups || []).find(x => x.id === gid);
+    const r = await apiFetch('/api/alert', {
+      method:'POST',
+      body:{
+        empIds, message, viaSMS, viaEmail,
+        subject: 'Message from ' + (State.user.name || 'Admin') + ' — ' + (g?.name || 'Group'),
+        buildingId: effectiveBuildingId(),
+      },
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { toast(j.error || 'Send failed','warn'); return; }
+    const parts = [];
+    if (j.queued?.email) parts.push(j.queued.email + ' email' + (j.queued.email===1?'':'s'));
+    if (j.queued?.sms)   parts.push(j.queued.sms + ' text' + (j.queued.sms===1?'':'s'));
+    toast(parts.join(' + ') || 'Queued');
+    closeSheet();
+    State.newMessageMode = false;
+    render();
+  } catch (e) {
+    toast('Network error','error');
+  } finally {
+    sendBtn.disabled = false;
+    sendBtn.textContent = 'Send';
+  }
+}
+
+function resolveGroupMemberIds(group) {
+  const set = new Set(group.memberIds || []);
+  const excluded = new Set(group.excludedIds || []);
+  if (Array.isArray(group.autoFromGroups) && group.autoFromGroups.length) {
+    for (const e of (State.data?.employees || [])) {
+      if (group.autoFromGroups.includes(e.group) && !excluded.has(e.id)) set.add(e.id);
+    }
+  }
+  return Array.from(set);
+}
+
+function openSheet() { $('#sheet').classList.add('open'); }
+function closeSheet() { $('#sheet').classList.remove('open'); }
+
+// ── Message badge ────────────────────────────────────────────────
+function updateMessageBadge() {
+  const me = State.user;
+  if (!me || !isAdmin()) return;
+  const dms = State.data?.directMessages || [];
+  const unread = dms.filter(m => m.toId === me.id && !m.readAt).length;
+  const badge = $('#tab-msg-badge');
+  if (unread > 0) {
+    badge.textContent = unread > 99 ? '99+' : String(unread);
+    badge.classList.remove('hidden');
+  } else {
+    badge.classList.add('hidden');
+  }
+}
+
+// ── Polling for new data (light: every 25s) ──────────────────────
+function startPolling() {
+  stopPolling();
+  State.pollTimer = setInterval(async () => {
+    if (document.hidden) return;
+    try {
+      const r = await fetch('/api/data', { credentials:'include', headers:{'X-Requested-With':'XMLHttpRequest'} });
+      if (r.status === 401) { showLogin(); return; }
+      if (r.ok) {
+        State.data = await r.json();
+        // Only re-render if we're not mid-typing in a textarea
+        const active = document.activeElement;
+        if (active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')) {
+          updateMessageBadge();
+        } else {
+          render();
+        }
+      }
+    } catch (e) {}
+  }, 25000);
+}
+function stopPolling() {
+  if (State.pollTimer) { clearInterval(State.pollTimer); State.pollTimer = null; }
+}
+
+// ── Login flow ───────────────────────────────────────────────────
+$('#login-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const email = $('#login-email').value.trim();
+  const password = $('#login-password').value;
+  const err = $('#login-error');
+  err.classList.remove('show');
+  const btn = $('#login-submit');
+  const txt = $('#login-submit-text');
+  btn.disabled = true;
+  txt.innerHTML = '<span class="spinner"></span> Signing in…';
+  try {
+    const r = await fetch('/api/auth/login', {
+      method:'POST',
+      credentials:'include',
+      headers:{ 'Content-Type':'application/json', 'X-Requested-With':'XMLHttpRequest' },
+      body: JSON.stringify({ email, password }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      err.textContent = j.error || 'Sign in failed';
+      err.classList.add('show');
+      return;
+    }
+    State.user = j.user || null;
+    if (j.requiresTOTP) {
+      err.textContent = 'This account requires 2FA — please use the full website to sign in.';
+      err.classList.add('show');
+      return;
+    }
+    if (!State.user) {
+      err.textContent = 'Unexpected response — try the full website.';
+      err.classList.add('show');
+      return;
+    }
+    await loadAndRender();
+    startPolling();
+  } catch (e) {
+    err.textContent = 'Network error — check your connection.';
+    err.classList.add('show');
+  } finally {
+    btn.disabled = false;
+    txt.textContent = 'Sign in';
+  }
+});
+
+$('#logout-btn').addEventListener('click', async () => {
+  try { await apiFetch('/api/auth/logout', { method:'POST' }); } catch(e){}
+  State.user = null;
+  State.data = null;
+  showLogin();
+});
+
+// Tabs
+$$('.tabs button').forEach(b => b.addEventListener('click', () => setActiveTab(b.dataset.tab)));
+
+// Sidebar wiring
+$('#menu-btn').addEventListener('click', () => {
+  if (State.view === 'schedule') openSidebar();
+});
+$('#sb-close').addEventListener('click', closeSidebar);
+$('#sb-overlay').addEventListener('click', closeSidebar);
+$('#sheet-close').addEventListener('click', closeSheet);
+$('#sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeSheet(); });
+
+// Re-render on visibility change (resume after backgrounded)
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && State.user) {
+    apiFetch('/api/data').then(r => r.json()).then(d => { State.data = d; render(); }).catch(()=>{});
+  }
+});
+
+// Boot
+boot();
+</script>
+</body>
+</html>

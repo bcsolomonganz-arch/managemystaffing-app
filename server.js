@@ -1543,6 +1543,34 @@ app.get('/', (_req, res) => {
   res.sendFile(HTML_FILE);
 });
 
+// ── COMPANION APP (employee shift claim + admin schedule/messages) ────────
+// Single-page PWA at /app — talks to the same /api/* endpoints as the main
+// site. Designed mobile-first; installable via "Add to Home Screen".
+const APP_HTML_FILE = path.join(__dirname, 'public', 'app.html');
+app.get('/app', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+  res.sendFile(APP_HTML_FILE);
+});
+app.get('/app/manifest.webmanifest', (_req, res) => {
+  res.setHeader('Content-Type', 'application/manifest+json');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.send(JSON.stringify({
+    name: 'ManageMyStaffing',
+    short_name: 'MMS',
+    description: 'Shift schedule and messaging for ManageMyStaffing',
+    start_url: '/app',
+    scope: '/app',
+    display: 'standalone',
+    orientation: 'portrait',
+    background_color: '#ffffff',
+    theme_color: '#1B5E3B',
+    icons: [
+      { src: '/app/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { src: '/app/icon-512.png', sizes: '512x512', type: 'image/png' },
+    ],
+  }));
+});
+
 // ── PUBLIC LEGAL PAGES (privacy, terms) ───────────────────────────────────
 // Required for A2P 10DLC SMS brand registration with Azure Communication
 // Services — carriers (T-Mobile, AT&T, Verizon) verify these URLs are live
@@ -3616,6 +3644,43 @@ app.post('/api/employees/:id/access', requireAuth, requireAdmin, async (req, res
 //   approved — admin approved, employeeIds swapped on both shifts
 //   rejected — admin rejected, no change
 //   cancelled — A withdrew before admin decision
+
+// POST /api/shifts/:id/claim — employee requests to claim an open shift
+// Used by the companion app (/app) so employees don't need /api/data POST
+// rights. Mirrors the in-page claim flow (managemystaffing.html ~15921):
+// sets shift.claimRequest, leaves status='open' until an admin approves.
+app.post('/api/shifts/:id/claim', requireAuth, async (req, res) => {
+  const shiftId = req.params.id;
+  const data = await loadData();
+  const shift = (data.shifts || []).find(s => s.id === shiftId);
+  if (!shift) return res.status(404).json({ error: 'Shift not found' });
+  if (shift.status !== 'open') return res.status(400).json({ error: 'Shift is not open for claiming' });
+  if (shift.claimRequest)      return res.status(409).json({ error: 'Shift already has a pending claim' });
+
+  const me = req.user;
+  // Authz: employee must be in same building + same group as the shift.
+  // Admins/superadmins can also claim (e.g. floating between facilities)
+  // but they're typically using the main UI.
+  if (shift.buildingId && shift.buildingId !== me.buildingId &&
+      !(me.buildingIds || []).includes(shift.buildingId) &&
+      me.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Not authorized for this building' });
+  }
+  if (me.role === 'employee' && me.group !== shift.group) {
+    return res.status(403).json({ error: 'Not authorized for this shift group' });
+  }
+
+  shift.claimRequest = {
+    empId: me.id,
+    empName: me.name || me.email,
+    requestedAt: new Date().toISOString(),
+  };
+  markDirty();
+  auditLog('SHIFT_CLAIM_REQUESTED', me, {
+    shiftId, date: shift.date, type: shift.type, group: shift.group,
+  });
+  res.json({ ok: true, shift });
+});
 
 // POST /api/shifts/trade — employee submits a trade request
 // Body: { fromShiftId, toShiftId }
