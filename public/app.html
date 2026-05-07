@@ -803,8 +803,23 @@ function renderEmployeeView() {
     (!s.buildingId || s.buildingId === effectiveBuildingId())
   ).sort((a,b) => a.date.localeCompare(b.date) || (a.start||'').localeCompare(b.start||''));
 
+  // Hours scheduled this week — a quick orientation banner
+  const ws = startOfWeek(today);
+  const we = addDays(ws, 6);
+  const thisWeek = shifts.filter(s => s.employeeId === u.id && s.status === 'scheduled' && s.date >= ws && s.date <= we);
+  const hours = thisWeek.reduce((sum, s) => sum + shiftHours(s), 0);
+
   const main = $('#main');
   main.innerHTML = `
+    <div style="padding:16px 18px;background:linear-gradient(180deg,var(--green-l) 0,#fff 100%);border-bottom:1px solid var(--g100)">
+      <div style="font-size:11px;color:var(--g600);font-weight:700;text-transform:uppercase;letter-spacing:.05em">This week</div>
+      <div style="display:flex;align-items:baseline;gap:8px;margin-top:3px">
+        <div style="font-size:26px;font-weight:800;color:var(--green-d)">${hours ? hours.toFixed(hours % 1 ? 1 : 0) : '0'}</div>
+        <div style="font-size:13px;font-weight:700;color:var(--g600)">hours scheduled</div>
+        <div style="margin-left:auto;font-size:11px;color:var(--g500);font-weight:600">${thisWeek.length} shift${thisWeek.length===1?'':'s'}</div>
+      </div>
+    </div>
+
     <div class="section">
       <div class="section-head">
         <span class="section-title">My upcoming shifts</span>
@@ -884,6 +899,26 @@ function buildingName(id) {
   return b?.name || '';
 }
 
+// Parse "7:00 AM" / "11:00 PM" → minutes-since-midnight; null if unparseable.
+function parseTimeToMin(str) {
+  if (!str) return null;
+  const m = String(str).trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const mi = parseInt(m[2], 10);
+  const ap = (m[3] || '').toUpperCase();
+  if (ap === 'PM' && h < 12) h += 12;
+  if (ap === 'AM' && h === 12) h = 0;
+  return h * 60 + mi;
+}
+function shiftHours(s) {
+  const a = parseTimeToMin(s.start);
+  const b = parseTimeToMin(s.end);
+  if (a == null || b == null) return 8; // safe default
+  const diff = (b - a + 24 * 60) % (24 * 60);
+  return diff / 60;
+}
+
 function emptyBlock(icon, ttl, sub) {
   const icons = {
     calendar: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>`,
@@ -945,6 +980,17 @@ function renderAdminScheduleView() {
   if (State.scheduleMode === 'week') wireWeekViewClicks();
   $('#open-sb')?.addEventListener('click', openSidebar);
   $('#fab-add-shift')?.addEventListener('click', () => openAddShiftSheet(State.selectedDate));
+  $('#jump-today')?.addEventListener('click', () => {
+    const t = new Date();
+    if (State.scheduleMode === 'week') {
+      State.weekStart = startOfWeek(TODAY());
+    } else {
+      State.viewYear = t.getFullYear();
+      State.viewMonth = t.getMonth();
+      State.selectedDate = TODAY();
+    }
+    render();
+  });
   $$('#mode-toggle button').forEach(b => b.addEventListener('click', () => {
     if (State.scheduleMode !== b.dataset.mode) {
       State.scheduleMode = b.dataset.mode;
@@ -969,10 +1015,17 @@ function renderScheduleToolbar(mode, monthLabel) {
       <div class="month">${escapeHTML(monthLabel || '')}</div>
       <button id="cal-next" aria-label="Next month">›</button>
     `;
+  // "Today" button shows when not currently viewing the period that
+  // contains today.
+  const today = TODAY();
+  const showToday = mode === 'week'
+    ? !(State.weekStart && today >= State.weekStart && today <= addDays(State.weekStart, 6))
+    : !(State.viewYear === new Date().getFullYear() && State.viewMonth === new Date().getMonth());
   return `
     <div class="cal-toolbar">
       ${left}
-      <div id="mode-toggle" class="view-toggle" style="margin-left:8px">
+      ${showToday ? '<button id="jump-today" class="btn-ghost" style="margin-left:6px;font-size:12px">Today</button>' : ''}
+      <div id="mode-toggle" class="view-toggle" style="margin-left:auto">
         <button data-mode="month" class="${mode==='month'?'on':''}">Month</button>
         <button data-mode="week"  class="${mode==='week' ?'on':''}">Week</button>
       </div>
@@ -1712,7 +1765,12 @@ function renderMessagesView() {
 
   const main = $('#main');
   main.innerHTML = `
-    <div class="msg-list">
+    ${threads.length > 4 ? `
+      <div class="composer-search" style="border-bottom:1px solid var(--g100)">
+        <input id="thread-search" type="search" placeholder="Search conversations…" autocomplete="off">
+      </div>
+    ` : ''}
+    <div class="msg-list" id="thread-list">
       ${threads.length
         ? threads.map(threadRow).join('')
         : emptyBlock('chat', 'No conversations yet', 'Tap the + button to start one.')}
@@ -1730,6 +1788,13 @@ function renderMessagesView() {
       State.activeThreadId = el.dataset.tid;
       State.activeOtherId = el.dataset.other;
       render();
+    });
+  });
+  // Search filter — case-insensitive match on visible text (name + preview)
+  $('#thread-search')?.addEventListener('input', () => {
+    const q = $('#thread-search').value.toLowerCase().trim();
+    $$('#thread-list .thread-row').forEach(row => {
+      row.style.display = !q || (row.textContent || '').toLowerCase().includes(q) ? '' : 'none';
     });
   });
 }
@@ -1837,6 +1902,24 @@ function renderActiveThread() {
       sendThreadMessage();
     }
   });
+  // When the keyboard pops up on iOS/Android, scroll the latest message
+  // into view. Visual-viewport API is the reliable cross-platform signal
+  // for the keyboard height; fall back to a simple delayed scroll.
+  ta.addEventListener('focus', () => {
+    setTimeout(() => {
+      const tb = $('#thread-body');
+      if (tb) tb.scrollTop = tb.scrollHeight;
+    }, 350);
+  });
+  if (window.visualViewport) {
+    const handler = () => {
+      const tb = $('#thread-body');
+      if (tb) tb.scrollTop = tb.scrollHeight;
+    };
+    window.visualViewport.addEventListener('resize', handler);
+    // Detach on next render — we add a fresh listener each time anyway
+    setTimeout(() => window.visualViewport.removeEventListener('resize', handler), 60000);
+  }
   $('#thread-send').addEventListener('click', sendThreadMessage);
 
   // Scroll to bottom
