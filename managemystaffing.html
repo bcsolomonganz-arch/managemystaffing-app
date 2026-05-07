@@ -580,7 +580,7 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;color:var(--g600)">
         <input type="checkbox" id="remember-me" style="accent-color:var(--blue-d);width:15px;height:15px">
-        Remember me
+        Stay logged in on this device for 30 days
       </label>
     </div>
     <button class="btn btn-primary btn-full" onclick="App.loginForm()">Sign In</button>
@@ -701,7 +701,7 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
           <option value="">Select position...</option>
           <option>Nurse Management</option><option>Charge Nurse</option><option>CNA</option><option>CMA</option>
           <option>Housekeeping</option><option>Laundry</option><option>Cook</option><option>Dietary Aid</option>
-          <option>Therapy</option><option>Office</option>
+          <option>Therapy</option><option value="Office">Administration</option>
           <option>Maintenance</option><option>Marketing</option>
         </select>
       </div>
@@ -1136,6 +1136,11 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
 //  CONSTANTS
 // ════════════════════════════════════════════════════════════
 const GROUPS = ['Nurse Management','Charge Nurse','CNA','CMA','Housekeeping','Laundry','Cook','Dietary Aid','Therapy','Office','Maintenance','Marketing'];
+// Display labels — internal value stays 'Office' (for backward compat with
+// existing employee records and shift assignments) but the UI shows
+// 'Administration'. Add more entries here if other groups need renaming.
+const GROUP_LABEL = { 'Office': 'Administration' };
+const groupLabel = (g) => GROUP_LABEL[g] || g;
 // Sidebar display groups — Cook+Dietary Aid merged into 'Dietary'
 const DISPLAY_GROUPS = ['Nurse Management','Charge Nurse','CNA','CMA','Housekeeping','Laundry','Dietary','Therapy','Office','Maintenance','Marketing'];
 // Maps display group → actual data groups
@@ -1719,6 +1724,12 @@ const App = {
     eventsView: false,
     textsView: false,
     textsTab: 'group',        // 'group' = alert log | 'direct' = DM threads
+    // Pinned text-blast groups shown at the top of the Texts page. Admin can
+    // manage membership independently of the staff-group filter (e.g. a
+    // "Nurses" group that includes Charge Nurses + RN agency floats).
+    // Default groups bootstrapped on first load by `_ensureTextGroups()`.
+    textGroups: null,         // [{id, name, memberIds:[empId,…], autoFromGroups:[...], pinned:true}]
+    textGroupModal: null,     // {groupId} when the membership panel is open
     // Time Clock
     tcSort: {col:'date', dir:-1},
     tcMissedPeriod: null,
@@ -2237,10 +2248,14 @@ const App = {
 
     if (IS_SERVER_MODE) {
       // ── SERVER MODE AUTH ────────────────────────────────
+      // Send rememberMe so the server can issue a 30-day session cookie
+      // (vs the default short-lived session). Server-side handler should
+      // honor this flag and set the cookie's Max-Age accordingly.
+      const rememberMe = !!document.getElementById('remember-me')?.checked;
       try {
         const resp = await api('/api/auth/login', {
           method:'POST',
-          body:JSON.stringify({email:emailRaw, password:pass})
+          body:JSON.stringify({email:emailRaw, password:pass, rememberMe})
         });
         if (!resp.ok) {
           const body = await resp.json().catch(()=>({}));
@@ -2325,7 +2340,13 @@ const App = {
     if (errEl) errEl.style.display = 'none';
     this.S.user = user;
     localStorage.removeItem(SEC.SESSION_KEY);
-    try { localStorage.setItem(SEC.SESSION_KEY, obf({uid:user.id,role:user.role,ts:Date.now()})); } catch(e2) {}
+    // Stamp expiry on the local session so the same auto-restore code can
+    // honor a 30-day "stay logged in" choice. Without rememberMe, the
+    // session is treated as short-lived (ts only — caller decides cutoff).
+    const rememberMe = !!document.getElementById('remember-me')?.checked;
+    const sessionTtlMs = rememberMe ? 30 * 24 * 60 * 60 * 1000 : null;
+    const expiresAt = sessionTtlMs ? Date.now() + sessionTtlMs : null;
+    try { localStorage.setItem(SEC.SESSION_KEY, obf({uid:user.id,role:user.role,ts:Date.now(),expiresAt,rememberMe})); } catch(e2) {}
     try { sessionStorage.setItem('mms_lock_hash', hashPw(emailRaw, pass)); } catch(e2) {}
     this._saveLoginCredentials(emailRaw, user.name);
     Audit.log('LOGIN_SUCCESS', 'Login: '+sanitize(emailRaw), user.id, 'low');
@@ -3925,25 +3946,9 @@ const App = {
       const count = this.S.employees.filter(e => getActualGroups(g).includes(e.group) && e.buildingId === effBuildingId && !e.inactive).length;
       const col = G_COLORS[g];
       groupItems += `<div class="group-item ${sel===g?'active':''}" onclick="App.selectGroup('${g}')">
-        <div class="group-icon" style="background:${col}22;color:${col}">${G_ICONS[g]}</div>${g}
+        <div class="group-icon" style="background:${col}22;color:${col}">${G_ICONS[g]}</div>${groupLabel(g)}
         <span class="group-badge">${count}</span></div>`;
     });
-
-    let empList = '';
-    if (sel) {
-      const emps = this.S.employees.filter(e => getActualGroups(sel).includes(e.group) && e.buildingId === effBuildingId && !e.inactive);
-      emps.forEach(emp => {
-        const working = this.S.shifts.some(s => s.date === TODAY && s.employeeId === emp.id);
-        empList += `<div class="emp-item">
-          <div class="emp-avatar" style="background:${G_COLORS[emp.group]}">${sanitize(emp.initials)}</div>
-          <div style="flex:1;min-width:0">
-            <div class="emp-name">${sanitize(emp.name)}</div>
-            <div class="emp-status" style="display:flex;align-items:center;gap:5px">${working?`<svg viewBox="0 0 8 8" width="7" height="7"><circle cx="4" cy="4" r="4" fill="var(--blue)"/></svg><span>Working today</span>`:`<svg viewBox="0 0 8 8" width="7" height="7"><circle cx="4" cy="4" r="4" fill="none" stroke="var(--g300)" stroke-width="1.5"/></svg><span>Off today</span>`}</div>
-          </div>
-          <button class="btn btn-ghost btn-sm" onclick="App.openPatternForEmp('${emp.id}')" title="Set rotation" style="padding:4px 6px"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></button>
-        </div>`;
-      });
-    }
 
     const bname = building ? `<div style="padding:12px 16px 4px;font-size:12px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em;display:flex;align-items:center;gap:5px"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="14" height="11" rx="1"/><path d="M5 15V9h6v6"/><path d="M1 8l7-6 7 6"/></svg>${sanitize(building.name)}</div>` : '';
     const modeToggle = this._canAccessHR() ? `<div class="mode-toggle">
@@ -3963,10 +3968,6 @@ const App = {
       ${modeToggle}
       ${regionalBackBtn}
       ${bname}
-      <div class="sidebar-section-title">Staff Groups</div>
-      ${groupItems}
-      ${sel ? `<div class="sidebar-divider"></div><div class="sidebar-section-title">${sel==='Dietary'?'Dietary Staff':sel+'s'}</div><div class="emp-list">${empList}</div>` : ''}
-      <div class="sidebar-divider"></div>
       <div class="sidebar-section-title">Tools</div>
       <div class="group-item${this.S.ppdView?'':''}" onclick="App.openPPDCalc()" style="cursor:pointer">
         <div class="group-icon" style="background:#FFF7ED;color:#C2410C"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="1" width="14" height="14" rx="2"/><path d="M4 8h8M8 4v8"/></svg></div>
@@ -3987,6 +3988,9 @@ const App = {
           ${totalUnread > 0 ? `<span class="group-badge" style="background:#D97706;color:#fff;margin-left:auto">${totalUnread}</span>` : ''}
         </div>`;
       })()}
+      <div class="sidebar-divider"></div>
+      <div class="sidebar-section-title">Staff Groups</div>
+      ${groupItems}
       ${(() => {
         const pendingClaims = (this.S.shifts || []).filter(s => s.claimRequest && s.buildingId === effBuildingId);
         const pendingTrades = (this.S.shiftTrades || []).filter(t => t.status === 'pending' && t.buildingId === effBuildingId);
@@ -11682,6 +11686,182 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.render();
   },
 
+  // ── PINNED TEXT GROUPS (Nurses / CNAs / CMAs) ────────────────────────────
+  // Three pinned text-blast groups shown at the top of the Texts page.
+  // Admins can add or remove people. Groups can also auto-populate from the
+  // staff-group taxonomy (autoFromGroups) — e.g. "Nurses" = anyone whose
+  // staff group is Nurse Management/Charge Nurse/RN. The autoFromGroups
+  // members union with the manual memberIds; manual takes priority on remove.
+  _ensureTextGroups() {
+    if (Array.isArray(this.S.textGroups) && this.S.textGroups.length) return;
+    this.S.textGroups = [
+      { id:'tg_nurses', name:'Nurses', pinned:true,
+        autoFromGroups:['Nurse Management','Charge Nurse','RN','LPN'],
+        memberIds:[], excludedIds:[] },
+      { id:'tg_cnas',   name:'CNAs',   pinned:true,
+        autoFromGroups:['CNA'], memberIds:[], excludedIds:[] },
+      { id:'tg_cmas',   name:'CMAs',   pinned:true,
+        autoFromGroups:['CMA'], memberIds:[], excludedIds:[] },
+    ];
+  },
+
+  // Resolve current member-empIds for a group: union of autoFromGroups
+  // matches at this building + manual memberIds, MINUS excludedIds.
+  _resolveTextGroupMembers(group) {
+    const u = this.S.user;
+    const bId = this.S.activeBuildingId || u?.buildingId || 'b1';
+    const auto = new Set();
+    const autoGroups = new Set(group.autoFromGroups || []);
+    for (const e of (this.S.employees || [])) {
+      if (e.inactive) continue;
+      if (e.buildingId !== bId) continue;
+      if (autoGroups.has(e.group)) auto.add(e.id);
+    }
+    for (const id of (group.memberIds || [])) auto.add(id);
+    for (const id of (group.excludedIds || [])) auto.delete(id);
+    return [...auto];
+  },
+
+  // Open the membership-management sidebar for a given group.
+  openTextGroupPanel(groupId) {
+    this._ensureTextGroups();
+    const group = (this.S.textGroups || []).find(g => g.id === groupId);
+    if (!group) { this.showToast('Group not found','warn'); return; }
+    this.S.textGroupModal = { groupId };
+    this._renderTextGroupPanel();
+  },
+
+  closeTextGroupPanel() {
+    this.S.textGroupModal = null;
+    document.getElementById('modal-text-group')?.remove();
+  },
+
+  // The right-slide panel is built dynamically (so it re-renders cleanly
+  // when members are added/removed without a full app re-render).
+  _renderTextGroupPanel() {
+    const ctx = this.S.textGroupModal;
+    if (!ctx) return;
+    const group = (this.S.textGroups || []).find(g => g.id === ctx.groupId);
+    if (!group) return;
+    const isAdmin = ['admin','superadmin','regionaladmin'].includes(this.S.user?.role);
+    const u = this.S.user;
+    const bId = this.S.activeBuildingId || u?.buildingId || 'b1';
+    const memberIds = new Set(this._resolveTextGroupMembers(group));
+    const allBuildingEmps = (this.S.employees || []).filter(e =>
+      !e.inactive && e.buildingId === bId);
+    const members    = allBuildingEmps.filter(e => memberIds.has(e.id));
+    const nonMembers = allBuildingEmps.filter(e => !memberIds.has(e.id));
+
+    const memberRow = (e) => `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--g100);background:#fff">
+      <div style="width:30px;height:30px;border-radius:50%;background:${G_COLORS[e.group]||'var(--blue)'};color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${sanitize(e.initials || (e.name||'').split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase())}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;color:var(--g900)">${sanitize(e.name)}</div>
+        <div style="font-size:11px;color:var(--g500)">${sanitize(groupLabel(e.group))}</div>
+      </div>
+      ${isAdmin ? `<button class="btn btn-ghost btn-sm" style="font-size:11px;color:#B91C1C;padding:3px 8px" onclick="App.removeFromTextGroup('${group.id}','${e.id}')">Remove</button>` : ''}
+    </div>`;
+
+    const nonMemberRow = (e) => `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--g100);background:#fff">
+      <div style="width:30px;height:30px;border-radius:50%;background:${G_COLORS[e.group]||'var(--g300)'};color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${sanitize(e.initials || (e.name||'').split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase())}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;color:var(--g900)">${sanitize(e.name)}</div>
+        <div style="font-size:11px;color:var(--g500)">${sanitize(groupLabel(e.group))}</div>
+      </div>
+      <button class="btn btn-secondary btn-sm" style="font-size:11px;padding:3px 8px;color:var(--blue-d);border-color:var(--blue-m)" onclick="App.addToTextGroup('${group.id}','${e.id}')">+ Add</button>
+    </div>`;
+
+    document.getElementById('modal-text-group')?.remove();
+    const div = document.createElement('div');
+    div.id = 'modal-text-group';
+    div.className = 'modal-overlay open';
+    div.innerHTML = `<div class="modal" style="max-width:520px;max-height:90vh;display:flex;flex-direction:column">
+      <div class="modal-header" style="flex-shrink:0">
+        <span class="modal-title">${sanitize(group.name)} <span style="font-size:12px;color:var(--g500);font-weight:500;margin-left:6px">${members.length} member${members.length===1?'':'s'}</span></span>
+        <button class="modal-close" aria-label="Close" onclick="App.closeTextGroupPanel()">✕</button>
+      </div>
+      <div class="modal-body" style="overflow-y:auto;flex:1;padding:0">
+        ${(group.autoFromGroups || []).length ? `<div style="padding:10px 16px;background:var(--blue-l);border-bottom:1px solid var(--blue-m);font-size:11px;color:var(--blue-d)">
+          Auto-includes everyone in: <strong>${(group.autoFromGroups||[]).map(groupLabel).join(', ')}</strong>${isAdmin ? ' · you can override below' : ''}
+        </div>` : ''}
+        <div style="padding:12px 16px 6px;font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.04em;background:var(--g50)">Members (${members.length})</div>
+        ${members.length ? members.map(memberRow).join('') : '<div style="padding:24px;text-align:center;color:var(--g500);font-size:12px">No members yet</div>'}
+        ${isAdmin && nonMembers.length ? `
+          <div style="padding:12px 16px 6px;font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.04em;background:var(--g50);border-top:1px solid var(--g200)">Add someone (${nonMembers.length} available)</div>
+          ${nonMembers.map(nonMemberRow).join('')}
+        ` : ''}
+      </div>
+      <div class="modal-footer" style="flex-shrink:0">
+        <button class="btn btn-secondary" onclick="App.closeTextGroupPanel()">Close</button>
+      </div>
+    </div>`;
+    document.body.appendChild(div);
+  },
+
+  addToTextGroup(groupId, empId) {
+    const group = (this.S.textGroups || []).find(g => g.id === groupId);
+    if (!group) return;
+    if (!Array.isArray(group.memberIds))   group.memberIds   = [];
+    if (!Array.isArray(group.excludedIds)) group.excludedIds = [];
+    // Remove from excluded list (in case they were excluded), add to manual
+    group.excludedIds = group.excludedIds.filter(id => id !== empId);
+    if (!group.memberIds.includes(empId)) group.memberIds.push(empId);
+    const emp = this.S.employees.find(e => e.id === empId);
+    Audit.log('TEXT_GROUP_ADD', `Added ${sanitize(emp?.name || empId)} to ${sanitize(group.name)}`, this.S.user?.id, 'low');
+    this.persistData();
+    this._renderTextGroupPanel();
+    if (this.S.textsView) this.renderMain();
+  },
+
+  removeFromTextGroup(groupId, empId) {
+    const group = (this.S.textGroups || []).find(g => g.id === groupId);
+    if (!group) return;
+    if (!Array.isArray(group.memberIds))   group.memberIds   = [];
+    if (!Array.isArray(group.excludedIds)) group.excludedIds = [];
+    // Remove from manual list AND add to excluded so they don't get re-added
+    // by autoFromGroups membership.
+    group.memberIds   = group.memberIds.filter(id => id !== empId);
+    if (!group.excludedIds.includes(empId)) group.excludedIds.push(empId);
+    const emp = this.S.employees.find(e => e.id === empId);
+    Audit.log('TEXT_GROUP_REMOVE', `Removed ${sanitize(emp?.name || empId)} from ${sanitize(group.name)}`, this.S.user?.id, 'low');
+    this.persistData();
+    this._renderTextGroupPanel();
+    if (this.S.textsView) this.renderMain();
+  },
+
+  _renderPinnedTextGroupsBar() {
+    this._ensureTextGroups();
+    const groups = this.S.textGroups || [];
+    if (!groups.length) return '';
+    const cards = groups.map(g => {
+      const memberIds = this._resolveTextGroupMembers(g);
+      const sample = memberIds.slice(0, 4).map(id => {
+        const e = this.S.employees.find(x => x.id === id);
+        if (!e) return '';
+        return `<div style="width:24px;height:24px;border-radius:50%;background:${G_COLORS[e.group]||'var(--g300)'};color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;border:2px solid #fff;margin-left:-8px">${sanitize(e.initials || (e.name||'').split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase())}</div>`;
+      }).join('');
+      return `<div onclick="App.openTextGroupPanel('${g.id}')" style="background:#fff;border:1.5px solid var(--g200);border-radius:10px;padding:14px 16px;cursor:pointer;transition:border-color .15s, box-shadow .15s;flex:1;min-width:200px" onmouseover="this.style.borderColor='var(--blue-d)';this.style.boxShadow='0 2px 8px rgba(37,99,235,.12)'" onmouseout="this.style.borderColor='var(--g200)';this.style.boxShadow='none'">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <div style="display:flex;align-items:center;gap:6px">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="var(--blue-d)" style="opacity:.8"><path d="M8 1.5l1.5 4 4.5.5-3.5 3 1 4.5L8 11.5 4.5 13.5l1-4.5L2 6l4.5-.5z"/></svg>
+            <span style="font-weight:700;font-size:14px;color:var(--g900)">${sanitize(g.name)}</span>
+          </div>
+          <span style="font-size:11px;color:var(--g500);font-weight:600">${memberIds.length}</span>
+        </div>
+        <div style="display:flex;align-items:center;margin-left:8px;min-height:24px">${sample || '<div style="font-size:11px;color:var(--g500);margin-left:-8px">No members</div>'}${memberIds.length > 4 ? `<div style="margin-left:6px;font-size:11px;color:var(--g500)">+${memberIds.length - 4}</div>` : ''}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid var(--g100)">
+          <span style="font-size:11px;color:var(--blue-d);font-weight:600">Manage members →</span>
+        </div>
+      </div>`;
+    }).join('');
+    return `<div style="margin-bottom:18px">
+      <div style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;display:flex;align-items:center;gap:6px">
+        <svg viewBox="0 0 12 12" width="11" height="11" fill="currentColor"><path d="M9.5 2.5L11 1l-2 5L4 8l-3 1.5L2.5 8l5-2 2-3.5z"/></svg>
+        Pinned Groups
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">${cards}</div>
+    </div>`;
+  },
+
   renderTexts() {
     const tab = (this.S.textsTab === 'direct') ? 'direct' : 'group';
     const groupUnread = this._textsUnreadCount();
@@ -11751,6 +11931,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
 
     return `<div style="padding:20px;max-width:760px">
       ${tabsBar}
+      ${this._renderPinnedTextGroupsBar()}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
         <div>
           <div style="font-size:20px;font-weight:800;color:var(--g900)">Group Messages</div>
@@ -15942,6 +16123,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (Array.isArray(data.shiftTrades))      this.S.shiftTrades      = data.shiftTrades;
     if (Array.isArray(data.reportSubscriptions)) this.S.reportSubscriptions = data.reportSubscriptions;
     if (Array.isArray(data.directMessages))   this.S.directMessages   = data.directMessages;
+    if (Array.isArray(data.textGroups))       this.S.textGroups       = data.textGroups;
     if (Array.isArray(data.prospects))        this.S.prospects        = data.prospects;
     // After data lands, refresh the pending-punch inbox count for admins
     // so the header chip is accurate before the user navigates anywhere.

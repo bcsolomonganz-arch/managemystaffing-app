@@ -290,19 +290,17 @@ test('back-dated rotation: assign shift carries the shifted Pitman through futur
   const piaShifts = App.S.shifts.filter(s => s.employeeId === 'e_p');
   assert.ok(piaShifts.length > 100, `expected >100 Pitman shifts over a year, got ${piaShifts.length}`);
 
-  // Verify the pattern: in the 7-day window starting `dates[7]` (Mon W2),
-  // Pia should work 4 days (positions 7,8,11,12,13 — Mon Tue Fri Sat Sun)
-  // and not work positions 9,10 (Wed Thu).
-  const w2Mon = dates[7];
-  const w2 = piaShifts.filter(s => s.date >= w2Mon && s.date < dates[14] /* next week */ || (s.date >= w2Mon));
-  // count Pitman work-days in W2 of the SHIFTED rotation:
-  // visible W2 days that are in selectedDays = [7,8,11,12,13] = 5 days
-  // visible W1 days in selectedDays = [2,3,4] = 3 days (Wed Thu Fri)
-  // So per cycle = 5 + 3 = 8 work-days, matching [0,1,4,5,6,9,10,11] base.
-  // In the FIRST visible 2-week window we should see 8 work-days from Pia.
+  // The first 14-day window should contain Pitman shifts on every selected
+  // position whose corresponding date is at or after TODAY (saveAssignShift
+  // doesn't backfill past dates). Compute the expected count dynamically so
+  // the test is stable as the system date marches forward.
+  const expectedSelectedDays = [2,3,4,7,8,11,12,13];
+  const todayStr = new Date().toISOString().slice(0,10);
+  const expectedFirstCycleCount = expectedSelectedDays
+    .filter(pos => dates[pos] >= todayStr).length;
   const firstCycle = piaShifts.filter(s => s.date >= dates[0] && s.date <= dates[13]);
-  assert.equal(firstCycle.length, 8,
-    `first 14-day window should have 8 Pitman shifts, got ${firstCycle.length}`);
+  assert.equal(firstCycle.length, expectedFirstCycleCount,
+    `first 14-day window should have ${expectedFirstCycleCount} Pitman shifts (positions ≥ today), got ${firstCycle.length}`);
 
   // Persisted rule has cycleStartDate = back-dated date
   assert.equal(App.S.schedulePatterns.length, 1);
