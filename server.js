@@ -4031,6 +4031,155 @@ app.post('/api/shifts/:id/claim/reject', requireAuth, requireAdmin, async (req, 
   res.json({ ok: true, shift });
 });
 
+// ── Light-weight per-shift admin endpoints (used by /app) ─────────────
+// These avoid the heavy /api/data POST flow for routine single-shift edits
+// and bypass the shifts shrink guard since they don't replace the array.
+
+// Helper: building scope check, used by the per-shift admin endpoints below.
+function _shiftAdminAuthorized(user, shift) {
+  if (user.role === 'superadmin') return true;
+  const callerBIds = new Set([user.buildingId, ...(user.buildingIds||[])].filter(Boolean));
+  return shift.buildingId ? callerBIds.has(shift.buildingId) : true;
+}
+
+// POST /api/shifts — admin creates one new shift
+// Body: { date, type, group, start?, end?, buildingId?, employeeId? }
+// Used by the /app calendar's "+ Add shift" sheet.
+app.post('/api/shifts', requireAuth, requireAdmin, async (req, res) => {
+  const { date, type, group, start, end, buildingId, employeeId } = req.body || {};
+  if (!date || !type || !group) return res.status(400).json({ error: 'date, type and group are required' });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+  const data = await loadData();
+
+  const me = req.user;
+  const callerBIds = new Set([me.buildingId, ...(me.buildingIds||[])].filter(Boolean));
+  const bId = buildingId || me.buildingId;
+  if (me.role !== 'superadmin' && !callerBIds.has(bId)) {
+    return res.status(403).json({ error: 'Out of scope' });
+  }
+  if (employeeId) {
+    const emp = (data.employees || []).find(e => e.id === employeeId);
+    if (!emp) return res.status(404).json({ error: 'Employee not found' });
+    if (emp.inactive) return res.status(400).json({ error: 'Employee is inactive' });
+    if (emp.group !== group) return res.status(400).json({ error: `${emp.name} is in ${emp.group}, not ${group}` });
+    if (emp.buildingId !== bId) return res.status(400).json({ error: 'Employee is at a different building' });
+  }
+  const shift = {
+    id: 's_' + Date.now() + crypto.randomBytes(2).toString('hex'),
+    date, type, group,
+    start: start || '', end: end || '',
+    status: employeeId ? 'scheduled' : 'open',
+    buildingId: bId,
+    employeeId: employeeId || null,
+  };
+  if (!Array.isArray(data.shifts)) data.shifts = [];
+  data.shifts.push(shift);
+  markDirty();
+  auditLog('SHIFT_CREATED', me, { shiftId: shift.id, date, type, group, employeeId: employeeId || null, buildingId: bId });
+  if (employeeId) {
+    sendPushTo(employeeId, {
+      title: 'New shift on your schedule',
+      body: `${type} ${group} on ${date}`,
+      tag: 'assigned:' + shift.id,
+      url: '/app',
+    }).catch(() => {});
+  }
+  res.json({ ok: true, shift });
+});
+
+// POST /api/shifts/:id/assign — admin assigns an employee to a shift
+// Body: { empId }
+app.post('/api/shifts/:id/assign', requireAuth, requireAdmin, async (req, res) => {
+  const { empId } = req.body || {};
+  if (!empId) return res.status(400).json({ error: 'empId required' });
+  const data = await loadData();
+  const shift = (data.shifts || []).find(s => s.id === req.params.id);
+  if (!shift) return res.status(404).json({ error: 'Shift not found' });
+  if (!_shiftAdminAuthorized(req.user, shift)) return res.status(403).json({ error: 'Out of scope' });
+  const emp = (data.employees || []).find(e => e.id === empId);
+  if (!emp) return res.status(404).json({ error: 'Employee not found' });
+  if (emp.inactive) return res.status(400).json({ error: 'Employee is inactive' });
+  // Same group; if employee is in a different building from the shift, refuse
+  if (shift.group && emp.group && shift.group !== emp.group) {
+    return res.status(400).json({ error: `${emp.name} is in ${emp.group}, not ${shift.group}` });
+  }
+  if (shift.buildingId && emp.buildingId && shift.buildingId !== emp.buildingId) {
+    return res.status(400).json({ error: 'Employee is at a different building' });
+  }
+  shift.employeeId = empId;
+  shift.status = 'scheduled';
+  delete shift.claimRequest;
+  markDirty();
+  auditLog('SHIFT_ASSIGNED', req.user, { shiftId: shift.id, empId, date: shift.date, type: shift.type, group: shift.group });
+  // Notify the assigned employee
+  sendPushTo(empId, {
+    title: 'New shift on your schedule',
+    body: `${shift.type || ''} ${shift.group || ''} on ${shift.date}`.replace(/\s+/g,' ').trim(),
+    tag: 'assigned:' + shift.id,
+    url: '/app',
+  }).catch(() => {});
+  res.json({ ok: true, shift });
+});
+
+// POST /api/shifts/:id/unassign — remove employee from one shift, leave open
+app.post('/api/shifts/:id/unassign', requireAuth, requireAdmin, async (req, res) => {
+  const data = await loadData();
+  const shift = (data.shifts || []).find(s => s.id === req.params.id);
+  if (!shift) return res.status(404).json({ error: 'Shift not found' });
+  if (!_shiftAdminAuthorized(req.user, shift)) return res.status(403).json({ error: 'Out of scope' });
+  const wasEmpId = shift.employeeId;
+  shift.employeeId = null;
+  shift.status = 'open';
+  shift._removedDate = shift.date;
+  delete shift.claimRequest;
+  markDirty();
+  auditLog('SHIFT_UNASSIGNED', req.user, { shiftId: shift.id, prevEmpId: wasEmpId, date: shift.date, type: shift.type, group: shift.group });
+  if (wasEmpId) {
+    sendPushTo(wasEmpId, {
+      title: 'Shift removed from your schedule',
+      body: `${shift.type || ''} ${shift.group || ''} on ${shift.date}`.replace(/\s+/g,' ').trim(),
+      tag: 'unassigned:' + shift.id,
+      url: '/app',
+    }).catch(() => {});
+  }
+  res.json({ ok: true, shift });
+});
+
+// POST /api/shifts/:id/end-rotation — drop employee from this and all future
+// shifts of the same type+group at the same building. Mirrors the in-page
+// removeFromAllFuture flow on the main site.
+app.post('/api/shifts/:id/end-rotation', requireAuth, requireAdmin, async (req, res) => {
+  const data = await loadData();
+  const seed = (data.shifts || []).find(s => s.id === req.params.id);
+  if (!seed) return res.status(404).json({ error: 'Shift not found' });
+  if (!_shiftAdminAuthorized(req.user, seed)) return res.status(403).json({ error: 'Out of scope' });
+  const { type, group, employeeId, date, buildingId } = seed;
+  if (!employeeId) return res.status(400).json({ error: 'No employee to remove' });
+  let count = 0;
+  for (const s of (data.shifts || [])) {
+    if (s.employeeId === employeeId && s.type === type && s.group === group &&
+        s.buildingId === buildingId && s.date >= date && s.status === 'scheduled') {
+      s.employeeId = null;
+      s.status = 'open';
+      s._endedRotation = date;
+      count++;
+    }
+  }
+  // Disable matching schedule patterns so future generation stops
+  if (Array.isArray(data.schedulePatterns)) {
+    for (const p of data.schedulePatterns) {
+      if (p.empId === employeeId && (!p.shiftType || p.shiftType === type) &&
+          (!p.group || p.group === group)) {
+        p.endDate = date;
+        p.active = false;
+      }
+    }
+  }
+  markDirty();
+  auditLog('SHIFT_ROTATION_ENDED', req.user, { fromShiftId: seed.id, empId: employeeId, type, group, count });
+  res.json({ ok: true, count });
+});
+
 // POST /api/shifts/trade — employee submits a trade request
 // Body: { fromShiftId, toShiftId }
 app.post('/api/shifts/trade', requireAuth, async (req, res) => {

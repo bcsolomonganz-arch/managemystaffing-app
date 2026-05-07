@@ -303,9 +303,80 @@ a:active{opacity:.6}
 
 /* Hidden helper */
 .hidden{display:none !important}
+
+/* Offline banner */
+.offline-banner{position:fixed;top:env(safe-area-inset-top);left:0;right:0;
+  background:var(--orange);color:#fff;padding:7px 14px;text-align:center;
+  font-size:12px;font-weight:700;z-index:300;display:none;box-shadow:var(--shadow)}
+.offline-banner.show{display:block}
+@media(min-width:760px){.offline-banner{max-width:560px;margin:0 auto}}
+
+/* Pull-to-refresh */
+.ptr-bar{position:absolute;top:0;left:0;right:0;height:50px;display:flex;
+  align-items:center;justify-content:center;color:var(--g500);font-size:12px;
+  font-weight:700;pointer-events:none;opacity:0;transition:opacity .15s}
+.ptr-bar.show{opacity:1}
+.ptr-bar .spinner{border-color:var(--g200);border-top-color:var(--green);width:18px;height:18px;border-width:2.5px;margin-right:8px}
+
+/* Initial loading splash */
+.splash{position:fixed;inset:0;background:var(--green);color:#fff;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:500}
+.splash .splash-logo{width:72px;height:72px;background:#fff;border-radius:18px;
+  display:flex;align-items:center;justify-content:center;color:var(--green);font-weight:900;font-size:32px;margin-bottom:14px;
+  box-shadow:0 6px 18px rgba(0,0,0,.25)}
+.splash .spinner{border-color:rgba(255,255,255,.35);border-top-color:#fff;width:22px;height:22px;border-width:3px;margin-top:6px}
+
+/* Building switcher chip */
+.bld-chip{font-size:11px;background:rgba(255,255,255,.18);color:#fff;
+  padding:3px 9px;border-radius:99px;font-weight:700;display:inline-flex;align-items:center;gap:5px;
+  cursor:pointer;border:1px solid rgba(255,255,255,.25)}
+.bld-chip:active{background:rgba(255,255,255,.3)}
+.bld-chip svg{opacity:.85}
+
+/* Schedule view-mode toggle (Month / Week) */
+.view-toggle{display:inline-flex;background:var(--g100);border-radius:8px;padding:2px;font-size:11px;font-weight:700}
+.view-toggle button{padding:5px 12px;border-radius:6px;color:var(--g600)}
+.view-toggle button.on{background:#fff;color:var(--g900);box-shadow:var(--shadow)}
+
+/* Week / agenda view */
+.week-list .week-day{background:#fff;border-bottom:1px solid var(--g100)}
+.week-list .week-day-head{padding:8px 14px;background:var(--g50);
+  display:flex;align-items:center;gap:8px;font-size:11px;font-weight:800;
+  color:var(--g600);text-transform:uppercase;letter-spacing:.05em;
+  border-top:1px solid var(--g100);border-bottom:1px solid var(--g100);position:sticky;top:0;z-index:1}
+.week-list .week-day-head .when{color:var(--g900);font-size:12px}
+.week-list .week-day-head.today .when{color:var(--green)}
+.week-list .week-day-head .open-count{margin-left:auto;color:var(--orange);font-size:11px}
+.week-list .week-empty{padding:18px 14px;font-size:12px;color:var(--g500)}
+
+/* Action sheet (per-shift admin actions) */
+.action-list{display:flex;flex-direction:column;padding:6px 0}
+.action-row{display:flex;align-items:center;gap:14px;padding:14px 18px;
+  font-size:14px;color:var(--g800);font-weight:600;border-bottom:1px solid var(--g100);background:#fff;cursor:pointer}
+.action-row:active{background:var(--g50)}
+.action-row svg{flex-shrink:0;color:var(--g500)}
+.action-row.danger{color:var(--red)}
+.action-row.danger svg{color:var(--red)}
+.action-row .meta{font-size:11px;color:var(--g500);margin-top:2px;font-weight:500}
+.action-row .text{flex:1;display:flex;flex-direction:column;gap:0}
+
+/* Profile sheet rows */
+.profile-row{padding:14px 18px;border-bottom:1px solid var(--g100);display:flex;align-items:center;gap:14px}
+.profile-row .lbl{font-size:11px;color:var(--g500);text-transform:uppercase;letter-spacing:.04em;font-weight:700;flex:1}
+.profile-row .val{font-size:13px;color:var(--g900);font-weight:600;text-align:right;max-width:60%;word-break:break-word}
 </style>
 </head>
 <body>
+
+<!-- Splash (first paint, before we know auth state) -->
+<div id="splash" class="splash">
+  <div class="splash-logo">M</div>
+  <div style="font-size:13px;font-weight:700;letter-spacing:.04em">ManageMyStaffing</div>
+  <div class="spinner"></div>
+</div>
+
+<!-- Offline banner -->
+<div id="offline-banner" class="offline-banner">You're offline — showing cached data</div>
 
 <!-- Login screen -->
 <div id="login-screen" class="login-wrap hidden">
@@ -396,7 +467,14 @@ a:active{opacity:.6}
       </button>
       <div class="brand">
         <div class="brand-logo">M</div>
-        <span id="brand-text">ManageMyStaffing</span>
+        <div style="display:flex;flex-direction:column;line-height:1.15">
+          <span id="brand-text" style="font-weight:800">ManageMyStaffing</span>
+          <span id="bld-chip" class="bld-chip hidden" style="margin-top:3px;align-self:flex-start">
+            <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-7h6v7"/></svg>
+            <span id="bld-chip-name"></span>
+            <svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 6l4 4 4-4"/></svg>
+          </span>
+        </div>
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:6px">
@@ -405,8 +483,8 @@ a:active{opacity:.6}
         <svg id="bell-on"  viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
         <svg id="bell-off" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="display:none"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/><line x1="3" y1="3" x2="21" y2="21"/></svg>
       </button>
-      <button id="logout-btn" class="icon-btn" aria-label="Sign out" title="Sign out">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+      <button id="profile-btn" class="icon-btn" aria-label="Profile" title="Profile">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg>
       </button>
     </div>
   </header>
@@ -416,6 +494,7 @@ a:active{opacity:.6}
     <button id="tab-schedule" class="active" data-tab="schedule">
       <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="2" y="3" width="16" height="14" rx="1.5"/><path d="M2 7h16M6 3v4M14 3v4"/></svg>
       Schedule
+      <span id="tab-sched-badge" class="tab-badge hidden" style="background:var(--orange)">0</span>
     </button>
     <button id="tab-messages" data-tab="messages">
       <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 4h16v11H6l-4 4z"/></svg>
@@ -425,6 +504,7 @@ a:active{opacity:.6}
   </nav>
 
   <main id="main" class="scroll" style="position:relative">
+    <div id="ptr-bar" class="ptr-bar"><span class="spinner"></span><span id="ptr-label">Pull to refresh</span></div>
     <!-- View content rendered here -->
   </main>
 </div>
@@ -470,6 +550,9 @@ const State = {
   view: 'schedule',   // admin only: 'schedule' | 'messages'
   // Schedule
   selectedGroup: null,    // for admin sidebar filter
+  scheduleMode: 'month',  // 'month' | 'week'
+  weekStart: null,        // ISO date string for current week start (Sunday)
+  activeBuildingId: null, // multi-building admins: currently-viewed building
   viewYear:  new Date().getFullYear(),
   viewMonth: new Date().getMonth(),
   selectedDate: null,
@@ -491,6 +574,17 @@ const G_COLORS = {
   'Housekeeping':'#52B788','Laundry':'#3D7A52','Cook':'#1B5E3B','Dietary Aid':'#4A8A5E','Dietary':'#1B5E3B',
   'Therapy':'#7E22CE','Office':'#0E7490','Maintenance':'#365E47','Marketing':'#74A98F',
 };
+const CLINICAL = ['Nurse Management','Charge Nurse','CNA','CMA'];
+const CLINICAL_SHIFTS = [
+  { type:'Day',     start:'7:00 AM',  end:'3:00 PM' },
+  { type:'Evening', start:'3:00 PM',  end:'11:00 PM' },
+  { type:'Night',   start:'11:00 PM', end:'7:00 AM' },
+];
+const NON_CLINICAL_SHIFTS = [
+  { type:'Morning',   start:'6:00 AM', end:'2:00 PM' },
+  { type:'Afternoon', start:'2:00 PM', end:'10:00 PM' },
+];
+const SHIFT_TYPES = g => CLINICAL.includes(g) ? CLINICAL_SHIFTS : NON_CLINICAL_SHIFTS;
 const TODAY = () => new Date().toISOString().slice(0,10);
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
@@ -602,10 +696,11 @@ function isAdmin() {
   return r === 'admin' || r === 'superadmin' || r === 'regionaladmin' || r === 'scheduler' || r === 'hradmin';
 }
 function effectiveBuildingId() {
-  return State.user?.buildingId || (State.data?.buildings?.[0]?.id) || 'b1';
+  return State.activeBuildingId || State.user?.buildingId || (State.data?.buildings?.[0]?.id) || 'b1';
 }
 
 function showLogin() {
+  hideSplash();
   $('#login-screen').classList.remove('hidden');
   $('#app').classList.add('hidden');
   // Reset to step 1; clear any TOTP state
@@ -613,14 +708,36 @@ function showLogin() {
   stopPolling();
 }
 
+function hideSplash() {
+  const sp = $('#splash');
+  if (!sp || sp.classList.contains('hidden')) return;
+  sp.style.transition = 'opacity .25s';
+  sp.style.opacity = '0';
+  setTimeout(() => sp.classList.add('hidden'), 280);
+}
+
 function showApp() {
+  hideSplash();
   $('#login-screen').classList.add('hidden');
   $('#app').classList.remove('hidden');
 
   // Header who text
   const u = State.user || {};
-  const bld = (State.data?.buildings || []).find(b => b.id === u.buildingId);
-  $('#who-text').innerHTML = `${escapeHTML(u.name || u.email || '')}<br><span style="opacity:.7">${escapeHTML(bld?.name || u.role || '')}</span>`;
+  const bld = currentBuilding();
+  $('#who-text').innerHTML = `${escapeHTML(u.name || u.email || '')}<br><span style="opacity:.7">${escapeHTML(u.role || '')}</span>`;
+
+  // Building chip — show if user has 2+ buildings or is superadmin (has all)
+  const buildings = adminVisibleBuildings();
+  const chipName = $('#bld-chip-name');
+  const chip = $('#bld-chip');
+  if (chip && chipName) {
+    if (isAdmin() && buildings.length >= 2 && bld) {
+      chipName.textContent = bld.name;
+      chip.classList.remove('hidden');
+    } else {
+      chip.classList.add('hidden');
+    }
+  }
 
   if (isAdmin()) {
     $('#admin-tabs').classList.remove('hidden');
@@ -633,6 +750,20 @@ function showApp() {
     State.view = 'employee';
   }
   render();
+}
+
+function currentBuilding() {
+  const bId = effectiveBuildingId();
+  return (State.data?.buildings || []).find(b => b.id === bId) || null;
+}
+
+function adminVisibleBuildings() {
+  const u = State.user;
+  if (!u) return [];
+  const all = State.data?.buildings || [];
+  if (u.role === 'superadmin') return all;
+  const ids = new Set([u.buildingId, ...(u.buildingIds || [])].filter(Boolean));
+  return all.filter(b => ids.has(b.id));
 }
 
 function setActiveTab(name) {
@@ -785,30 +916,168 @@ async function claimShift(shiftId) {
 // ════════════════════════════════════════════════════════════
 function renderAdminScheduleView() {
   const main = $('#main');
-  const monthLabel = MONTHS[State.viewMonth] + ' ' + State.viewYear;
-  main.innerHTML = `
-    ${renderPendingActionsBanner()}
-    <div class="cal-toolbar">
+  if (State.scheduleMode === 'week') {
+    main.innerHTML = `
+      ${renderPendingActionsBanner()}
+      ${renderScheduleToolbar('week')}
+      ${renderWeekFilterBar()}
+      ${renderWeekView()}
+      ${renderAddShiftFab()}
+    `;
+    wireScheduleToolbarWeek();
+  } else {
+    const monthLabel = MONTHS[State.viewMonth] + ' ' + State.viewYear;
+    main.innerHTML = `
+      ${renderPendingActionsBanner()}
+      ${renderScheduleToolbar('month', monthLabel)}
+      ${renderWeekFilterBar()}
+      ${renderCalendarGrid()}
+      <div id="day-panel"></div>
+      ${renderAddShiftFab()}
+    `;
+    $('#cal-prev').addEventListener('click', () => navMonth(-1));
+    $('#cal-next').addEventListener('click', () => navMonth(1));
+    $$('.cal-cell[data-date]').forEach(el => {
+      el.addEventListener('click', () => selectDate(el.dataset.date));
+    });
+    if (State.selectedDate) renderDayPanel(State.selectedDate);
+  }
+  if (State.scheduleMode === 'week') wireWeekViewClicks();
+  $('#open-sb')?.addEventListener('click', openSidebar);
+  $('#fab-add-shift')?.addEventListener('click', () => openAddShiftSheet(State.selectedDate));
+  $$('#mode-toggle button').forEach(b => b.addEventListener('click', () => {
+    if (State.scheduleMode !== b.dataset.mode) {
+      State.scheduleMode = b.dataset.mode;
+      // When switching to week, anchor on today (or selected date if any)
+      if (State.scheduleMode === 'week' && !State.weekStart) {
+        State.weekStart = startOfWeek(State.selectedDate || TODAY());
+      }
+      render();
+    }
+  }));
+  wirePendingActions();
+}
+
+// Toolbar shared by both schedule modes
+function renderScheduleToolbar(mode, monthLabel) {
+  const left = mode === 'week' ? `
+      <button id="week-prev" aria-label="Previous week">‹</button>
+      <div class="month">${escapeHTML(weekRangeLabel())}</div>
+      <button id="week-next" aria-label="Next week">›</button>
+    ` : `
       <button id="cal-prev" aria-label="Previous month">‹</button>
-      <div class="month">${escapeHTML(monthLabel)}</div>
+      <div class="month">${escapeHTML(monthLabel || '')}</div>
       <button id="cal-next" aria-label="Next month">›</button>
+    `;
+  return `
+    <div class="cal-toolbar">
+      ${left}
+      <div id="mode-toggle" class="view-toggle" style="margin-left:8px">
+        <button data-mode="month" class="${mode==='month'?'on':''}">Month</button>
+        <button data-mode="week"  class="${mode==='week' ?'on':''}">Week</button>
+      </div>
     </div>
+  `;
+}
+
+function renderWeekFilterBar() {
+  return `
     <div style="padding:8px 14px;background:#fff;border-bottom:1px solid var(--g200);font-size:12px;color:var(--g600);display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <span style="font-weight:700;color:var(--g700)">Group:</span>
       <span style="background:var(--green-l);color:var(--green-d);font-weight:700;padding:3px 10px;border-radius:99px">${escapeHTML(groupLabel(State.selectedGroup||'—'))}</span>
       <button id="open-sb" class="btn-ghost" style="margin-left:auto;font-size:12px">Change</button>
     </div>
-    ${renderCalendarGrid()}
-    <div id="day-panel"></div>
   `;
-  $('#cal-prev').addEventListener('click', () => navMonth(-1));
-  $('#cal-next').addEventListener('click', () => navMonth(1));
-  $('#open-sb').addEventListener('click', openSidebar);
-  $$('.cal-cell[data-date]').forEach(el => {
-    el.addEventListener('click', () => selectDate(el.dataset.date));
-  });
-  if (State.selectedDate) renderDayPanel(State.selectedDate);
-  wirePendingActions();
+}
+
+function wireScheduleToolbarWeek() {
+  $('#week-prev')?.addEventListener('click', () => navWeek(-1));
+  $('#week-next')?.addEventListener('click', () => navWeek(1));
+}
+
+function startOfWeek(iso) {
+  const d = new Date(iso + 'T12:00:00');
+  d.setDate(d.getDate() - d.getDay()); // back to Sunday
+  return d.toISOString().slice(0, 10);
+}
+function addDays(iso, n) {
+  const d = new Date(iso + 'T12:00:00');
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+function weekRangeLabel() {
+  const start = State.weekStart || startOfWeek(TODAY());
+  const end = addDays(start, 6);
+  const sd = new Date(start + 'T12:00:00');
+  const ed = new Date(end + 'T12:00:00');
+  const sameMonth = sd.getMonth() === ed.getMonth();
+  if (sameMonth) {
+    return sd.toLocaleString('en-US', { month:'short', day:'numeric' }) + ' – ' + ed.getDate() + ', ' + ed.getFullYear();
+  }
+  return sd.toLocaleString('en-US', { month:'short', day:'numeric' }) + ' – ' + ed.toLocaleString('en-US', { month:'short', day:'numeric', year:'numeric' });
+}
+function navWeek(delta) {
+  State.weekStart = addDays(State.weekStart || startOfWeek(TODAY()), 7 * delta);
+  State.selectedDate = null;
+  render();
+}
+
+// Week / agenda view: 7 day cards, each listing every shift in the
+// selected group. Tap any shift opens the admin shift action sheet.
+function renderWeekView() {
+  const start = State.weekStart || startOfWeek(TODAY());
+  const ag = getActualGroups(State.selectedGroup);
+  const bId = effectiveBuildingId();
+  const today = TODAY();
+  const shifts = (State.data?.shifts || []).filter(s =>
+    ag.includes(s.group) && (!s.buildingId || s.buildingId === bId));
+  const empById = new Map((State.data?.employees || []).map(e => [e.id, e]));
+
+  const days = Array.from({ length: 7 }).map((_, i) => addDays(start, i));
+  const html = days.map(iso => {
+    const dayShifts = shifts.filter(s => s.date === iso)
+      .sort((a, b) => (a.type || '').localeCompare(b.type || '') || (a.start || '').localeCompare(b.start || ''));
+    const open = dayShifts.filter(s => s.status === 'open').length;
+    const isToday = iso === today;
+    const dayLabel = new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' });
+    const rows = dayShifts.length
+      ? dayShifts.map(s => weekShiftRow(s, empById)).join('')
+      : '<div class="week-empty">No shifts scheduled</div>';
+    return `<div class="week-day">
+      <div class="week-day-head${isToday ? ' today' : ''}">
+        <span class="when">${escapeHTML(dayLabel)}</span>
+        ${isToday ? '<span style="background:var(--green);color:#fff;padding:1px 7px;border-radius:99px;font-size:9px">TODAY</span>' : ''}
+        ${open ? `<span class="open-count">${open} open</span>` : ''}
+      </div>
+      ${rows}
+    </div>`;
+  }).join('');
+
+  return `<div class="week-list">${html}</div>`;
+}
+
+function weekShiftRow(s, empById) {
+  const e = empById.get(s.employeeId);
+  let pill = '';
+  let extra = '';
+  if (s.status === 'open' && s.claimRequest) {
+    pill = `<span class="pill pending">Claim from ${escapeHTML(s.claimRequest.empName||'')}</span>`;
+  } else if (s.status === 'open') {
+    pill = '<span class="pill open">Open</span>';
+  } else if (e) {
+    pill = `<span class="pill">${escapeHTML(e.name)}</span>`;
+  } else {
+    pill = `<span class="pill">${escapeHTML(s.type||'Scheduled')}</span>`;
+  }
+  return `<div class="shift-card" style="margin:6px 14px" data-shift-id="${escapeHTML(s.id)}">
+    <div class="info" style="margin-left:0">
+      <div class="ttl">${escapeHTML(s.type||'')} ${escapeHTML(groupLabel(s.group||''))} ${pill}</div>
+      <div class="meta">${escapeHTML((s.start||'') + (s.end?' – '+s.end:''))}</div>
+    </div>
+    <div class="right">
+      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color:var(--g300)"><path d="M6 4l4 4-4 4"/></svg>
+    </div>
+  </div>`;
 }
 
 // Pending actions = pending shift claims + pending shift trades scoped to
@@ -992,11 +1261,14 @@ function renderDayPanel(iso) {
     } else {
       statusPill = `<span class="pill">${escapeHTML(s.type||'Scheduled')}</span>`;
     }
-    return `<div class="shift-card" style="margin-bottom:6px;flex-direction:column;align-items:stretch;gap:0">
+    return `<div class="shift-card" data-shift-id="${escapeHTML(s.id)}" style="margin-bottom:6px;flex-direction:column;align-items:stretch;gap:0">
       <div style="display:flex;align-items:center;gap:12px;width:100%">
         <div class="info" style="margin-left:0">
           <div class="ttl">${escapeHTML(s.type||'')} ${escapeHTML(groupLabel(s.group))} ${statusPill}</div>
           <div class="meta">${escapeHTML((s.start||'') + (s.end?' – '+s.end:''))}</div>
+        </div>
+        <div class="right" style="margin-left:auto;color:var(--g300)">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 4l4 4-4 4"/></svg>
         </div>
       </div>
       ${actions}
@@ -1017,6 +1289,324 @@ function renderDayPanel(iso) {
   $$('#day-panel [data-reject]').forEach(btn => {
     btn.addEventListener('click', () => decideClaim(btn.dataset.reject, 'reject'));
   });
+  // Tap any non-open shift card to open the admin action sheet
+  $$('#day-panel .shift-card[data-shift-id]').forEach(card => {
+    card.addEventListener('click', (e) => {
+      // Don't trigger when tapping inline approve/reject buttons
+      if (e.target.closest('button')) return;
+      const sid = card.dataset.shiftId;
+      if (sid) openShiftActionSheet(sid);
+    });
+  });
+}
+
+// Wire week-view shift cards (called after renderWeekView)
+function wireWeekViewClicks() {
+  $$('.week-list .shift-card[data-shift-id]').forEach(card => {
+    card.addEventListener('click', () => {
+      const sid = card.dataset.shiftId;
+      if (sid) openShiftActionSheet(sid);
+    });
+  });
+}
+
+// Open the admin action sheet for a shift. Different actions show based on
+// whether the shift is open (Assign someone) vs scheduled (Reassign / Remove).
+function openShiftActionSheet(shiftId) {
+  const shift = (State.data?.shifts || []).find(s => s.id === shiftId);
+  if (!shift) return;
+  const emp = (State.data?.employees || []).find(e => e.id === shift.employeeId);
+  const e = emp;
+  const isOpen = shift.status === 'open';
+  const dayLabel = fmtDateLong(shift.date);
+
+  $('#sheet-title').textContent = `${shift.type || ''} ${groupLabel(shift.group || '')}`;
+
+  const header = `
+    <div style="padding:14px 18px;border-bottom:1px solid var(--g100);background:var(--g50)">
+      <div style="font-size:13px;font-weight:700;color:var(--g900)">${escapeHTML(dayLabel)}</div>
+      <div style="font-size:12px;color:var(--g500);margin-top:2px">${escapeHTML((shift.start||'') + (shift.end?' – '+shift.end:''))}</div>
+      <div style="margin-top:6px">${
+        isOpen
+          ? '<span class="pill open">Open shift</span>'
+          : (e ? `<span class="pill">${escapeHTML(e.name)}</span>` : '<span class="pill">Scheduled</span>')
+      }</div>
+    </div>
+  `;
+
+  let actions = '';
+  if (isOpen) {
+    actions = `
+      <div class="action-row" data-action="assign">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="8" r="3"/><path d="M3 21v-1a6 6 0 0 1 6-6h1M16 12v6M13 15h6"/></svg>
+        <div class="text"><span>Assign someone</span><span class="meta">Pick from staff in ${escapeHTML(groupLabel(shift.group||''))} at this building</span></div>
+      </div>
+    `;
+    if (shift.claimRequest) {
+      actions += `
+        <div class="action-row" data-action="claim-approve" style="color:var(--green)">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><polyline points="4 12 10 18 20 6"/></svg>
+          <div class="text"><span>Approve ${escapeHTML(shift.claimRequest.empName||'')}'s claim</span></div>
+        </div>
+        <div class="action-row danger" data-action="claim-reject">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          <div class="text"><span>Reject claim</span></div>
+        </div>
+      `;
+    }
+  } else {
+    actions = `
+      <div class="action-row" data-action="reassign">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        <div class="text"><span>Reassign to someone else</span></div>
+      </div>
+      <div class="action-row danger" data-action="unassign">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="8" r="3"/><path d="M3 21v-1a6 6 0 0 1 6-6h1"/><line x1="14" y1="14" x2="20" y2="20"/><line x1="20" y1="14" x2="14" y2="20"/></svg>
+        <div class="text"><span>Remove from this day only</span><span class="meta">Keeps rotation going</span></div>
+      </div>
+      <div class="action-row danger" data-action="end-rotation">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        <div class="text"><span>Remove from this and all future shifts</span><span class="meta">Ends rotation</span></div>
+      </div>
+    `;
+  }
+
+  $('#sheet-body').innerHTML = header + `<div class="action-list">${actions}</div>`;
+  openSheet();
+
+  $$('.action-row[data-action]').forEach(row => {
+    row.addEventListener('click', () => handleShiftAction(shift.id, row.dataset.action));
+  });
+}
+
+async function handleShiftAction(shiftId, action) {
+  const shift = (State.data?.shifts || []).find(s => s.id === shiftId);
+  if (!shift) return closeSheet();
+
+  if (action === 'unassign') {
+    if (!confirm('Remove this employee from the ' + shift.date + ' shift?\nThe slot becomes open and the rotation continues.')) return;
+    try {
+      const r = await apiFetch('/api/shifts/' + encodeURIComponent(shiftId) + '/unassign', { method:'POST', body:{} });
+      const j = await r.json();
+      if (!r.ok) { toast(j.error || 'Failed','warn'); return; }
+      Object.assign(shift, j.shift || {});
+      toast('Shift opened up');
+      closeSheet();
+      render();
+    } catch (e) { toast('Network error','error'); }
+    return;
+  }
+  if (action === 'end-rotation') {
+    const emp = (State.data?.employees || []).find(e => e.id === shift.employeeId);
+    if (!confirm(`Remove ${emp?.name || 'this employee'} from this and all future ${shift.type} ${shift.group} shifts?\nThis ends the rotation and opens every future matching shift.`)) return;
+    try {
+      const r = await apiFetch('/api/shifts/' + encodeURIComponent(shiftId) + '/end-rotation', { method:'POST', body:{} });
+      const j = await r.json();
+      if (!r.ok) { toast(j.error || 'Failed','warn'); return; }
+      // Refresh full data so all the affected shifts update
+      const dr = await fetch('/api/data', { credentials:'include' });
+      if (dr.ok) State.data = await dr.json();
+      toast(`Rotation ended — ${j.count || 0} shift${j.count===1?'':'s'} opened`);
+      closeSheet();
+      render();
+    } catch (e) { toast('Network error','error'); }
+    return;
+  }
+  if (action === 'reassign' || action === 'assign') {
+    openAssignPicker(shiftId);
+    return;
+  }
+  if (action === 'claim-approve') {
+    closeSheet();
+    decideClaim(shiftId, 'approve');
+    return;
+  }
+  if (action === 'claim-reject') {
+    closeSheet();
+    decideClaim(shiftId, 'reject');
+    return;
+  }
+}
+
+function renderAddShiftFab() {
+  return `<button class="fab" id="fab-add-shift" aria-label="Add shift">
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+  </button>`;
+}
+
+// Add-shift bottom sheet. Pre-fills the selected day if any, otherwise
+// today. Group defaults to the current sidebar filter. Shift types come
+// from SHIFT_TYPES(group) (clinical vs non-clinical).
+function openAddShiftSheet(presetDate) {
+  const u = State.user;
+  const bId = effectiveBuildingId();
+  const date = presetDate || TODAY();
+  const group = State.selectedGroup || DISPLAY_GROUPS[0];
+  // Use first actual sub-group if the selected is a display alias (e.g. Dietary)
+  const actualGroup = getActualGroups(group)[0];
+
+  $('#sheet-title').textContent = 'Add a shift';
+  const types = SHIFT_TYPES(actualGroup);
+  const employees = (State.data?.employees || [])
+    .filter(e => e.group === actualGroup && !e.inactive && e.buildingId === bId)
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+  $('#sheet-body').innerHTML = `
+    <div style="padding:14px 18px;display:flex;flex-direction:column;gap:14px">
+      <div>
+        <div class="lbl" style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px">Date</div>
+        <input id="as-date" type="date" value="${escapeHTML(date)}" style="width:100%;padding:10px 12px;border:1.5px solid var(--g200);border-radius:9px;font-size:14px;background:#fff">
+      </div>
+
+      <div>
+        <div class="lbl" style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px">Department</div>
+        <select id="as-group" style="width:100%;padding:10px 12px;border:1.5px solid var(--g200);border-radius:9px;font-size:14px;background:#fff">
+          ${DISPLAY_GROUPS.map(g => `<option value="${escapeHTML(g)}" ${g===group?'selected':''}>${escapeHTML(groupLabel(g))}</option>`).join('')}
+        </select>
+      </div>
+
+      <div>
+        <div class="lbl" style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px">Shift type</div>
+        <div id="as-types" style="display:grid;grid-template-columns:repeat(${Math.min(types.length, 3)}, 1fr);gap:8px"></div>
+      </div>
+
+      <div>
+        <div class="lbl" style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px">Assign someone (optional)</div>
+        <select id="as-emp" style="width:100%;padding:10px 12px;border:1.5px solid var(--g200);border-radius:9px;font-size:14px;background:#fff">
+          <option value="">— Leave open for claiming —</option>
+        </select>
+      </div>
+    </div>
+    <div class="sheet-foot">
+      <button id="as-cancel" class="btn-secondary" style="flex:1">Cancel</button>
+      <button id="as-create" class="btn-primary" style="flex:2">Create shift</button>
+    </div>
+  `;
+
+  function refreshTypes() {
+    const g = $('#as-group').value;
+    const ag = getActualGroups(g)[0];
+    const ts = SHIFT_TYPES(ag);
+    const sel = $('#as-types').dataset.selected || ts[0].type;
+    $('#as-types').innerHTML = ts.map(t => `
+      <button data-type="${escapeHTML(t.type)}" data-start="${escapeHTML(t.start)}" data-end="${escapeHTML(t.end)}"
+              class="${t.type === sel ? 'btn-primary' : 'btn-secondary'}"
+              style="padding:9px 6px;border-radius:9px;font-size:12px;font-weight:700">
+        <div>${escapeHTML(t.type)}</div>
+        <div style="font-size:10px;font-weight:500;opacity:.85;margin-top:2px">${escapeHTML(t.start.replace(' ',''))}-${escapeHTML(t.end.replace(' ',''))}</div>
+      </button>
+    `).join('');
+    $('#as-types').dataset.selected = sel;
+    $$('#as-types button').forEach(b => b.addEventListener('click', () => {
+      $('#as-types').dataset.selected = b.dataset.type;
+      $$('#as-types button').forEach(x => x.className = x.dataset.type === b.dataset.type ? 'btn-primary' : 'btn-secondary');
+      $$('#as-types button').forEach(x => x.style.padding = '9px 6px');
+      $$('#as-types button').forEach(x => x.style.borderRadius = '9px');
+      $$('#as-types button').forEach(x => x.style.fontSize = '12px');
+      $$('#as-types button').forEach(x => x.style.fontWeight = '700');
+    }));
+  }
+  function refreshEmployees() {
+    const g = $('#as-group').value;
+    const ag = getActualGroups(g)[0];
+    const list = (State.data?.employees || [])
+      .filter(e => e.group === ag && !e.inactive && e.buildingId === bId)
+      .sort((a, b) => (a.name||'').localeCompare(b.name||''));
+    const sel = $('#as-emp');
+    sel.innerHTML = '<option value="">— Leave open for claiming —</option>' +
+      list.map(e => `<option value="${escapeHTML(e.id)}">${escapeHTML(e.name)}</option>`).join('');
+  }
+  refreshTypes();
+  refreshEmployees();
+  $('#as-group').addEventListener('change', () => { delete $('#as-types').dataset.selected; refreshTypes(); refreshEmployees(); });
+
+  openSheet();
+  $('#as-cancel').addEventListener('click', closeSheet);
+  $('#as-create').addEventListener('click', async () => {
+    const date  = $('#as-date').value;
+    const g     = $('#as-group').value;
+    const ag    = getActualGroups(g)[0];
+    const tBtn  = $('#as-types').dataset.selected;
+    const t     = SHIFT_TYPES(ag).find(x => x.type === tBtn);
+    const empId = $('#as-emp').value || null;
+    if (!date || !g || !t) { toast('Pick date, department, and shift type','warn'); return; }
+    const btn = $('#as-create');
+    btn.disabled = true; btn.textContent = 'Creating…';
+    try {
+      const r = await apiFetch('/api/shifts', {
+        method:'POST',
+        body:{ date, type: t.type, group: ag, start: t.start, end: t.end, buildingId: bId, employeeId: empId },
+      });
+      const j = await r.json();
+      if (!r.ok) { toast(j.error || 'Create failed','warn'); btn.disabled = false; btn.textContent = 'Create shift'; return; }
+      // Patch local data so the calendar updates immediately without a full reload
+      if (!Array.isArray(State.data.shifts)) State.data.shifts = [];
+      State.data.shifts.push(j.shift);
+      toast('Shift added');
+      closeSheet();
+      State.selectedDate = date;
+      render();
+    } catch (e) {
+      toast('Network error','error');
+      btn.disabled = false; btn.textContent = 'Create shift';
+    }
+  });
+}
+
+// Picker for assigning a specific employee to an open / reassigned shift.
+// Lists all active employees in the same group + building. Tap to assign.
+function openAssignPicker(shiftId) {
+  const shift = (State.data?.shifts || []).find(s => s.id === shiftId);
+  if (!shift) return;
+  const candidates = (State.data?.employees || [])
+    .filter(e => e.group === shift.group && !e.inactive && e.buildingId === shift.buildingId)
+    .filter(e => e.id !== shift.employeeId)
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+  $('#sheet-title').textContent = 'Assign someone';
+  const rows = candidates.map(e => `
+    <div class="thread-row" data-assign-emp="${escapeHTML(e.id)}">
+      <div class="avatar" style="background:${avatarColor(e.id)}">${escapeHTML(initials(e.name))}</div>
+      <div class="body">
+        <div class="top"><span class="name">${escapeHTML(e.name)}</span></div>
+        <div class="preview">${escapeHTML(groupLabel(e.group))}${e.phone?` · ${escapeHTML(e.phone)}`:''}</div>
+      </div>
+    </div>
+  `).join('');
+  $('#sheet-body').innerHTML = `
+    <div class="composer-search">
+      <input id="assign-search" type="search" placeholder="Search…" autocomplete="off">
+    </div>
+    ${candidates.length
+      ? `<div class="msg-list">${rows}</div>`
+      : '<div class="empty"><div class="ttl">No staff available</div><div class="sub">No active employees in this group at this building</div></div>'}
+  `;
+  openSheet();
+  $('#assign-search')?.addEventListener('input', () => {
+    const q = $('#assign-search').value.toLowerCase();
+    $$('[data-assign-emp]').forEach(el => {
+      el.style.display = (el.textContent || '').toLowerCase().includes(q) ? '' : 'none';
+    });
+  });
+  $$('[data-assign-emp]').forEach(el => {
+    el.addEventListener('click', () => doAssign(shiftId, el.dataset.assignEmp));
+  });
+}
+
+async function doAssign(shiftId, empId) {
+  try {
+    const r = await apiFetch('/api/shifts/' + encodeURIComponent(shiftId) + '/assign', {
+      method:'POST', body:{ empId },
+    });
+    const j = await r.json();
+    if (!r.ok) { toast(j.error || 'Assign failed','warn'); return; }
+    const shift = (State.data?.shifts || []).find(s => s.id === shiftId);
+    if (shift) Object.assign(shift, j.shift || {});
+    const emp = (State.data?.employees || []).find(e => e.id === empId);
+    toast(`Assigned to ${emp?.name || 'employee'}`);
+    closeSheet();
+    render();
+  } catch (e) { toast('Network error','error'); }
 }
 
 async function decideClaim(shiftId, action) {
@@ -1447,7 +2037,7 @@ function resolveGroupMemberIds(group) {
 function openSheet() { $('#sheet').classList.add('open'); }
 function closeSheet() { $('#sheet').classList.remove('open'); }
 
-// ── Message badge ────────────────────────────────────────────────
+// ── Tab badges ────────────────────────────────────────────────
 function updateMessageBadge() {
   const me = State.user;
   if (!me || !isAdmin()) return;
@@ -1459,6 +2049,17 @@ function updateMessageBadge() {
     badge.classList.remove('hidden');
   } else {
     badge.classList.add('hidden');
+  }
+  // Schedule tab badge: count of pending claims + pending trades
+  const u = State.user;
+  const callerBIds = new Set([u.buildingId, ...(u.buildingIds||[]), effectiveBuildingId()].filter(Boolean));
+  const claims = (State.data?.shifts || []).filter(s => s.claimRequest && (u.role === 'superadmin' || callerBIds.has(s.buildingId))).length;
+  const trades = (State.data?.shiftTrades || []).filter(t => t.status === 'pending' && (u.role === 'superadmin' || callerBIds.has(t.buildingId))).length;
+  const total = claims + trades;
+  const sb = $('#tab-sched-badge');
+  if (sb) {
+    if (total > 0) { sb.textContent = total > 99 ? '99+' : String(total); sb.classList.remove('hidden'); }
+    else sb.classList.add('hidden');
   }
 }
 
@@ -1620,12 +2221,7 @@ $('#totp-setup-back').addEventListener('click', () => {
   showLoginStep('creds');
 });
 
-$('#logout-btn').addEventListener('click', async () => {
-  try { await apiFetch('/api/auth/logout', { method:'POST' }); } catch(e){}
-  State.user = null;
-  State.data = null;
-  showLogin();
-});
+// (Sign-out moved into the profile sheet)
 
 // Tabs
 $$('.tabs button').forEach(b => b.addEventListener('click', () => setActiveTab(b.dataset.tab)));
@@ -1760,6 +2356,161 @@ async function togglePush() {
 }
 
 $('#bell-btn').addEventListener('click', togglePush);
+
+// ── Profile sheet ───────────────────────────────────────────────
+function openProfileSheet() {
+  const u = State.user || {};
+  const bld = currentBuilding();
+  const buildings = adminVisibleBuildings();
+  $('#sheet-title').textContent = 'Account';
+  const items = [
+    ['Name',     u.name || '—'],
+    ['Email',    u.email || '—'],
+    ['Role',     u.role || '—'],
+    ['Building', bld?.name || '—'],
+    ['Group',    u.group ? groupLabel(u.group) : null],
+  ].filter(([_, v]) => v != null);
+
+  $('#sheet-body').innerHTML = `
+    <div style="padding:18px;display:flex;flex-direction:column;align-items:center;gap:8px;border-bottom:1px solid var(--g100);background:var(--g50)">
+      <div style="width:64px;height:64px;border-radius:50%;background:${avatarColor(u.id)};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:24px">${escapeHTML(initials(u.name || u.email))}</div>
+      <div style="font-size:16px;font-weight:800;color:var(--g900)">${escapeHTML(u.name || u.email || '')}</div>
+      ${u.role ? `<div style="font-size:11px;color:var(--g500);text-transform:uppercase;letter-spacing:.05em;font-weight:700">${escapeHTML(u.role)}</div>` : ''}
+    </div>
+    ${items.map(([k, v]) => `
+      <div class="profile-row">
+        <div class="lbl">${escapeHTML(k)}</div>
+        <div class="val">${escapeHTML(v)}</div>
+      </div>
+    `).join('')}
+    ${(isAdmin() && buildings.length >= 2) ? `
+      <div class="action-row" id="profile-switch-bld">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-7h6v7"/></svg>
+        <div class="text"><span>Switch building</span><span class="meta">${buildings.length} buildings</span></div>
+      </div>
+    ` : ''}
+    <div class="action-row" id="profile-website">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10z"/></svg>
+      <div class="text"><span>Open full website</span><span class="meta">For password / 2FA changes</span></div>
+    </div>
+    <div class="action-row danger" id="profile-logout">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+      <div class="text"><span>Sign out</span></div>
+    </div>
+    <div style="padding:14px 18px 28px;text-align:center;font-size:11px;color:var(--g400)">
+      ManageMyStaffing companion · v1
+    </div>
+  `;
+  openSheet();
+  $('#profile-switch-bld')?.addEventListener('click', () => { closeSheet(); setTimeout(openBuildingSwitcher, 150); });
+  $('#profile-website')?.addEventListener('click', () => { window.location.href = '/'; });
+  $('#profile-logout')?.addEventListener('click', async () => {
+    closeSheet();
+    try { await apiFetch('/api/auth/logout', { method:'POST' }); } catch(e){}
+    State.user = null;
+    State.data = null;
+    showLogin();
+  });
+}
+
+function openBuildingSwitcher() {
+  const buildings = adminVisibleBuildings();
+  const active = effectiveBuildingId();
+  $('#sheet-title').textContent = 'Switch building';
+  $('#sheet-body').innerHTML = buildings.map(b => `
+    <div class="action-row${b.id === active ? '' : ''}" data-bld-id="${escapeHTML(b.id)}">
+      <span style="width:10px;height:10px;border-radius:50%;background:${b.color || 'var(--green)'};flex-shrink:0"></span>
+      <div class="text">
+        <span style="${b.id === active ? 'font-weight:800;color:var(--green-d)':''}">${escapeHTML(b.name)}</span>
+        ${b.id === active ? '<span class="meta">Currently viewing</span>' : ''}
+      </div>
+      ${b.id === active ? '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--green)" stroke-width="2.4" stroke-linecap="round"><polyline points="4 12 10 18 20 6"/></svg>' : ''}
+    </div>
+  `).join('');
+  openSheet();
+  $$('[data-bld-id]').forEach(el => {
+    el.addEventListener('click', () => {
+      State.activeBuildingId = el.dataset.bldId;
+      State.selectedDate = null;
+      State.activeThreadId = null;
+      State.activeOtherId = null;
+      // Re-pick a default group for the new building
+      const ag = (State.data?.employees || []).filter(e => e.buildingId === State.activeBuildingId && !e.inactive).map(e => e.group);
+      const newGroup = DISPLAY_GROUPS.find(g => getActualGroups(g).some(x => ag.includes(x)));
+      if (newGroup) State.selectedGroup = newGroup;
+      closeSheet();
+      // Re-render brand chip + main view
+      const bld = currentBuilding();
+      const chipName = $('#bld-chip-name');
+      if (chipName && bld) chipName.textContent = bld.name;
+      render();
+      toast(`Switched to ${(currentBuilding()?.name) || 'building'}`);
+    });
+  });
+}
+
+$('#profile-btn').addEventListener('click', openProfileSheet);
+$('#bld-chip').addEventListener('click', openBuildingSwitcher);
+
+// ── Online / offline banner ─────────────────────────────────────
+function refreshOnline() {
+  $('#offline-banner').classList.toggle('show', !navigator.onLine);
+}
+window.addEventListener('online',  () => {
+  refreshOnline();
+  // Pull a fresh data snapshot when we come back
+  if (State.user) apiFetch('/api/data').then(r => r.json()).then(d => { State.data = d; render(); }).catch(()=>{});
+});
+window.addEventListener('offline', refreshOnline);
+refreshOnline();
+
+// ── Pull-to-refresh on the main scroll surface ──────────────────
+(function setupPTR() {
+  const scrollEl = $('#main');
+  const bar = $('#ptr-bar');
+  const label = $('#ptr-label');
+  if (!scrollEl) return;
+  let startY = 0;
+  let pulling = false;
+  let pulled = 0;
+  const THRESHOLD = 70;
+
+  scrollEl.addEventListener('touchstart', e => {
+    if (scrollEl.scrollTop > 0) { pulling = false; return; }
+    startY = e.touches[0].clientY;
+    pulling = true;
+    pulled = 0;
+  }, { passive:true });
+
+  scrollEl.addEventListener('touchmove', e => {
+    if (!pulling) return;
+    const dy = e.touches[0].clientY - startY;
+    if (dy <= 0) { pulling = false; bar.classList.remove('show'); return; }
+    pulled = Math.min(dy, 130);
+    if (pulled > 8) {
+      bar.classList.add('show');
+      bar.style.transform = `translateY(${Math.min(pulled - 50, 0)}px)`;
+      label.textContent = pulled >= THRESHOLD ? 'Release to refresh' : 'Pull to refresh';
+    }
+  }, { passive:true });
+
+  scrollEl.addEventListener('touchend', async () => {
+    if (!pulling) return;
+    pulling = false;
+    if (pulled >= THRESHOLD) {
+      label.textContent = 'Refreshing…';
+      bar.style.transform = 'translateY(0)';
+      try {
+        const r = await fetch('/api/data', { credentials:'include' });
+        if (r.ok) { State.data = await r.json(); render(); }
+      } catch (e) {}
+    }
+    setTimeout(() => {
+      bar.classList.remove('show');
+      bar.style.transform = '';
+    }, 250);
+  });
+})();
 
 // First-run prompt: a few seconds after a successful login, if push is
 // supported, permission is still 'default' (never asked), and the user
