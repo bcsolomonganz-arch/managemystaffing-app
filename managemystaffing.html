@@ -1387,6 +1387,14 @@ const SEED_HR_ONBOARDING = {
       {id:'tx8',type:'form',title:'Direct Deposit',desc:'Bank routing & account for payroll'},
       {id:'tx9',type:'video',title:'Training Videos',desc:'Orientation, safety, HIPAA compliance'},
       {id:'tx10',type:'form',title:'Policy Acknowledgment',desc:'Employee handbook, HIPAA confidentiality'},
+      // ── LOCKED FINAL STEP — cannot be removed or skipped ─────────────────
+      // Required for A2P 10DLC + Toll-Free Verification compliance. Captures
+      // the employee's express written consent to receive SMS, plus the phone
+      // number they want texts at and a signature. Auto-appended to every
+      // package via SMS_CONSENT_STEP_ID and _ensureSmsConsentStep().
+      {id:'__sms_consent__',type:'sms_consent',title:'SMS Notification Consent',
+       desc:'REQUIRED: Consent to receive SMS notifications about open shifts and schedule changes',
+       locked:true,required:true},
     ]},
     OK:{name:'SkyBlue Healthcare — Oklahoma onboarding package',steps:[
       {id:'ok1',type:'form',title:'Employment Application',desc:'Personal info, education, employment history, references'},
@@ -1400,8 +1408,24 @@ const SEED_HR_ONBOARDING = {
       {id:'ok9',type:'form',title:'Direct Deposit',desc:'Bank routing & account for payroll'},
       {id:'ok10',type:'video',title:'Training Videos',desc:'Orientation, safety, HIPAA compliance'},
       {id:'ok11',type:'form',title:'Policy Acknowledgment',desc:'Employee handbook, HIPAA confidentiality'},
+      {id:'__sms_consent__',type:'sms_consent',title:'SMS Notification Consent',
+       desc:'REQUIRED: Consent to receive SMS notifications about open shifts and schedule changes',
+       locked:true,required:true},
     ]},
   },
+};
+
+// Canonical id for the locked SMS-consent step. Every onboarding package
+// must end with one. _ensureSmsConsentStep() (in App) auto-appends to any
+// loaded package missing it — handles existing customer customizations.
+const SMS_CONSENT_STEP_ID = '__sms_consent__';
+const SMS_CONSENT_STEP = {
+  id: SMS_CONSENT_STEP_ID,
+  type: 'sms_consent',
+  title: 'SMS Notification Consent',
+  desc: 'REQUIRED: Consent to receive SMS notifications about open shifts and schedule changes',
+  locked: true,
+  required: true,
 };
 const SEED_HR_ACCOUNTS = [
   {id:'ha0',initials:'SA',name:'Super Admin',email:'solomong@managemycensus.com',role:'Owner',status:'active'},
@@ -7207,10 +7231,36 @@ const App = {
     return bld?.companyId || Object.keys(this.S.hrOnboarding || {})[0] || 'co_skyblue';
   },
 
-  // Returns the package {name, steps} for (coId, state), or null
+  // Returns the package {name, steps} for (coId, state), or null.
+  // Ensures the locked SMS-consent step is appended to every package — runs
+  // on every read so customer-customized packages don't drift.
   _getActiveOBPkg(state) {
     const coId = this._getActiveOBCoId();
-    return ((this.S.hrOnboarding || {})[coId] || {})[state] || null;
+    const pkg = ((this.S.hrOnboarding || {})[coId] || {})[state] || null;
+    if (pkg) this._ensureSmsConsentStep(pkg);
+    return pkg;
+  },
+
+  // Mutate a package in place to guarantee the SMS consent step is the LAST
+  // step. Idempotent. Locked steps cannot be removed or re-ordered by the
+  // admin onboarding-package editor.
+  _ensureSmsConsentStep(pkg) {
+    if (!pkg || !Array.isArray(pkg.steps)) return;
+    const existingIdx = pkg.steps.findIndex(s => s.id === SMS_CONSENT_STEP_ID);
+    if (existingIdx === -1) {
+      pkg.steps.push({ ...SMS_CONSENT_STEP });
+      return;
+    }
+    // Already present — make sure it's still last + still locked
+    const step = pkg.steps[existingIdx];
+    step.locked = true;
+    step.required = true;
+    step.type = 'sms_consent';
+    if (existingIdx !== pkg.steps.length - 1) {
+      // Move to end
+      pkg.steps.splice(existingIdx, 1);
+      pkg.steps.push(step);
+    }
   },
 
   renderHROnboarding() {
@@ -7269,12 +7319,32 @@ const App = {
 
     const steps = pkg.steps.map((s, i) => {
       const isExp = exp && exp.state === st && exp.idx === i;
-      const typeColor = s.type === 'video' ? 'var(--purple)' : 'var(--blue)';
+      const typeColor = s.type === 'video' ? 'var(--purple)' : (s.type === 'sms_consent' ? '#0891B2' : 'var(--blue)');
       const hasUrl = s.url || '';
       const hasContent = s.content || '';
       const hasFiles = (s.files || []);
+      const isLocked = !!s.locked;
 
-      const expandedPanel = isExp ? `
+      // For locked steps (SMS consent), show a read-only info panel instead
+      // of the editable form. Admins still see what the step is, but can't
+      // change/move/delete it.
+      const lockedPanel = (isExp && isLocked) ? `
+        <div style="background:#FEF3C7;border-top:1px solid #FDE68A;padding:16px 18px;font-size:13px;color:#92400E" onclick="event.stopPropagation()">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-weight:700">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="7" width="10" height="7" rx="1"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>
+            Locked — required for SMS compliance
+          </div>
+          <p style="margin:6px 0 4px;line-height:1.55">
+            This step captures the employee's express written consent to receive SMS notifications, plus their phone number and a signature.
+            Carriers (T-Mobile, AT&amp;T, Verizon) and CTIA guidelines require this consent record before any A2P SMS can be sent — so this step
+            <strong>cannot be removed, reordered, or modified</strong> from the package.
+          </p>
+          <p style="margin:6px 0 0;font-size:12px;color:var(--g700)">
+            See <a href="/sms-opt-in" target="_blank" style="color:var(--blue-d)">/sms-opt-in</a> for the consent language and the complete opt-in flow.
+          </p>
+        </div>` : '';
+
+      const expandedPanel = (isExp && !isLocked) ? `
         <div style="background:var(--g50);border-top:1px solid var(--g100);padding:16px 18px 18px" onclick="event.stopPropagation()">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
             <div>
@@ -7350,7 +7420,10 @@ const App = {
             onclick="App.toggleHRStep('${st}',${i})">
             <div style="width:22px;height:22px;border-radius:50%;background:${isExp?typeColor:'var(--blue)'};color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;margin-top:1px">${i+1}</div>
             <div style="flex:1;min-width:0">
-              <div style="font-weight:600;font-size:13px;color:var(--g900)">${sanitize(s.title)}</div>
+              <div style="font-weight:600;font-size:13px;color:var(--g900);display:flex;align-items:center;gap:6px">
+                ${sanitize(s.title)}
+                ${isLocked ? '<span style="font-size:10px;font-weight:700;background:#FEF3C7;color:#92400E;padding:2px 7px;border-radius:6px;display:inline-flex;align-items:center;gap:3px"><svg viewBox=\"0 0 12 12\" width=\"9\" height=\"9\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\"><rect x=\"2\" y=\"5\" width=\"8\" height=\"6\" rx=\"1\"/><path d=\"M4 5V3.5a2 2 0 0 1 4 0V5\"/></svg>Locked</span>' : ''}
+              </div>
               <div style="font-size:11px;color:var(--g500);margin-top:2px">${sanitize(s.desc)}</div>
               ${s.url ? `<div style="font-size:11px;color:var(--blue-d);margin-top:3px;display:flex;align-items:center;gap:4px"><svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M5 2H2a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V8"/><path d="M8 1h3v3M11 1L6 6"/></svg>${sanitize(s.url.length>50?s.url.slice(0,50)+'…':s.url)}</div>` : ''}
             </div>
@@ -7360,7 +7433,7 @@ const App = {
               <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color:var(--g600);transform:rotate(${isExp?180:0}deg);transition:transform .2s"><path d="M4 6l4 4 4-4"/></svg>
             </div>
           </div>
-          ${expandedPanel}
+          ${lockedPanel}${expandedPanel}
         </div>`;
     }).join('');
 
@@ -7468,6 +7541,66 @@ const App = {
 
     const existing = docs[step.id] || {};
 
+    // ── SMS consent step renders a different body — no notes textarea, but a
+    // required phone input and a required consent checkbox. The standard
+    // signature canvas and Continue button still apply (handled below).
+    const isSmsConsent = step.type === 'sms_consent';
+    const consentBody = isSmsConsent ? `
+      <div style="background:#EFF6FF;border:1.5px solid #93C5FD;border-radius:10px;padding:18px 20px;margin-bottom:16px">
+        <div style="font-size:14px;font-weight:700;color:#1E40AF;margin-bottom:6px;display:flex;align-items:center;gap:8px">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3h12v9H6l-3 3V3z"/></svg>
+          Required: SMS Notifications Consent
+        </div>
+        <p style="font-size:13px;color:var(--g700);margin:8px 0;line-height:1.55">
+          Your facility uses ManageMyStaffing to coordinate schedules and offer open shifts. To receive timely notifications about <strong>open shifts</strong>, <strong>schedule changes</strong>, and <strong>HR updates</strong>, please consent to receive SMS text messages.
+        </p>
+        <div style="background:#fff;border:1px solid #BFDBFE;border-radius:8px;padding:12px 14px;font-size:12px;color:var(--g700);line-height:1.5;margin-top:10px">
+          <ul style="margin:0;padding-left:18px">
+            <li>Frequency varies — typically 0–10 messages per week.</li>
+            <li>Standard message and data rates may apply.</li>
+            <li>Messages are transactional only (no marketing).</li>
+            <li>Reply <strong>STOP</strong> at any time to unsubscribe; reply <strong>HELP</strong> for support contact.</li>
+            <li>By consenting, you agree to our
+              <a href="/privacy" target="_blank" style="color:var(--blue-d)">Privacy Policy</a> and
+              <a href="/terms" target="_blank" style="color:var(--blue-d)">Terms</a>.
+            </li>
+          </ul>
+        </div>
+      </div>
+      <div style="background:#fff;border:1.5px solid var(--g200);border-radius:10px;padding:20px;margin-bottom:16px">
+        <div style="margin-bottom:14px">
+          <label style="font-size:11px;font-weight:700;color:var(--g500);display:block;margin-bottom:4px">MOBILE PHONE NUMBER (REQUIRED)</label>
+          <input id="cand-sms-phone" type="tel" value="${sanitize(existing.phone||emp.phone||'')}" placeholder="(555) 123-4567" style="width:100%;padding:9px 10px;border:1.5px solid var(--g200);border-radius:7px;font-size:14px;font-family:inherit">
+          <div style="font-size:11px;color:var(--g500);margin-top:4px">This is the number where you'll receive SMS notifications. You can update it later in your profile.</div>
+        </div>
+        <div style="background:#FFFBEB;border:1.5px solid #FDE68A;border-radius:8px;padding:12px 14px;margin:14px 0;cursor:pointer" onclick="document.getElementById('cand-sms-consent').click()">
+          <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
+            <input type="checkbox" id="cand-sms-consent" ${existing.consented?'checked':''} style="width:20px;height:20px;flex-shrink:0;margin-top:1px;cursor:pointer;accent-color:#2563EB">
+            <span style="font-size:13px;color:var(--g900);line-height:1.5">
+              <strong>I agree to receive SMS text messages from ManageMyStaffing.</strong> I consent to receive transactional SMS about open shifts, schedule changes, and HR communications at the phone number provided above. Msg &amp; data rates may apply. Reply STOP to opt out, HELP for help. I understand I can revoke this consent at any time.
+            </span>
+          </label>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+          <div><label style="font-size:11px;font-weight:700;color:var(--g500);display:block;margin-bottom:4px">FULL LEGAL NAME</label>
+            <input id="cand-name" value="${sanitize(existing.legalName||emp.name||'')}" style="width:100%;padding:8px 10px;border:1.5px solid var(--g200);border-radius:7px;font-size:13px;font-family:inherit"></div>
+          <div><label style="font-size:11px;font-weight:700;color:var(--g500);display:block;margin-bottom:4px">DATE</label>
+            <input id="cand-date" type="date" value="${existing.date||TODAY}" style="width:100%;padding:8px 10px;border:1.5px solid var(--g200);border-radius:7px;font-size:13px;font-family:inherit"></div>
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:700;color:var(--g500);display:block;margin-bottom:6px">SIGNATURE (REQUIRED)</label>
+          <div style="border:1.5px solid var(--g200);border-radius:8px;overflow:hidden;background:#FAFAFA;position:relative">
+            <canvas id="sig-canvas" width="700" height="140" style="display:block;width:100%;cursor:crosshair;touch-action:none"></canvas>
+            <button onclick="App.clearSignature()" style="position:absolute;top:6px;right:8px;font-size:11px;color:var(--g600);background:transparent;border:1px solid var(--g300);border-radius:5px;padding:2px 8px;cursor:pointer">Clear</button>
+          </div>
+          ${existing.signature ? `<div style="margin-top:4px;font-size:11px;color:var(--green);display:flex;align-items:center;gap:4px"><svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="2,6 5,9 10,3"/></svg>Signature saved</div>` : ''}
+        </div>
+        <div style="margin-top:12px;padding:8px 12px;background:var(--g50);border-radius:6px;font-size:11px;color:var(--g600);line-height:1.5">
+          <strong>This consent is required to complete onboarding.</strong> If you prefer not to receive SMS, please contact your facility administrator — alternative arrangements (email-only) can be made manually.
+        </div>
+      </div>
+    ` : '';
+
     document.getElementById('main').innerHTML = `
       <div style="display:grid;grid-template-columns:260px 1fr;gap:0;height:calc(100vh - var(--header));overflow:hidden">
         <div style="border-right:1px solid var(--g200);background:#fff;overflow-y:auto;padding:16px 12px">
@@ -7492,7 +7625,7 @@ const App = {
             ${fileViewer}
             ${wordFiles}
 
-            <div style="background:#fff;border:1.5px solid var(--g200);border-radius:10px;padding:20px;margin-bottom:16px">
+            ${isSmsConsent ? consentBody : `<div style="background:#fff;border:1.5px solid var(--g200);border-radius:10px;padding:20px;margin-bottom:16px">
               <div style="font-size:13px;font-weight:700;color:var(--g900);margin-bottom:12px">Your Information</div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
                 <div><label style="font-size:11px;font-weight:700;color:var(--g500);display:block;margin-bottom:4px">FULL LEGAL NAME</label>
@@ -7511,7 +7644,7 @@ const App = {
                 </div>
                 ${existing.signature ? `<div style="margin-top:4px;font-size:11px;color:var(--green);display:flex;align-items:center;gap:4px"><svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="2,6 5,9 10,3"/></svg>Signature saved</div>` : ''}
               </div>
-            </div>
+            </div>`}
 
             <div style="display:flex;align-items:center;justify-content:space-between">
               <button class="btn btn-secondary" onclick="App.S._candidateStep=${Math.max(0,activeIdx-1)};App.renderCandidatePortal()" ${activeIdx===0?'disabled':''}>← Previous</button>
@@ -7581,17 +7714,69 @@ const App = {
     const empBld2 = (this.S.buildings || []).find(b => b.id === (this.S.user?.buildingId || this.S.activeBuildingId));
     const empCoId2 = empBld2?.companyId || Object.keys(this.S.hrOnboarding || {})[0] || 'co_skyblue';
     const empPkg2 = ((this.S.hrOnboarding || {})[empCoId2] || {})[state] || null;
+    if (empPkg2) this._ensureSmsConsentStep(empPkg2);
     const step = empPkg2?.steps[stepIdx];
     if (!step) return;
 
     if (!emp.docs) emp.docs = {};
-    emp.docs[step.id] = {
-      completedAt: new Date().toISOString(),
-      legalName: document.getElementById('cand-name')?.value?.trim() || emp.name,
-      date: document.getElementById('cand-date')?.value || TODAY,
-      notes: document.getElementById('cand-notes')?.value?.trim() || '',
-      signature: this._sigData || emp.docs[step.id]?.signature || null,
-    };
+
+    // ── SMS consent step has stricter validation: phone + checkbox + signature
+    // are ALL required, otherwise the step refuses to mark complete and the
+    // employee can't advance. Stamps emp.smsConsent for downstream payroll +
+    // SMS sending logic + audit-log per consent grant.
+    if (step.type === 'sms_consent') {
+      const phoneRaw = (document.getElementById('cand-sms-phone')?.value || '').trim();
+      const consented = !!document.getElementById('cand-sms-consent')?.checked;
+      const sig = this._sigData || emp.docs[step.id]?.signature || null;
+      // Phone must look like a US 10-digit number after digits-only normalize
+      const phoneDigits = phoneRaw.replace(/\D/g, '');
+      const phoneValid = phoneDigits.length === 10 || (phoneDigits.length === 11 && phoneDigits.startsWith('1'));
+      if (!phoneValid) {
+        this.showToast('Please enter a valid US mobile phone number to receive SMS.', 'warn');
+        return;
+      }
+      if (!consented) {
+        this.showToast('You must check the consent box to complete onboarding. Contact your facility admin if you cannot consent to SMS.', 'warn');
+        return;
+      }
+      if (!sig) {
+        this.showToast('Please sign in the signature box to confirm consent.', 'warn');
+        return;
+      }
+      // Normalize to E.164 (US)
+      const normPhone = phoneDigits.length === 11 ? '+' + phoneDigits : '+1' + phoneDigits;
+      // Update employee record with phone + consent record
+      emp.phone = phoneRaw;            // user-friendly format on profile
+      emp.notifSMS = true;
+      emp.smsConsent = {
+        givenAt: new Date().toISOString(),
+        phone: normPhone,
+        phoneDisplay: phoneRaw,
+        consentText: 'I agree to receive SMS text messages from ManageMyStaffing for transactional notifications about open shifts, schedule changes, and HR communications. Reply STOP to opt out, HELP for help.',
+        signatureCaptured: true,
+        method: 'self-service-onboarding',
+        userAgent: (typeof navigator !== 'undefined' && navigator.userAgent || '').slice(0, 200),
+      };
+      emp.docs[step.id] = {
+        completedAt: new Date().toISOString(),
+        legalName: document.getElementById('cand-name')?.value?.trim() || emp.name,
+        date: document.getElementById('cand-date')?.value || TODAY,
+        signature: sig,
+        consented: true,
+        consentPhone: normPhone,
+      };
+      Audit.log('SMS_CONSENT_GIVEN',
+        `${sanitize(emp.name)} (${sanitize(emp.email||'no-email')}) consented to SMS at ${normPhone}`,
+        emp.id || u?.id, 'medium');
+    } else {
+      emp.docs[step.id] = {
+        completedAt: new Date().toISOString(),
+        legalName: document.getElementById('cand-name')?.value?.trim() || emp.name,
+        date: document.getElementById('cand-date')?.value || TODAY,
+        notes: document.getElementById('cand-notes')?.value?.trim() || '',
+        signature: this._sigData || emp.docs[step.id]?.signature || null,
+      };
+    }
 
     // Update overall status
     const totalSteps = empPkg2?.steps.length || 0;
@@ -7605,7 +7790,7 @@ const App = {
     }
 
     this.persistData();
-    this.showToast(`Step ${stepIdx+1} completed`);
+    this.showToast(step.type === 'sms_consent' ? 'SMS consent recorded — onboarding complete!' : `Step ${stepIdx+1} completed`);
 
     const nextIdx = stepIdx + 1;
     this.S._candidateStep = nextIdx < totalSteps ? nextIdx : stepIdx;
@@ -11005,13 +11190,30 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const steps = this._obPkg(state).steps;
     const newIdx = idx + dir;
     if (newIdx < 0 || newIdx >= steps.length) return;
+    // Locked steps (e.g. SMS consent) can't be moved AT ALL — they have a
+    // fixed position (always last). Prevent both moving the locked step
+    // AND moving another step into the locked step's slot (which would
+    // displace it).
+    if (steps[idx]?.locked) {
+      this.showToast('This step is required and cannot be reordered.', 'warn');
+      return;
+    }
+    if (steps[newIdx]?.locked) {
+      this.showToast('Cannot move past the required final step.', 'warn');
+      return;
+    }
     [steps[idx], steps[newIdx]] = [steps[newIdx], steps[idx]];
     this.persistData(); this.renderHRMain();
   },
 
   removeHRStep(state, idx) {
+    const steps = this._obPkg(state).steps;
+    if (steps[idx]?.locked) {
+      this.showToast('This step is required for SMS compliance and cannot be removed.', 'warn');
+      return;
+    }
     if (!confirm('Remove this onboarding step?')) return;
-    this._obPkg(state).steps.splice(idx,1);
+    steps.splice(idx,1);
     this.persistData(); this.renderHRMain();
   },
 
