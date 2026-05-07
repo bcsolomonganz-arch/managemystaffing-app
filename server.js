@@ -1638,6 +1638,121 @@ app.get('/privacy', (_req, res) => {
 `));
 });
 
+// SMS opt-in evidence page — referenced by Azure Communication Services
+// regulatory documents (toll-free verification + 10DLC campaign) as the
+// "where do subscribers opt in" URL. Carriers require a publicly-viewable
+// page showing the consent UI and the call-to-action language. This page
+// renders a high-fidelity SVG mockup of the in-app onboarding checkbox so
+// reviewers can see the actual consent flow without needing app credentials.
+app.get('/sms-opt-in', (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  // SVG mockup of the in-app consent checkbox + surrounding context. Inline
+  // so the page is self-contained (no external image hosting required).
+  const svgMockup = `
+<svg viewBox="0 0 720 540" xmlns="http://www.w3.org/2000/svg" style="max-width:720px;width:100%;border:1px solid #e5e7eb;border-radius:8px;background:#ffffff">
+  <!-- App header -->
+  <rect x="0" y="0" width="720" height="56" fill="#0f172a"/>
+  <text x="20" y="34" font-family="Segoe UI,sans-serif" font-size="16" font-weight="700" fill="#ffffff">ManageMyStaffing — New Hire Paperwork</text>
+  <text x="630" y="34" font-family="Segoe UI,sans-serif" font-size="12" fill="#94a3b8">Step 3 of 7</text>
+  <!-- Section heading -->
+  <text x="32" y="92" font-family="Segoe UI,sans-serif" font-size="20" font-weight="800" fill="#0f172a">Notification Preferences</text>
+  <text x="32" y="118" font-family="Segoe UI,sans-serif" font-size="13" fill="#475569">Choose how we contact you about open shifts and schedule changes.</text>
+  <!-- Phone field -->
+  <text x="32" y="158" font-family="Segoe UI,sans-serif" font-size="12" font-weight="700" fill="#334155">Mobile phone number</text>
+  <rect x="32" y="170" width="380" height="38" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" rx="6"/>
+  <text x="44" y="194" font-family="Segoe UI,sans-serif" font-size="13" fill="#0f172a">(347) 456-1681</text>
+  <!-- Consent checkbox row -->
+  <rect x="32" y="232" width="656" height="106" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1" rx="8"/>
+  <rect x="46" y="248" width="20" height="20" fill="#2563eb" stroke="#1d4ed8" stroke-width="1.5" rx="3"/>
+  <path d="M51 258 L55 263 L62 252" stroke="#ffffff" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="76" y="265" font-family="Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">I agree to receive SMS text messages from ManageMyStaffing</text>
+  <text x="76" y="288" font-family="Segoe UI,sans-serif" font-size="12" fill="#475569">I consent to receive transactional SMS about open shifts, schedule changes, and</text>
+  <text x="76" y="304" font-family="Segoe UI,sans-serif" font-size="12" fill="#475569">HR communications. Msg &amp; data rates may apply. Reply STOP to opt out, HELP for help.</text>
+  <text x="76" y="324" font-family="Segoe UI,sans-serif" font-size="11" fill="#64748b" font-style="italic">Frequency varies. View our Privacy Policy and Terms.</text>
+  <!-- Email checkbox row -->
+  <rect x="32" y="356" width="656" height="56" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" rx="8"/>
+  <rect x="46" y="372" width="20" height="20" fill="#2563eb" stroke="#1d4ed8" stroke-width="1.5" rx="3"/>
+  <path d="M51 382 L55 387 L62 376" stroke="#ffffff" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="76" y="389" font-family="Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#0f172a">Email notifications</text>
+  <text x="76" y="406" font-family="Segoe UI,sans-serif" font-size="11" fill="#64748b">Same content as SMS, sent to your email address.</text>
+  <!-- Continue button -->
+  <rect x="32" y="438" width="160" height="42" fill="#2563eb" rx="6"/>
+  <text x="112" y="464" font-family="Segoe UI,sans-serif" font-size="14" font-weight="700" fill="#ffffff" text-anchor="middle">Continue →</text>
+  <!-- Footer -->
+  <text x="32" y="510" font-family="Segoe UI,sans-serif" font-size="11" fill="#94a3b8">By continuing you confirm your consent choices. You can change them anytime in your profile.</text>
+</svg>`;
+  res.send(`<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SMS Opt-in — ManageMyStaffing</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;line-height:1.6;color:#1f2937;max-width:820px;margin:0 auto;padding:32px 24px;background:#f8fafc}
+  h1{font-size:28px;color:#0f172a;margin:0 0 8px;border-bottom:2px solid #e5e7eb;padding-bottom:12px}
+  h2{font-size:18px;color:#0f172a;margin:28px 0 8px}
+  p,li{font-size:14px;color:#334155}
+  ul,ol{padding-left:22px}
+  a{color:#2563eb;text-decoration:none}
+  a:hover{text-decoration:underline}
+  .meta{color:#64748b;font-size:12px;margin-bottom:20px}
+  .nav{margin-top:36px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:13px;color:#64748b}
+  .callout{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:14px 16px;margin:14px 0;font-size:13px;color:#1e40af}
+  .sample-msg{background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;margin:10px 0;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:13px;color:#0f172a;max-width:380px}
+  .sample-msg .from{font-size:11px;color:#64748b;font-weight:600;margin-bottom:4px}
+  code{background:#f1f5f9;padding:1px 6px;border-radius:4px;font-size:12px;font-family:Consolas,Menlo,monospace}
+</style></head><body>
+<h1>SMS Opt-in &amp; Consent — ManageMyStaffing</h1>
+<p class="meta">Last updated: May 2026 · This page documents how employees opt in to SMS notifications.</p>
+
+<h2>Who receives messages</h2>
+<p>ManageMyStaffing is a closed-system workforce-management application for skilled-nursing-facility staff. <strong>Only verified employees of contracted facilities</strong> receive SMS — there is no public sign-up. Employees are invited by their facility's HR administrator after they're hired.</p>
+
+<h2>How employees opt in</h2>
+<p>During the new-hire onboarding paperwork process, every employee sees a notification-preferences step. They explicitly check a consent box agreeing to receive SMS, after providing their phone number. <strong>Mockup of the in-app consent screen below:</strong></p>
+
+${svgMockup}
+
+<h2>Exact consent language shown to employees</h2>
+<div class="callout">
+  <strong>☑ I agree to receive SMS text messages from ManageMyStaffing</strong><br>
+  I consent to receive transactional SMS about open shifts, schedule changes, and HR communications. Msg &amp; data rates may apply. Reply STOP to opt out, HELP for help. Frequency varies. View our <a href="/privacy">Privacy Policy</a> and <a href="/terms">Terms</a>.
+</div>
+
+<h2>Verbal-consent path (admin-added employees)</h2>
+<p>For employees who don't complete self-service onboarding, facility administrators may add them after confirming verbal consent in person. The admin attests to the consent in the system, and the employee can revoke it at any time by replying STOP to any message they receive.</p>
+
+<h2>Sample messages employees receive</h2>
+<div class="sample-msg"><div class="from">From: ManageMyStaffing</div>Open shifts are available in ManageMyStaffing. Sign in to view and claim: https://managemystaffing.com — Reply STOP to opt out, HELP for help.</div>
+<div class="sample-msg"><div class="from">From: ManageMyStaffing</div>Urgent: a shift needs coverage. Sign in to view: https://managemystaffing.com — Reply STOP to opt out.</div>
+<div class="sample-msg"><div class="from">From: ManageMyStaffing</div>You've been added to your facility's schedule. Sign in: https://managemystaffing.com — Reply STOP to opt out, HELP for help.</div>
+
+<h2>Opt-out (STOP) and help (HELP)</h2>
+<ul>
+  <li><strong>STOP</strong> — reply STOP to any message to immediately unsubscribe from all SMS. The system logs the opt-out and stops all further SMS to that number.</li>
+  <li><strong>HELP</strong> — reply HELP to receive contact information for ManageMyStaffing support.</li>
+  <li>Employees can also disable SMS notifications in their in-app profile under "Notification Preferences."</li>
+  <li>Standard message and data rates may apply per the recipient's wireless carrier plan.</li>
+</ul>
+
+<h2>Frequency &amp; content</h2>
+<ul>
+  <li>Frequency varies based on the employee's role and the facility's staffing needs (typically 0–10 messages per week per employee).</li>
+  <li>All SMS are <strong>transactional only</strong> — open shifts, schedule changes, time-off responses, HR documents. No marketing.</li>
+</ul>
+
+<h2>Privacy &amp; data handling</h2>
+<p>Phone numbers are stored encrypted at rest and never shared with third parties for marketing. Full details: <a href="/privacy">Privacy Policy</a> § 3 (SMS communications &amp; opt-out).</p>
+
+<h2>Contact</h2>
+<p>ManageMyStaffing<br>
+Solomon Ganz, CEO<br>
+Email: <a href="mailto:bcsolomonganz@gmail.com">bcsolomonganz@gmail.com</a><br>
+Phone: 347-456-1681</p>
+
+<div class="nav"><a href="/">← Back to ManageMyStaffing</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></div>
+</body></html>`);
+});
+
 app.get('/terms', (_req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=3600');
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
