@@ -191,6 +191,31 @@ a:active{opacity:.6}
 .day-panel{padding:12px 14px;border-top:1px solid var(--g200);background:#fff}
 .day-panel .day-ttl{font-size:14px;font-weight:800;color:var(--g900);margin-bottom:8px}
 
+/* Pending actions card (top of admin schedule view) */
+.pa-card{margin:12px 14px 0;background:#fff;border:1.5px solid #FCD34D;
+  border-radius:12px;padding:0;box-shadow:var(--shadow);overflow:hidden}
+.pa-head{display:flex;align-items:center;gap:8px;padding:10px 14px;
+  background:#FFFBEB;border-bottom:1px solid #FCD34D;
+  font-size:12px;font-weight:800;color:#92400E;text-transform:uppercase;letter-spacing:.05em}
+.pa-icon{display:inline-flex;align-items:center;justify-content:center;
+  width:18px;height:18px;border-radius:50%;background:#D97706;color:#fff;
+  font-weight:900;font-size:11px;text-transform:none;letter-spacing:0}
+.pa-count{margin-left:auto;background:#D97706;color:#fff;font-size:10px;
+  padding:2px 8px;border-radius:99px}
+.pa-row{padding:10px 14px;border-bottom:1px solid var(--g100);
+  display:flex;align-items:center;gap:10px}
+.pa-row:last-child{border-bottom:none}
+.pa-info{flex:1;min-width:0}
+.pa-ttl{font-size:13px;font-weight:700;color:var(--g900);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pa-meta{font-size:11px;color:var(--g500);margin-top:1px}
+.pa-btns{display:flex;gap:6px;flex-shrink:0}
+.pa-btn{font-size:11px;font-weight:700;padding:6px 10px;border-radius:7px;white-space:nowrap}
+.pa-btn.approve{background:var(--green);color:#fff}
+.pa-btn.approve:active{background:var(--green-d)}
+.pa-btn.reject{background:var(--g100);color:var(--g700)}
+.pa-btn.reject:active{background:var(--g200)}
+
 /* ── Messages ─────────────────────────────────────────── */
 .msg-list{display:flex;flex-direction:column}
 .thread-row{display:flex;align-items:center;gap:12px;padding:12px 16px;
@@ -287,24 +312,78 @@ a:active{opacity:.6}
   <div class="login-card">
     <div class="logo">M</div>
     <h1>ManageMyStaffing</h1>
-    <p class="sub">Sign in with your work email</p>
-    <div id="login-error" class="error-msg"></div>
-    <form id="login-form" autocomplete="on">
-      <div class="field">
-        <label for="login-email">Email</label>
-        <input id="login-email" name="email" type="email" autocomplete="email" required inputmode="email" autocapitalize="off" autocorrect="off">
+
+    <!-- Step 1: email + password -->
+    <div id="login-step-creds">
+      <p class="sub">Sign in with your work email</p>
+      <div id="login-error" class="error-msg"></div>
+      <form id="login-form" autocomplete="on">
+        <div class="field">
+          <label for="login-email">Email</label>
+          <input id="login-email" name="email" type="email" autocomplete="email" required inputmode="email" autocapitalize="off" autocorrect="off">
+        </div>
+        <div class="field">
+          <label for="login-password">Password</label>
+          <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+        </div>
+        <button id="login-submit" type="submit" class="btn-primary">
+          <span id="login-submit-text">Sign in</span>
+        </button>
+      </form>
+      <p style="text-align:center;margin-top:18px;font-size:12px;color:var(--g500)">
+        <a href="/" style="color:var(--green-d);font-weight:700">Use the full website →</a>
+      </p>
+    </div>
+
+    <!-- Step 2: TOTP verification (existing 2FA) -->
+    <div id="login-step-totp" class="hidden">
+      <p class="sub">Enter the 6-digit code from your authenticator app</p>
+      <div id="totp-error" class="error-msg"></div>
+      <form id="totp-form" autocomplete="off">
+        <div class="field">
+          <label for="totp-code">Verification code</label>
+          <input id="totp-code" type="text" inputmode="numeric" autocomplete="one-time-code"
+                 pattern="[0-9 ]*" placeholder="123456" maxlength="17" required
+                 style="text-align:center;font-size:20px;letter-spacing:.2em;font-weight:700">
+          <p style="font-size:11px;color:var(--g500);margin:6px 0 0">
+            6-digit code, or paste one of your recovery codes (xxxxxxxx-xxxxxxxx).
+          </p>
+        </div>
+        <button id="totp-submit" type="submit" class="btn-primary">
+          <span id="totp-submit-text">Verify &amp; sign in</span>
+        </button>
+      </form>
+      <button id="totp-back" type="button" class="btn-ghost" style="display:block;margin:14px auto 0">← Back</button>
+    </div>
+
+    <!-- Step 3: First-time TOTP enrollment (QR code) -->
+    <div id="login-step-totp-setup" class="hidden">
+      <p class="sub">Set up two-factor authentication</p>
+      <p style="font-size:12px;color:var(--g600);margin-bottom:14px">
+        Open your authenticator app (Google Authenticator, Microsoft Authenticator, 1Password, Authy)
+        and scan this code, then enter the 6-digit code it shows.
+      </p>
+      <div id="totp-qr" style="background:#fff;padding:12px;border:1px solid var(--g200);border-radius:10px;display:flex;justify-content:center;margin-bottom:12px">
+        <img id="totp-qr-img" alt="QR code" style="width:180px;height:180px;display:block">
       </div>
-      <div class="field">
-        <label for="login-password">Password</label>
-        <input id="login-password" name="password" type="password" autocomplete="current-password" required>
-      </div>
-      <button id="login-submit" type="submit" class="btn-primary">
-        <span id="login-submit-text">Sign in</span>
-      </button>
-    </form>
-    <p style="text-align:center;margin-top:18px;font-size:12px;color:var(--g500)">
-      <a href="/" style="color:var(--green-d);font-weight:700">Use the full website →</a>
-    </p>
+      <p style="font-size:11px;color:var(--g500);margin:0 0 14px;text-align:center">
+        Or enter the secret manually:<br>
+        <code id="totp-secret-text" style="font-size:11px;color:var(--g700);font-family:monospace;background:var(--g100);padding:2px 6px;border-radius:4px"></code>
+      </p>
+      <div id="totp-setup-error" class="error-msg"></div>
+      <form id="totp-setup-form" autocomplete="off">
+        <div class="field">
+          <label for="totp-setup-code">6-digit code from your app</label>
+          <input id="totp-setup-code" type="text" inputmode="numeric" autocomplete="one-time-code"
+                 pattern="[0-9]*" placeholder="123456" maxlength="6" required
+                 style="text-align:center;font-size:20px;letter-spacing:.2em;font-weight:700">
+        </div>
+        <button id="totp-setup-submit" type="submit" class="btn-primary">
+          <span id="totp-setup-submit-text">Verify &amp; sign in</span>
+        </button>
+      </form>
+      <button id="totp-setup-back" type="button" class="btn-ghost" style="display:block;margin:14px auto 0">← Cancel</button>
+    </div>
   </div>
 </div>
 
@@ -525,6 +604,8 @@ function effectiveBuildingId() {
 function showLogin() {
   $('#login-screen').classList.remove('hidden');
   $('#app').classList.add('hidden');
+  // Reset to step 1; clear any TOTP state
+  if (typeof showLoginStep === 'function') showLoginStep('creds');
   stopPolling();
 }
 
@@ -702,6 +783,7 @@ function renderAdminScheduleView() {
   const main = $('#main');
   const monthLabel = MONTHS[State.viewMonth] + ' ' + State.viewYear;
   main.innerHTML = `
+    ${renderPendingActionsBanner()}
     <div class="cal-toolbar">
       <button id="cal-prev" aria-label="Previous month">‹</button>
       <div class="month">${escapeHTML(monthLabel)}</div>
@@ -722,6 +804,104 @@ function renderAdminScheduleView() {
     el.addEventListener('click', () => selectDate(el.dataset.date));
   });
   if (State.selectedDate) renderDayPanel(State.selectedDate);
+  wirePendingActions();
+}
+
+// Pending actions = pending shift claims + pending shift trades scoped to
+// caller's building. Rendered as a collapsible card at the top of the
+// schedule view. Disappears entirely when there's nothing to act on.
+function renderPendingActionsBanner() {
+  const u = State.user;
+  if (!isAdmin()) return '';
+  const bId = effectiveBuildingId();
+  const callerBIds = new Set([u.buildingId, ...(u.buildingIds||[]), bId].filter(Boolean));
+
+  const claims = (State.data?.shifts || [])
+    .filter(s => s.claimRequest && (u.role === 'superadmin' || callerBIds.has(s.buildingId)))
+    .sort((a,b) => (a.claimRequest.requestedAt||'').localeCompare(b.claimRequest.requestedAt||''));
+  const trades = (State.data?.shiftTrades || [])
+    .filter(t => t.status === 'pending' && (u.role === 'superadmin' || callerBIds.has(t.buildingId)))
+    .sort((a,b) => (a.requestedAt||'').localeCompare(b.requestedAt||''));
+
+  if (!claims.length && !trades.length) return '';
+
+  const empById = new Map((State.data?.employees || []).map(e => [e.id, e]));
+  const shiftById = new Map((State.data?.shifts || []).map(s => [s.id, s]));
+
+  const claimRows = claims.map(s => {
+    const cr = s.claimRequest;
+    const dl = fmtDateShort(s.date);
+    return `<div class="pa-row">
+      <div class="pa-info">
+        <div class="pa-ttl">${escapeHTML(cr.empName||'?')} <span style="color:var(--g500);font-weight:500">wants</span> ${escapeHTML(s.type||'')} ${escapeHTML(groupLabel(s.group||''))}</div>
+        <div class="pa-meta">${escapeHTML(dl)} · open shift</div>
+      </div>
+      <div class="pa-btns">
+        <button class="pa-btn reject" data-pa-claim-reject="${escapeHTML(s.id)}">Reject</button>
+        <button class="pa-btn approve" data-pa-claim-approve="${escapeHTML(s.id)}">Approve</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  const tradeRows = trades.map(t => {
+    const fromS = shiftById.get(t.fromShiftId);
+    const toS   = shiftById.get(t.toShiftId);
+    const fromE = empById.get(fromS?.employeeId);
+    const toE   = empById.get(toS?.employeeId);
+    const what = `${escapeHTML(fromE?.name || 'Someone')} ↔ ${escapeHTML(toE?.name || 'someone')}`;
+    const when = `${fromS ? fmtDateShort(fromS.date) : '?'} ↔ ${toS ? fmtDateShort(toS.date) : '?'}`;
+    return `<div class="pa-row">
+      <div class="pa-info">
+        <div class="pa-ttl">${what} <span style="color:var(--g500);font-weight:500">trade</span></div>
+        <div class="pa-meta">${when} · ${escapeHTML((fromS?.type||'')+' '+groupLabel(fromS?.group||''))}</div>
+      </div>
+      <div class="pa-btns">
+        <button class="pa-btn reject" data-pa-trade-reject="${escapeHTML(t.id)}">Reject</button>
+        <button class="pa-btn approve" data-pa-trade-approve="${escapeHTML(t.id)}">Approve</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  const total = claims.length + trades.length;
+  return `
+    <div class="pa-card">
+      <div class="pa-head">
+        <span class="pa-icon">!</span>
+        <span>Pending requests</span>
+        <span class="pa-count">${total}</span>
+      </div>
+      ${claimRows}
+      ${tradeRows}
+    </div>
+  `;
+}
+
+function wirePendingActions() {
+  $$('[data-pa-claim-approve]').forEach(b => b.addEventListener('click', () => decideClaim(b.dataset.paClaimApprove, 'approve')));
+  $$('[data-pa-claim-reject]').forEach(b => b.addEventListener('click', () => decideClaim(b.dataset.paClaimReject, 'reject')));
+  $$('[data-pa-trade-approve]').forEach(b => b.addEventListener('click', () => decideTrade(b.dataset.paTradeApprove, 'approve')));
+  $$('[data-pa-trade-reject]').forEach(b => b.addEventListener('click', () => decideTrade(b.dataset.paTradeReject, 'reject')));
+}
+
+async function decideTrade(tradeId, decision) {
+  const trade = (State.data?.shiftTrades || []).find(t => t.id === tradeId);
+  if (!trade) return;
+  if (!confirm(`${decision === 'approve' ? 'Approve' : 'Reject'} this shift trade?`)) return;
+  try {
+    const r = await apiFetch('/api/shifts/trade/' + encodeURIComponent(tradeId) + '/decide', {
+      method:'POST', body:{ decision },
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { toast(j.error || 'Decision failed','warn'); return; }
+    Object.assign(trade, j.trade || {});
+    // Re-fetch /api/data so swapped employeeIds reflect immediately
+    const dr = await fetch('/api/data', { credentials:'include' });
+    if (dr.ok) State.data = await dr.json();
+    toast(decision === 'approve' ? 'Trade approved' : 'Trade rejected');
+    render();
+  } catch (e) {
+    toast('Network error', 'error');
+  }
 }
 
 function renderCalendarGrid() {
@@ -1304,6 +1484,26 @@ function stopPolling() {
 }
 
 // ── Login flow ───────────────────────────────────────────────────
+// Multi-step:
+//   1. email + password →
+//        a) logged in (cookie set) → enter app
+//        b) needsTotp:      show TOTP code prompt (existing user)
+//        c) needsTotpSetup: show QR + first-time enrollment
+//   2. TOTP code → cookie set → enter app
+let _loginSessionId = null;
+
+function showLoginStep(name) {
+  $('#login-step-creds').classList.toggle('hidden', name !== 'creds');
+  $('#login-step-totp').classList.toggle('hidden', name !== 'totp');
+  $('#login-step-totp-setup').classList.toggle('hidden', name !== 'totp-setup');
+  // Focus the first input of the active step on next tick
+  setTimeout(() => {
+    if (name === 'totp')        $('#totp-code')?.focus();
+    if (name === 'totp-setup')  $('#totp-setup-code')?.focus();
+    if (name === 'creds')       $('#login-email')?.focus();
+  }, 50);
+}
+
 $('#login-form').addEventListener('submit', async e => {
   e.preventDefault();
   const email = $('#login-email').value.trim();
@@ -1327,12 +1527,22 @@ $('#login-form').addEventListener('submit', async e => {
       err.classList.add('show');
       return;
     }
-    State.user = j.user || null;
-    if (j.requiresTOTP) {
-      err.textContent = 'This account requires 2FA — please use the full website to sign in.';
-      err.classList.add('show');
+
+    // Branch on server response
+    if (j.needsTotpSetup) {
+      _loginSessionId = j.sessionId;
+      $('#totp-qr-img').src = j.qrDataUrl || '';
+      $('#totp-secret-text').textContent = j.totpSecret || '';
+      showLoginStep('totp-setup');
       return;
     }
+    if (j.needsTotp) {
+      _loginSessionId = j.sessionId;
+      showLoginStep('totp');
+      return;
+    }
+
+    State.user = j.user || null;
     if (!State.user) {
       err.textContent = 'Unexpected response — try the full website.';
       err.classList.add('show');
@@ -1347,6 +1557,63 @@ $('#login-form').addEventListener('submit', async e => {
     btn.disabled = false;
     txt.textContent = 'Sign in';
   }
+});
+
+// Step 2 — verify TOTP code (existing 2FA user)
+async function submitTotp(formId, errId, btnId, txtId, codeId) {
+  const code = ($(codeId).value || '').replace(/\s+/g, '').trim();
+  const err = $(errId);
+  err.classList.remove('show');
+  if (!code) { err.textContent = 'Enter the 6-digit code'; err.classList.add('show'); return; }
+  const btn = $(btnId), txt = $(txtId);
+  btn.disabled = true; txt.innerHTML = '<span class="spinner"></span> Verifying…';
+  try {
+    const r = await fetch('/api/auth/login', {
+      method:'POST',
+      credentials:'include',
+      headers:{ 'Content-Type':'application/json', 'X-Requested-With':'XMLHttpRequest' },
+      body: JSON.stringify({ totp: code, sessionId: _loginSessionId }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      err.textContent = j.error || 'Invalid code';
+      err.classList.add('show');
+      return;
+    }
+    State.user = j.user || null;
+    if (!State.user) {
+      err.textContent = 'Unexpected response — try the full website.';
+      err.classList.add('show');
+      return;
+    }
+    _loginSessionId = null;
+    await loadAndRender();
+    startPolling();
+  } catch (e) {
+    err.textContent = 'Network error — check your connection.';
+    err.classList.add('show');
+  } finally {
+    btn.disabled = false;
+    txt.textContent = 'Verify & sign in';
+  }
+}
+
+$('#totp-form').addEventListener('submit', e => {
+  e.preventDefault();
+  submitTotp('#totp-form', '#totp-error', '#totp-submit', '#totp-submit-text', '#totp-code');
+});
+$('#totp-setup-form').addEventListener('submit', e => {
+  e.preventDefault();
+  submitTotp('#totp-setup-form', '#totp-setup-error', '#totp-setup-submit', '#totp-setup-submit-text', '#totp-setup-code');
+});
+
+$('#totp-back').addEventListener('click', () => {
+  _loginSessionId = null;
+  showLoginStep('creds');
+});
+$('#totp-setup-back').addEventListener('click', () => {
+  _loginSessionId = null;
+  showLoginStep('creds');
 });
 
 $('#logout-btn').addEventListener('click', async () => {
