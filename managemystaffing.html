@@ -3282,10 +3282,11 @@ const App = {
     const otHrColor  = m._rawOtHrs > 20 ? 'var(--red)' : m._rawOtHrs > 5 ? '#D97706' : 'var(--g700)';
     const otCostColor = otHrColor;
 
+    const isInactive = !!b.inactive;
     return `
-      <div class="building-card" style="--accent:${safeColor};cursor:pointer" onclick="App.enterBuilding('${b.id}')">
-        <div style="position:absolute;top:0;left:0;right:0;height:4px;background:${safeColor}"></div>
-        <div class="building-name">${sanitize(b.name)}</div>
+      <div class="building-card" style="--accent:${safeColor};cursor:${isInactive?'default':'pointer'};opacity:${isInactive?'0.65':'1'}" onclick="${isInactive?'':`App.enterBuilding('${b.id}')`}">
+        <div style="position:absolute;top:0;left:0;right:0;height:4px;background:${isInactive?'var(--g300)':safeColor}"></div>
+        <div class="building-name">${sanitize(b.name)}${isInactive ? ' <span style="font-size:11px;background:var(--g100);color:var(--g600);padding:2px 8px;border-radius:10px;font-weight:600;margin-left:6px">Inactive</span>' : ''}</div>
         <div class="building-addr"><svg viewBox="0 0 16 20" width="11" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M8 1C4.69 1 2 3.69 2 7c0 4.5 6 12 6 12s6-7.5 6-12c0-3.31-2.69-6-6-6z"/><circle cx="8" cy="7" r="2"/></svg> ${sanitize(b.address||'')}</div>
         <div class="building-stats" style="grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px">
           <div class="building-stat" title="Today's nursing hours ÷ today's census"><div class="building-stat-val">${m.dailyPPD}</div><div class="building-stat-label">Daily PPD</div></div>
@@ -3297,10 +3298,16 @@ const App = {
         </div>
         ${this._renderBuildingSmsStatus(b)}
         <div class="building-actions">
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();App.enterBuilding('${b.id}')">Enter Dashboard →</button>
-          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.editBuilding('${b.id}')" title="Edit facility details — CCN, geofence, address, etc.">⚙ Edit</button>
-          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.showKioskUrl('${b.id}')" title="Tablet kiosk URL — opens on any tablet at the nurse station for employees to clock in/out by PIN">📱 Kiosk URL</button>
-          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.openManageAdmins('${b.id}')" title="Manage admins for this building">Admins</button>
+          ${isInactive ? `
+            <button class="btn btn-primary btn-sm" onclick="event.stopPropagation();App.reactivateBuilding('${b.id}')" title="Reactivate this building (provisions a new local SMS number)">↻ Reactivate</button>
+            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.editBuilding('${b.id}')">⚙ Edit</button>
+          ` : `
+            <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();App.enterBuilding('${b.id}')">Enter Dashboard →</button>
+            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.editBuilding('${b.id}')" title="Edit facility details — CCN, geofence, address, etc.">⚙ Edit</button>
+            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.showKioskUrl('${b.id}')" title="Tablet kiosk URL — opens on any tablet at the nurse station for employees to clock in/out by PIN">📱 Kiosk URL</button>
+            <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.openManageAdmins('${b.id}')" title="Manage admins for this building">Admins</button>
+            <button class="btn btn-ghost btn-sm" style="color:#B91C1C;margin-left:auto" onclick="event.stopPropagation();App.deactivateBuilding('${b.id}')" title="Deactivate this building and release its SMS number">Deactivate</button>
+          `}
         </div>
       </div>`;
   },
@@ -7081,14 +7088,23 @@ const App = {
   },
 
   // ── DIRECT SMS via /api/sms ────────────────────────────────────
+  // Sends from the current building's local Azure ACS number when one has
+  // been provisioned (b.smsFromPhone). Server should resolve the FROM
+  // number from buildingId — falls back to the org-level toll-free number
+  // only when the building's local number isn't configured yet (e.g. brand
+  // new building still waiting on A2P 10DLC approval).
   // Returns true on success, false on failure (shows toast on error).
-  async _sendSMS(phone, message) {
+  async _sendSMS(phone, message, opts) {
     if (!phone || !message) return false;
+    const buildingId = (opts && opts.buildingId)
+      || this.S.activeBuildingId
+      || this.S.user?.buildingId
+      || null;
     try {
       const resp = await fetch('/api/sms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + _authToken },
-        body: JSON.stringify({ to: phone, message }),
+        body: JSON.stringify({ to: phone, message, buildingId }),
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
@@ -15906,6 +15922,122 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     ['b-name','b-addr','b-phone','b-beds','b-admin-name','b-admin-email','b-zip','b-ccn'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
     document.getElementById('b-admin-pass').value=genTempPw();
     this.renderSAMain();
+    // Auto-provision a local Azure Communication Services SMS number for the
+    // new facility. Runs in the background — UI doesn't wait. The server
+    // (POST /api/buildings/:id/provision-sms with autoProvision:true) will
+    // skip the user-confirm path, derive the area code from ZIP, and write
+    // smsFromPhone + smsFromPhoneSid back to the building. If A2P 10DLC
+    // isn't yet registered, it falls back to the toll-free number for now.
+    this._autoProvisionBuildingSMS(bId);
+  },
+
+  // ── AZURE SMS — auto-provisioning hooks ────────────────────────────
+  // Fires after a building is created. Skips the confirm() prompt that the
+  // manual `provisionBuildingSMS` uses. Tolerates failures silently — the
+  // SA can retry from the building card if the auto-attempt didn't land
+  // (e.g. ACS is rate-limited or the area code has no inventory today).
+  async _autoProvisionBuildingSMS(buildingId) {
+    if (!IS_SERVER_MODE) return;       // skip in local/demo mode
+    const b = (this.S.buildings || []).find(x => x.id === buildingId);
+    if (!b) return;
+    const areaCode = this._zipToAreaCode(b.zip);
+    try {
+      const r = await fetch(`/api/buildings/${buildingId}/provision-sms`, {
+        method:'POST',
+        headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${_authToken}` },
+        body: JSON.stringify({
+          autoProvision: true,
+          areaCode: areaCode || null,
+          source: 'azure-acs',
+          purpose: 'building-create',
+        }),
+      });
+      if (!r.ok) {
+        // Non-fatal — building is still created; SA can manually provision later.
+        Audit.log('SMS_PROVISION_FAILED',
+          `Auto-provision failed for ${sanitize(b.name)} (will fall back to toll-free)`,
+          this.S.user?.id, 'medium');
+        return;
+      }
+      const data = await r.json();
+      // Refresh /api/data to pick up smsFromPhone on the building record
+      const dResp = await fetch('/api/data', { headers: { 'Authorization': `Bearer ${_authToken}` } });
+      if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
+      this.showToast(`Local number ${data.phoneNumber} assigned to ${sanitize(b.name)}`);
+      Audit.log('SMS_PROVISION_AUTO',
+        `Auto-provisioned ${sanitize(data.phoneNumber)} for ${sanitize(b.name)} (area ${areaCode||'?'})`,
+        this.S.user?.id, 'medium');
+    } catch (e) {
+      // Network glitch — silent. Manual provisioning still available.
+    }
+  },
+
+  // Deactivate a building. Releases its SMS number and marks the building
+  // inactive. Employees stay on the roster (with their building reference)
+  // so historical PBJ + payroll data is preserved; the building just stops
+  // being a destination for new shifts/messages.
+  async deactivateBuilding(buildingId) {
+    if (this.S.user?.role !== 'superadmin') { this.showToast('Unauthorized','warn'); return; }
+    const b = (this.S.buildings || []).find(x => x.id === buildingId);
+    if (!b) { this.showToast('Building not found','warn'); return; }
+    if (b.inactive) { this.showToast(`${b.name} is already inactive`,'warn'); return; }
+    const activeEmps = (this.S.employees || []).filter(e => e.buildingId === buildingId && !e.inactive);
+    let confirmMsg = `Deactivate ${b.name}?\n\n`;
+    if (activeEmps.length) {
+      confirmMsg += `${activeEmps.length} active employee${activeEmps.length===1?'':'s'} are still assigned to this building.\nThey will stay on the roster but won't be schedulable here.\n\n`;
+    }
+    if (b.smsFromPhone) {
+      confirmMsg += `Local SMS number ${b.smsFromPhone} will be RELEASED back to Azure.\n\n`;
+    }
+    confirmMsg += `This is reversible — you can reactivate later (a new SMS number will be assigned).`;
+    if (!confirm(confirmMsg)) return;
+
+    // Release the Azure number first. If the release fails, abort so we
+    // don't end up with a dangling number that's still being billed.
+    if (b.smsFromPhone && IS_SERVER_MODE) {
+      try {
+        const r = await fetch(`/api/buildings/${buildingId}/provision-sms`, {
+          method:'DELETE',
+          headers: { 'Authorization': `Bearer ${_authToken}` },
+        });
+        if (!r.ok) {
+          const data = await r.json().catch(()=>({}));
+          this.showToast(data.error || `Couldn't release ${b.smsFromPhone} — building NOT deactivated. Try again.`, 'warn');
+          return;
+        }
+        Audit.log('SMS_RELEASED', `Released ${sanitize(b.smsFromPhone)} on building deactivation: ${sanitize(b.name)}`, this.S.user?.id, 'medium');
+      } catch (e) {
+        this.showToast(`Network error releasing ${b.smsFromPhone} — building NOT deactivated.`, 'warn');
+        return;
+      }
+    }
+    // Mark inactive locally + persist
+    b.inactive = true;
+    b.deactivatedAt = new Date().toISOString();
+    b.deactivatedBy = this.S.user?.id || null;
+    delete b.smsFromPhone;
+    delete b.smsFromPhoneSid;
+    this.persistData();
+    Audit.log('BUILDING_DEACTIVATED', `Deactivated ${sanitize(b.name)}`, this.S.user?.id, 'high');
+    this.showToast(`${b.name} deactivated`);
+    this.render();
+  },
+
+  // Reverse of deactivateBuilding. Marks the building active again and
+  // attempts to re-provision a local SMS number (a different one — the
+  // released number can't be recovered, see Azure docs).
+  async reactivateBuilding(buildingId) {
+    if (this.S.user?.role !== 'superadmin') { this.showToast('Unauthorized','warn'); return; }
+    const b = (this.S.buildings || []).find(x => x.id === buildingId);
+    if (!b || !b.inactive) return;
+    b.inactive = false;
+    delete b.deactivatedAt;
+    delete b.deactivatedBy;
+    Audit.log('BUILDING_REACTIVATED', `Reactivated ${sanitize(b.name)}`, this.S.user?.id, 'high');
+    this.persistData();
+    this.showToast(`${b.name} reactivated — provisioning new SMS number…`);
+    this._autoProvisionBuildingSMS(buildingId);
+    this.render();
   },
 
   // ── SEND ALERT ───────────────────────────────────────────────
