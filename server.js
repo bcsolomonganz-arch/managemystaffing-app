@@ -6504,8 +6504,13 @@ async function _enqueueAlertJob(job) {
 }
 
 app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
-  const { groups, message, subject, viaSMS, viaEmail, buildingId } = req.body || {};
-  if (!Array.isArray(groups) || !groups.length) return res.status(400).json({ error: 'groups array is required' });
+  const { groups, empIds, message, subject, viaSMS, viaEmail, buildingId } = req.body || {};
+  // Caller must specify either a list of job-category groups OR an explicit
+  // employee ID list (used by the Group Messages text-group composer, where
+  // membership is a hand-curated mix that doesn't map cleanly to job groups).
+  const hasGroups = Array.isArray(groups) && groups.length;
+  const hasEmpIds = Array.isArray(empIds) && empIds.length;
+  if (!hasGroups && !hasEmpIds) return res.status(400).json({ error: 'groups or empIds array is required' });
   if (!message) return res.status(400).json({ error: 'message is required' });
   if (message.length > 4000) return res.status(400).json({ error: 'message too long (4000 char max)' });
 
@@ -6523,9 +6528,14 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
     scopedBId = buildingId || req.user.buildingId;
   }
 
-  const employees = (data.employees || []).filter(e =>
-    groups.includes(e.group) && (!scopedBId || e.buildingId === scopedBId) && !e.inactive
-    && (isSA || callerBIds.has(e.buildingId)));
+  const empIdSet = hasEmpIds ? new Set(empIds) : null;
+  const employees = (data.employees || []).filter(e => {
+    if (hasEmpIds ? !empIdSet.has(e.id) : !groups.includes(e.group)) return false;
+    if (scopedBId && e.buildingId !== scopedBId) return false;
+    if (e.inactive) return false;
+    if (!isSA && !callerBIds.has(e.buildingId)) return false;
+    return true;
+  });
 
   // PHI guard for SMS path of /api/alert (HIPAA §164.312(e)).
   // Email is hop-by-hop TLS so PHI is allowed in email; SMS is unencrypted
@@ -6591,7 +6601,8 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
     sentBy: req.user.email,
     sentById: req.user.id,
     buildingId: scopedBId || null,
-    groups,
+    groups: hasGroups ? groups : [],
+    empIds: hasEmpIds ? empIds.slice() : null,
     subject: subject || null,
     message,
     channels: { email: !!viaEmail, sms: !!viaSMS },
@@ -6605,7 +6616,7 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
   if (data.alertLog.length > 500) data.alertLog = data.alertLog.slice(-500);
   markDirty();
 
-  auditLog('ALERT_QUEUED', req.user, { jobId, jobs: queuedJobs, groups });
+  auditLog('ALERT_QUEUED', req.user, { jobId, jobs: queuedJobs, groups: hasGroups ? groups : null, empIds: hasEmpIds ? empIds.length : null });
   // Return 202 Accepted with jobId — actual delivery is async
   res.status(202).json({
     ok: true, jobId,

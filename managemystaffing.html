@@ -6828,9 +6828,9 @@ const App = {
     document.getElementById('modal-remove-shift-body').innerHTML = `
       <div style="padding-top:16px">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:12px 14px;background:var(--g50);border-radius:8px;border:1px solid var(--g100)">
-          <div style="width:36px;height:36px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">${sanitize(emp.name.split(' ').map(w=>w[0]).join('').slice(0,2))}</div>
+          <div onclick="App.openEmployeeCard('${empId}')" title="View employee card" style="width:36px;height:36px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;cursor:pointer">${sanitize(emp.name.split(' ').map(w=>w[0]).join('').slice(0,2))}</div>
           <div>
-            <div style="font-weight:700;font-size:13px;color:var(--g900)">${sanitize(emp.name)}</div>
+            <div style="font-weight:700;font-size:13px;color:var(--g900)"><a href="#" onclick="event.preventDefault();App.openEmployeeCard('${empId}')" style="color:inherit;text-decoration:none;border-bottom:1px dotted transparent;transition:border-color .12s" onmouseover="this.style.borderBottomColor='var(--blue-d)'" onmouseout="this.style.borderBottomColor='transparent'">${sanitize(emp.name)}</a></div>
             <div style="font-size:12px;color:var(--g500)">${shiftType} Shift · ${dateDisplay}</div>
           </div>
         </div>
@@ -6861,9 +6861,9 @@ const App = {
             <div style="max-height:160px;overflow-y:auto;margin-bottom:12px">
               ${available.map(e => `
                 <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:7px;border:1px solid var(--g100);margin-bottom:4px;background:#fff">
-                  <div style="width:28px;height:28px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${sanitize(e.name.split(' ').map(w=>w[0]).join('').slice(0,2))}</div>
+                  <div onclick="App.openEmployeeCard('${e.id}')" title="View employee card" style="width:28px;height:28px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;cursor:pointer">${sanitize(e.name.split(' ').map(w=>w[0]).join('').slice(0,2))}</div>
                   <div style="flex:1">
-                    <div style="font-size:12px;font-weight:600;color:var(--g900)">${sanitize(e.name)}</div>
+                    <div style="font-size:12px;font-weight:600;color:var(--g900)"><a href="#" onclick="event.preventDefault();App.openEmployeeCard('${e.id}')" style="color:inherit;text-decoration:none;border-bottom:1px dotted transparent;transition:border-color .12s" onmouseover="this.style.borderBottomColor='var(--blue-d)'" onmouseout="this.style.borderBottomColor='transparent'">${sanitize(e.name)}</a></div>
                     <div style="font-size:11px;color:var(--g500)">${sanitize(e.group)}${e.phone?` · ${sanitize(e.phone)}`:''}</div>
                   </div>
                   <button class="btn btn-ghost btn-sm" onclick="App.assignCoverEmployee('${shiftId}','${e.id}')" style="font-size:11px;color:var(--blue-d)">Assign</button>
@@ -7005,7 +7005,7 @@ const App = {
           return `
             <label style="display:flex;align-items:center;gap:10px;padding:9px 11px;border-bottom:1px solid var(--g100);cursor:pointer">
               <input type="checkbox" class="cover-staff-cb" data-eid="${e.id}" data-phone="${sanitize(e.phone||'')}" data-name="${sanitize(e.name)}" checked style="width:16px;height:16px;cursor:pointer;accent-color:var(--blue-d)">
-              <div style="width:28px;height:28px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${initials}</div>
+              <div onclick="event.preventDefault();event.stopPropagation();App.openEmployeeCard('${e.id}')" title="View employee card" style="width:28px;height:28px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;cursor:pointer">${initials}</div>
               <div style="flex:1;min-width:0">
                 <div style="font-size:12px;font-weight:600;color:var(--g900)">${sanitize(e.name)}</div>
                 <div style="font-size:11px;color:var(--g500)">${sanitize(e.group)}${e.phone?` · ${sanitize(e.phone)}`:''}</div>
@@ -11971,22 +11971,26 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const nonMembers = allBuildingEmps.filter(e => !memberIds.has(e.id));
 
     const memberRow = (e) => `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--g100);background:#fff">
-      <div style="width:30px;height:30px;border-radius:50%;background:${G_COLORS[e.group]||'var(--blue)'};color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${sanitize(e.initials || (e.name||'').split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase())}</div>
+      <div onclick="App.openEmployeeCard('${e.id}')" title="View employee card" style="width:30px;height:30px;border-radius:50%;background:${G_COLORS[e.group]||'var(--blue)'};color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;cursor:pointer">${sanitize(e.initials || (e.name||'').split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase())}</div>
       <div style="flex:1;min-width:0">
-        <div style="font-size:13px;font-weight:600;color:var(--g900)">${sanitize(e.name)}</div>
+        <div style="font-size:13px;font-weight:600;color:var(--g900)"><a href="#" onclick="event.preventDefault();App.openEmployeeCard('${e.id}')" style="color:inherit;text-decoration:none;border-bottom:1px dotted transparent;transition:border-color .12s" onmouseover="this.style.borderBottomColor='var(--blue-d)'" onmouseout="this.style.borderBottomColor='transparent'">${sanitize(e.name)}</a></div>
         <div style="font-size:11px;color:var(--g500)">${sanitize(groupLabel(e.group))}</div>
       </div>
       ${isAdmin ? `<button class="btn btn-ghost btn-sm" style="font-size:11px;color:#B91C1C;padding:3px 8px" onclick="App.removeFromTextGroup('${group.id}','${e.id}')">Remove</button>` : ''}
     </div>`;
 
     const nonMemberRow = (e) => `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--g100);background:#fff">
-      <div style="width:30px;height:30px;border-radius:50%;background:${G_COLORS[e.group]||'var(--g300)'};color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${sanitize(e.initials || (e.name||'').split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase())}</div>
+      <div onclick="App.openEmployeeCard('${e.id}')" title="View employee card" style="width:30px;height:30px;border-radius:50%;background:${G_COLORS[e.group]||'var(--g300)'};color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;cursor:pointer">${sanitize(e.initials || (e.name||'').split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase())}</div>
       <div style="flex:1;min-width:0">
-        <div style="font-size:13px;font-weight:600;color:var(--g900)">${sanitize(e.name)}</div>
+        <div style="font-size:13px;font-weight:600;color:var(--g900)"><a href="#" onclick="event.preventDefault();App.openEmployeeCard('${e.id}')" style="color:inherit;text-decoration:none;border-bottom:1px dotted transparent;transition:border-color .12s" onmouseover="this.style.borderBottomColor='var(--blue-d)'" onmouseout="this.style.borderBottomColor='transparent'">${sanitize(e.name)}</a></div>
         <div style="font-size:11px;color:var(--g500)">${sanitize(groupLabel(e.group))}</div>
       </div>
       <button class="btn btn-secondary btn-sm" style="font-size:11px;padding:3px 8px;color:var(--blue-d);border-color:var(--blue-m)" onclick="App.addToTextGroup('${group.id}','${e.id}')">+ Add</button>
     </div>`;
+
+    // Reachability counts for the composer footer.
+    const smsCount   = members.filter(e => e.notifSMS  && e.phone).length;
+    const emailCount = members.filter(e => e.notifEmail && e.email).length;
 
     document.getElementById('modal-text-group')?.remove();
     const div = document.createElement('div');
@@ -12001,6 +12005,41 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         ${(group.autoFromGroups || []).length ? `<div style="padding:10px 16px;background:var(--blue-l);border-bottom:1px solid var(--blue-m);font-size:11px;color:var(--blue-d)">
           Auto-includes everyone in: <strong>${(group.autoFromGroups||[]).map(groupLabel).join(', ')}</strong>${isAdmin ? ' · you can override below' : ''}
         </div>` : ''}
+        ${isAdmin && members.length ? `
+          <div id="tg-msg-section" style="padding:14px 16px;border-bottom:1px solid var(--g200);background:var(--g50)">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
+              <div style="font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.04em">Message this group</div>
+              <button id="tg-msg-toggle" class="btn btn-primary btn-sm" onclick="App._toggleGroupMessageComposer('${group.id}')" style="font-size:11px;padding:5px 10px;display:inline-flex;align-items:center;gap:6px">
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 6l7 4 7-4"/></svg>
+                Message Group
+              </button>
+            </div>
+            <div id="tg-msg-composer" style="display:none">
+              <textarea id="tg-msg-body" rows="3" maxlength="1000" placeholder="Type a message — kept generic; replies route to your facility's SMS number." style="width:100%;padding:8px 10px;border:1.5px solid var(--g200);border-radius:6px;font-size:13px;font-family:inherit;resize:vertical;box-sizing:border-box"></textarea>
+              <div style="display:flex;align-items:center;gap:14px;margin-top:8px;font-size:12px;color:var(--g700);flex-wrap:wrap">
+                <label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer">
+                  <input type="checkbox" id="tg-msg-sms" checked style="accent-color:var(--blue-d);cursor:pointer">
+                  SMS <span style="color:var(--g500)">(${smsCount})</span>
+                </label>
+                <label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer">
+                  <input type="checkbox" id="tg-msg-email" style="accent-color:var(--blue-d);cursor:pointer">
+                  Email <span style="color:var(--g500)">(${emailCount})</span>
+                </label>
+                <span style="margin-left:auto;display:inline-flex;align-items:start;gap:5px;font-size:11px;color:var(--g500);max-width:280px">
+                  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="#D97706" stroke-width="1.8" stroke-linecap="round" style="flex-shrink:0;margin-top:1px"><path d="M8 1l7 14H1L8 1zM8 6v4M8 12v.01"/></svg>
+                  SMS is unencrypted — never include patient names or PHI.
+                </span>
+              </div>
+              <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:10px">
+                <button class="btn btn-ghost btn-sm" onclick="App._toggleGroupMessageComposer('${group.id}')" style="font-size:12px">Cancel</button>
+                <button class="btn btn-primary btn-sm" id="tg-msg-send" onclick="App.sendTextGroupMessage('${group.id}')" style="font-size:12px;display:inline-flex;align-items:center;gap:6px">
+                  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2" fill="currentColor" stroke="none" opacity=".85"/></svg>
+                  Send to ${members.length} member${members.length===1?'':'s'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ` : ''}
         <div style="padding:12px 16px 6px;font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.04em;background:var(--g50)">Members (${members.length})</div>
         ${members.length ? members.map(memberRow).join('') : '<div style="padding:24px;text-align:center;color:var(--g500);font-size:12px">No members yet</div>'}
         ${isAdmin && nonMembers.length ? `
@@ -12013,6 +12052,87 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       </div>
     </div>`;
     document.body.appendChild(div);
+  },
+
+  // Toggle the inline Message Group composer inside the text-group panel.
+  // First click expands it and focuses the textarea; subsequent clicks (or
+  // Cancel) collapse it back to a single button.
+  _toggleGroupMessageComposer(groupId) {
+    const composer = document.getElementById('tg-msg-composer');
+    const toggle   = document.getElementById('tg-msg-toggle');
+    if (!composer || !toggle) return;
+    const isOpen = composer.style.display !== 'none';
+    composer.style.display = isOpen ? 'none' : 'block';
+    toggle.style.display = isOpen ? '' : 'none';
+    if (!isOpen) {
+      const ta = document.getElementById('tg-msg-body');
+      if (ta) ta.focus();
+    }
+  },
+
+  // Send a message to every resolved member of a text group via SMS / email.
+  // Resolves members on the client (autoFromGroups + memberIds − excludedIds)
+  // then posts the empIds list to /api/alert. The server enforces building
+  // scoping again so this is safe.
+  async sendTextGroupMessage(groupId) {
+    this._ensureTextGroups();
+    const group = (this.S.textGroups || []).find(g => g.id === groupId);
+    if (!group) { this.showToast('Group not found','warn'); return; }
+
+    const message = (document.getElementById('tg-msg-body')?.value || '').trim();
+    if (!message) { this.showToast('Type a message first','warn'); return; }
+    const viaSMS   = !!document.getElementById('tg-msg-sms')?.checked;
+    const viaEmail = !!document.getElementById('tg-msg-email')?.checked;
+    if (!viaSMS && !viaEmail) { this.showToast('Pick SMS, Email, or both','warn'); return; }
+
+    const u = this.S.user;
+    const bId = this.S.activeBuildingId || u?.buildingId || 'b1';
+    const memberIds = this._resolveTextGroupMembers(group);
+    const empIds = (this.S.employees || [])
+      .filter(e => memberIds.includes(e.id) && !e.inactive && e.buildingId === bId)
+      .map(e => e.id);
+    if (!empIds.length) { this.showToast('No reachable members in this group','warn'); return; }
+
+    const sendBtn = document.getElementById('tg-msg-send');
+    if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = 'Sending…'; }
+
+    try {
+      if (IS_SERVER_MODE) {
+        const resp = await fetch('/api/alert', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            empIds, message, viaSMS, viaEmail,
+            subject: `Message from ${u?.name || 'Admin'} — ${group.name}`,
+            buildingId: bId,
+          }),
+        });
+        const r = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          this.showToast(r.error || 'Send failed','warn');
+          return;
+        }
+        const parts = [];
+        if (r.queued?.email) parts.push(`${r.queued.email} email${r.queued.email===1?'':'s'}`);
+        if (r.queued?.sms)   parts.push(`${r.queued.sms} text${r.queued.sms===1?'':'s'}`);
+        this.showToast(`${group.name}: ${parts.join(' + ') || 'queued'}`);
+      } else {
+        // Demo mode — simulate without hitting the server.
+        const cnt = (this.S.employees || []).filter(e =>
+          empIds.includes(e.id) && ((viaSMS && e.notifSMS) || (viaEmail && e.notifEmail))).length;
+        this.showToast(`${group.name}: sent to ${cnt} member${cnt===1?'':'s'} (demo)`);
+      }
+      // Collapse composer + clear textarea after a successful send.
+      const ta = document.getElementById('tg-msg-body'); if (ta) ta.value = '';
+      this._toggleGroupMessageComposer(groupId);
+    } catch (e) {
+      this.showToast('Network error — message not sent','warn');
+    } finally {
+      if (sendBtn) {
+        sendBtn.disabled = false;
+        sendBtn.innerHTML = `<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2" fill="currentColor" stroke="none" opacity=".85"/></svg> Send to ${empIds.length} member${empIds.length===1?'':'s'}`;
+      }
+    }
   },
 
   addToTextGroup(groupId, empId) {
@@ -15830,9 +15950,9 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         const st = shiftTypes(shift.group).find(s => s.type === shift.type);
         const reqAt = new Date(requestedAt).toLocaleString('en-US', {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'});
         rows += `<div style="display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--g100)">
-          <div style="width:36px;height:36px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0">${sanitize(empName.split(' ').map(w=>w[0]).join('').slice(0,2))}</div>
+          <div onclick="App.openEmployeeCard('${empId}')" title="View employee card" style="width:36px;height:36px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0;cursor:pointer">${sanitize(empName.split(' ').map(w=>w[0]).join('').slice(0,2))}</div>
           <div style="flex:1;min-width:0">
-            <div style="font-weight:700;font-size:13px;color:var(--g900)">${sanitize(empName)}</div>
+            <div style="font-weight:700;font-size:13px;color:var(--g900)"><a href="#" onclick="event.preventDefault();App.openEmployeeCard('${empId}')" style="color:inherit;text-decoration:none;border-bottom:1px dotted transparent;transition:border-color .12s" onmouseover="this.style.borderBottomColor='var(--blue-d)'" onmouseout="this.style.borderBottomColor='transparent'">${sanitize(empName)}</a></div>
             <div style="font-size:12px;color:var(--g600)">${shift.type} ${shift.group} · ${dl}${st ? ' · ' + st.start + '–' + st.end : ''}</div>
             <div style="font-size:11px;color:var(--g600);margin-top:2px">Requested ${reqAt}</div>
           </div>
