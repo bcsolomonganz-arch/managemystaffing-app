@@ -1543,6 +1543,155 @@ app.get('/', (_req, res) => {
   res.sendFile(HTML_FILE);
 });
 
+// ── PUBLIC LEGAL PAGES (privacy, terms) ───────────────────────────────────
+// Required for A2P 10DLC SMS brand registration with Azure Communication
+// Services — carriers (T-Mobile, AT&T, Verizon) verify these URLs are live
+// before approving a campaign. Both render inline so there are no extra
+// static files to host. Update copy here if your privacy posture changes.
+const _legalPageStyles = `
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;line-height:1.6;color:#1f2937;max-width:780px;margin:0 auto;padding:32px 24px}
+  h1{font-size:28px;color:#0f172a;margin:0 0 8px;border-bottom:2px solid #e5e7eb;padding-bottom:12px}
+  h2{font-size:18px;color:#0f172a;margin:24px 0 8px}
+  h3{font-size:15px;color:#334155;margin:16px 0 6px}
+  p,li{font-size:14px;color:#334155}
+  ul{padding-left:22px}
+  a{color:#2563eb;text-decoration:none}
+  a:hover{text-decoration:underline}
+  .meta{color:#64748b;font-size:12px;margin-bottom:20px}
+  .nav{margin-top:36px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:13px;color:#64748b}
+`;
+function renderLegalPage(title, html) {
+  return `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title} — ManageMyStaffing</title>
+<style>${_legalPageStyles}</style>
+</head><body>${html}<div class="nav"><a href="/">← Back to ManageMyStaffing</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></div></body></html>`;
+}
+
+app.get('/privacy', (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(renderLegalPage('Privacy Policy', `
+<h1>Privacy Policy</h1>
+<p class="meta">Last updated: May 2026</p>
+
+<p>ManageMyStaffing ("we", "us", "our") provides workforce-management software to skilled-nursing facilities and other healthcare employers. This Privacy Policy explains what information we collect, how we use it, and the choices you have.</p>
+
+<h2>1. Information we collect</h2>
+<ul>
+  <li><strong>Account information</strong> — name, email address, phone number, role, building assignment.</li>
+  <li><strong>Employment information</strong> — hire date, employment status, hourly rate or salary, license numbers (for licensed roles), shift assignments, time-clock punches.</li>
+  <li><strong>Health-related information</strong> — limited to what's needed to operate the schedule and meet CMS Payroll-Based Journal (PBJ) reporting (e.g. employee role classification, hours worked). We do <strong>not</strong> collect resident PHI through this app; resident census data is aggregated counts only, sourced from your facility's EHR via integration.</li>
+  <li><strong>Communications</strong> — SMS / email message content sent through the app, plus replies received via inbound webhooks.</li>
+  <li><strong>Usage data</strong> — IP address, browser type, login timestamps, audit-log events (who did what, when).</li>
+</ul>
+
+<h2>2. How we use information</h2>
+<ul>
+  <li>Operate the schedule, time clock, and payroll calculations on behalf of your employer (the facility).</li>
+  <li>Send you SMS and email notifications about open shifts, schedule changes, and HR documents — only when you've opted in (during onboarding paperwork or by an admin who confirmed verbal consent).</li>
+  <li>Generate compliance reports (PBJ, CMS Five-Star, audit logs).</li>
+  <li>Detect and respond to security incidents.</li>
+</ul>
+
+<h2>3. SMS communications &amp; opt-out</h2>
+<p>If you have opted in to SMS notifications, you may receive messages about shift availability, schedule changes, and time-off responses. Message frequency varies based on your role and your facility's staffing.</p>
+<ul>
+  <li>Reply <strong>STOP</strong> to any message to unsubscribe from all SMS communications.</li>
+  <li>Reply <strong>HELP</strong> to receive contact information.</li>
+  <li>Message and data rates may apply per your wireless carrier's plan.</li>
+  <li>Carriers supported: AT&amp;T, T-Mobile, Verizon, US Cellular, and others.</li>
+  <li>We do <strong>not</strong> share your mobile number with third parties for their own marketing.</li>
+</ul>
+
+<h2>4. How we share information</h2>
+<p>We share information only with:</p>
+<ul>
+  <li>Your employer (the facility that hired you and added you to the app).</li>
+  <li>Service providers who help us operate the platform — Microsoft Azure (hosting, SMS via Azure Communication Services), payroll vendors you've authorized us to push data to (e.g. Paycom, ADP), the carrier providing your SMS service.</li>
+  <li>Government agencies (CMS, state Medicaid) when required for PBJ reporting.</li>
+  <li>Law enforcement, when compelled by valid legal process.</li>
+</ul>
+<p>We do not sell personal information.</p>
+
+<h2>5. HIPAA</h2>
+<p>ManageMyStaffing operates as a Business Associate under HIPAA. We have signed Business Associate Agreements with each facility customer. Technical safeguards include AES-256 encryption at rest, TLS 1.2+ in transit, role-based access controls, MFA for administrative access, and tamper-evident audit logging (45 CFR §164.312).</p>
+
+<h2>6. Data retention</h2>
+<p>Audit logs are retained for 6 years per HIPAA §164.316(b). Other personal data is retained while you're active and for 2 years after last activity, unless your employer requests earlier deletion or longer retention is required by law.</p>
+
+<h2>7. Your rights</h2>
+<ul>
+  <li>Request a copy of the personal information we hold about you.</li>
+  <li>Request correction of inaccurate information.</li>
+  <li>Request deletion (subject to legal retention requirements).</li>
+  <li>Opt out of SMS at any time (reply STOP).</li>
+</ul>
+<p>Contact your facility's HR administrator first; they can fulfill most requests directly. For escalations, email <a href="mailto:privacy@managemystaffing.com">privacy@managemystaffing.com</a>.</p>
+
+<h2>8. Contact</h2>
+<p>ManageMyStaffing<br>Solomon Ganz, CEO<br>Email: <a href="mailto:bcsolomonganz@gmail.com">bcsolomonganz@gmail.com</a><br>Phone: 347-456-1681</p>
+
+<h2>9. Changes</h2>
+<p>We'll update the "Last updated" date at the top when we make material changes. For significant changes, we'll also notify your facility's administrators.</p>
+`));
+});
+
+app.get('/terms', (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(renderLegalPage('Terms of Service', `
+<h1>Terms of Service</h1>
+<p class="meta">Last updated: May 2026</p>
+
+<p>These Terms of Service ("Terms") govern your use of the ManageMyStaffing application and related services ("Service"). By accessing or using the Service, you agree to these Terms.</p>
+
+<h2>1. Eligibility &amp; accounts</h2>
+<p>The Service is intended for use by skilled-nursing-facility staff and administrators authorized by their employer. You may only access the Service via an account provisioned by your employer. You're responsible for safeguarding your credentials and for all activity under your account.</p>
+
+<h2>2. Acceptable use</h2>
+<p>You agree not to:</p>
+<ul>
+  <li>Access data outside your authorized scope (your facility, your role).</li>
+  <li>Reverse-engineer, decompile, or attempt to derive source code.</li>
+  <li>Use automated tools to scrape or extract data.</li>
+  <li>Upload malware, phishing content, or attempt to disrupt the Service.</li>
+  <li>Use the Service to send unsolicited messages to people who haven't consented.</li>
+</ul>
+
+<h2>3. SMS &amp; messaging</h2>
+<p>The Service may send SMS notifications to staff who have opted in. By providing your phone number, you consent to receive SMS messages relating to your work schedule, open shifts, and HR communications. Standard message and data rates apply per your wireless plan. Reply STOP at any time to opt out.</p>
+
+<h2>4. Customer data &amp; ownership</h2>
+<p>Your employer (the facility) owns the data they enter or that's generated through their use of the Service. ManageMyStaffing is a Business Associate processing this data on the facility's behalf. We do not claim ownership of customer data.</p>
+
+<h2>5. Service availability</h2>
+<p>We aim for high availability but the Service is provided "as is" without warranty of uninterrupted operation. Scheduled maintenance is announced in advance. Critical security patches may be applied without prior notice.</p>
+
+<h2>6. Compliance</h2>
+<p>The Service is designed to support HIPAA, CMS PBJ reporting, and standard wage-and-hour compliance. <strong>You and your employer are responsible</strong> for ensuring data entered into the Service is accurate, that you've obtained necessary consents, and that your use of the data complies with applicable law (HIPAA, FLSA, state employment laws, etc.).</p>
+
+<h2>7. Termination</h2>
+<p>Your employer may terminate your account at any time. We may suspend or terminate accounts that violate these Terms. Upon termination, your access ends but data is retained per the Privacy Policy.</p>
+
+<h2>8. Limitation of liability</h2>
+<p>To the maximum extent permitted by law, ManageMyStaffing's total liability for any claim arising from the Service is limited to the fees paid by your employer for the Service in the 12 months preceding the claim. We're not liable for indirect, incidental, or consequential damages, including lost profits or lost data.</p>
+
+<h2>9. Indemnification</h2>
+<p>You agree to indemnify ManageMyStaffing for claims arising from your violation of these Terms or your misuse of the Service.</p>
+
+<h2>10. Changes to these Terms</h2>
+<p>We may update these Terms. Material changes will be notified to your facility's administrators. Continued use after changes constitutes acceptance.</p>
+
+<h2>11. Governing law</h2>
+<p>These Terms are governed by the laws of the state of Texas, without regard to conflict-of-law rules. Disputes will be resolved in the state or federal courts located in Texas.</p>
+
+<h2>12. Contact</h2>
+<p>ManageMyStaffing<br>Solomon Ganz, CEO<br>Email: <a href="mailto:bcsolomonganz@gmail.com">bcsolomonganz@gmail.com</a><br>Phone: 347-456-1681</p>
+`));
+});
+
 // PWA manifest — lets users "Add to Home Screen" and launch in a standalone
 // window (no browser chrome). Icons are inline SVG data URLs that match the
 // existing favicon, so no static-file hosting required.
@@ -2231,6 +2380,118 @@ app.get('/api/admin/data-integrity', requireAuth, requireAdmin, async (req, res)
     } finally { await client.end(); }
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ── RECOVER SHIFTS FROM HISTORY LOG ──────────────────────────────────────────
+// Reads shift_history (append-only) and replays the most-recent state for
+// every shift_id ever seen in this building. Restores shifts that were
+// deleted, with their original employee_id / status / dates intact.
+//
+// dryRun:true returns counts without writing — use this first to confirm
+// what would be restored. Then call again with dryRun:false.
+//
+// Caller must be admin/SA and scoped to the building. Optional sinceTs
+// limits the scan to recent history (default: all history).
+app.post('/api/admin/recover-shifts-from-history', requireAuth, requireAdmin, async (req, res) => {
+  if (!_useDB) return res.status(503).json({ error: 'Endpoint requires postgres backend' });
+  const buildingId = String(req.body?.buildingId || '').trim();
+  const dryRun     = !!req.body?.dryRun;
+  const sinceTs    = String(req.body?.sinceTs || '').trim();
+  if (!buildingId) return res.status(400).json({ error: 'buildingId required' });
+  const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds || [])].filter(Boolean));
+  if (req.user.role !== 'superadmin' && !callerBIds.has(buildingId)) {
+    return res.status(403).json({ error: 'Out of scope' });
+  }
+
+  const pgLib = require('pg');
+  const liveConn = process.env.PG_CONN;
+  if (!liveConn) return res.status(503).json({ error: 'PG_CONN not set' });
+  const client = new pgLib.Client({
+    connectionString: liveConn,
+    ssl: { rejectUnauthorized: false },
+    connectionTimeoutMillis: 10000,
+    statement_timeout: 60000,
+  });
+
+  let recovered = 0;
+  try {
+    await client.connect();
+
+    // Latest non-null state per shift_id. If most-recent op is 'delete',
+    // we still resurrect (caller wants the lost shifts back).
+    const sinceClause = sinceTs ? `AND ts >= $2` : '';
+    const params = sinceTs ? [buildingId, sinceTs] : [buildingId];
+    const r = await client.query(`
+      WITH latest_per_shift AS (
+        SELECT DISTINCT ON (shift_id)
+               shift_id, op,
+               COALESCE(after_row, before_row) AS row_data,
+               ts
+        FROM shift_history
+        WHERE building_id = $1 ${sinceClause}
+        ORDER BY shift_id, ts DESC
+      ),
+      live AS (
+        SELECT id FROM shifts WHERE building_id = $1
+      )
+      SELECT lp.shift_id, lp.row_data, lp.op
+      FROM latest_per_shift lp
+      LEFT JOIN live l ON l.id = lp.shift_id
+      WHERE lp.row_data IS NOT NULL
+        AND l.id IS NULL          -- only restore rows currently MISSING from live
+    `, params);
+
+    if (dryRun) {
+      await client.end();
+      return res.json({
+        ok: true, dryRun: true,
+        wouldRestore: r.rows.length,
+        sample: r.rows.slice(0, 5).map(x => ({
+          id: x.shift_id,
+          date: x.row_data?.shift_date,
+          group: x.row_data?.group,
+          type: x.row_data?.shift_type,
+          status: x.row_data?.status,
+          employeeId: x.row_data?.employee_id,
+          lastSeen: x.op,
+        })),
+      });
+    }
+
+    for (const row of r.rows) {
+      const s = row.row_data;
+      // Verify employee_id still exists; if employee was hard-deleted,
+      // restore the shift as 'open' (not assigned to a non-existent emp).
+      let empIdToUse = s.employee_id;
+      if (empIdToUse) {
+        const ex = await client.query(`SELECT id FROM employees WHERE id = $1`, [empIdToUse]);
+        if (!ex.rows.length) empIdToUse = null;
+      }
+      const status = empIdToUse ? (s.status || 'scheduled') : 'open';
+      await client.query(
+        `INSERT INTO shifts (id, building_id, employee_id, shift_date, shift_type, "group",
+            start_time, end_time, status, claim_request, metadata, version)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12,1))
+          ON CONFLICT (id) DO NOTHING`,
+        [
+          s.id, s.building_id, empIdToUse, s.shift_date, s.shift_type, s.group,
+          s.start_time || null, s.end_time || null, status,
+          s.claim_request || null, s.metadata || {}, s.version || 1,
+        ]
+      );
+      recovered++;
+    }
+
+    dataCache = await dbRepo.loadAll();
+    _bumpDataVersion();
+    auditLog('SHIFT_RECOVERY_FROM_HISTORY', req.user, { buildingId, recovered, sinceTs: sinceTs || null });
+    res.json({ ok: true, recovered });
+  } catch (e) {
+    auditLog('SHIFT_RECOVERY_FROM_HISTORY_FAILED', req.user, { buildingId, err: e.message });
+    res.status(500).json({ error: e.message });
+  } finally {
+    try { await client.end(); } catch {}
   }
 });
 
