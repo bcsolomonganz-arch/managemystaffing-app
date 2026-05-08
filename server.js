@@ -462,6 +462,14 @@ function markDirty() {
   saveTimeout = setTimeout(persistCache, _useDB ? 200 : 2000);
 }
 
+// Tracks consecutive file-mode persist failures. If we hit too many in a
+// row, we know writes are silently failing (e.g., DATA_FILE points to a
+// path whose parent dir doesn't exist) and we surface it loudly. Without
+// this counter, the 2026-05-08 incident's writes failed silently for an
+// entire session before anyone noticed the data was never persisted.
+let _consecutiveFilePersistFailures = 0;
+let _lastSuccessfulPersistAt = null;
+
 async function persistCache() {
   if (!dataDirty) return;
   dataDirty = false;
@@ -470,6 +478,7 @@ async function persistCache() {
     if (_useDB) {
       await dbRepo.saveAll(dataCache);
       logger.info('data_saved', { backend: 'postgres' });
+      _lastSuccessfulPersistAt = new Date().toISOString();
     } else {
       const payload   = { ...dataCache, _lastSaved: new Date().toISOString() };
       const encrypted = await encrypt(payload);
@@ -477,13 +486,37 @@ async function persistCache() {
       await fs.writeFile(tmp, JSON.stringify(encrypted, null, 2), 'utf8');
       await fs.rename(tmp, DATA_FILE);
       logger.info('data_saved', { backend: 'file' });
+      _consecutiveFilePersistFailures = 0;
+      _lastSuccessfulPersistAt = new Date().toISOString();
     }
     // Fire-and-forget snapshot. Restore window: every-save for 24h, hourly
     // for 30d, daily for 365d. Lets a Super Admin recover from a bad edit
     // or accidental wipe without waiting on infra.
     _writeSnapshot().catch(e => logger.error('snapshot_failed', { err: e.message }));
   } catch (e) {
-    logger.error('save_failed', { err: e.message });
+    logger.error('save_failed', { err: e.message, backend: _useDB ? 'postgres' : 'file' });
+    if (!_useDB) {
+      _consecutiveFilePersistFailures++;
+      // Surface a clear, loud error after 3 consecutive failures. With the
+      // pre-fix code, file writes failing silently for hours wasn't visible
+      // anywhere except buried logger.error lines. /health/ready will now
+      // return 503 with this counter so monitoring can alert on it.
+      if (_consecutiveFilePersistFailures >= 3) {
+        const msg = `[mms] CRITICAL: ${_consecutiveFilePersistFailures} consecutive file-mode persist failures. ` +
+                    `DATA_FILE=${DATA_FILE}. Recent edits are NOT being saved. ` +
+                    `Check that ${path.dirname(DATA_FILE)} exists and is writable, or set PG_REQUIRE_ON_BOOT=true so the server fails fast instead of silently losing writes.`;
+        console.error(msg);
+        logger.error('file_persist_repeatedly_failing', {
+          consecutive: _consecutiveFilePersistFailures,
+          dataFile: DATA_FILE,
+          dataFileDirExists: fsSync.existsSync(path.dirname(DATA_FILE)),
+        });
+      }
+    }
+    // Re-mark dirty so the next markDirty/save attempt retries this batch.
+    // Without this, a single transient EBUSY would lose the whole batch
+    // because dataDirty was already set to false at the top of persistCache.
+    dataDirty = true;
   }
 }
 
@@ -645,6 +678,58 @@ async function persistAccountNow(acct) {
   markDirty();                        // keep rest of cache eventually consistent
 }
 
+// PG_REQUIRE_ON_BOOT — when set, refuse to fall back to file mode if
+// PG_CONN is configured but the ping fails. This prevents the silent
+// "Postgres is configured but server fell back to file with empty data
+// and made every save go nowhere" scenario that lost the 2026-05-08
+// session. Recommended setting in production where PG is the system
+// of record.
+const PG_REQUIRE_ON_BOOT = String(process.env.PG_REQUIRE_ON_BOOT || '').toLowerCase() === 'true';
+
+// Periodic recovery ping. If the server starts in file fallback mode but
+// PG_CONN is configured, retry every 60 seconds. The first time pg comes
+// back, promote to postgres mode and reload data from there. Without this,
+// a single transient ping failure at boot strands the server in file mode
+// indefinitely (writes go to a path the operator may have moved, and
+// silently fail). Set PG_NO_RECOVERY=true to disable.
+const PG_RECOVERY_INTERVAL_MS = Number(process.env.PG_RECOVERY_INTERVAL_MS) || 60000;
+const PG_NO_RECOVERY = String(process.env.PG_NO_RECOVERY || '').toLowerCase() === 'true';
+function _scheduleDbRecoveryPing() {
+  if (PG_NO_RECOVERY || _useDB || !process.env.PG_CONN) return;
+  setTimeout(async () => {
+    if (_useDB) return;
+    try {
+      dbRepo.init();
+      const ok = await dbRepo.ping();
+      if (ok) {
+        logger.warn('pg_recovery_ping_succeeded', { msg: 'Postgres reachable; promoting from file mode and reloading from db.' });
+        try {
+          await dbRepo.ensureSchema();
+          const fresh = await dbRepo.loadAll();
+          // Adopt Postgres state — but DON'T overwrite Postgres with our
+          // file-mode in-memory cache. The file-mode cache is what got the
+          // server through the outage; Postgres is system of record and
+          // wins. If a user added data while we were in file mode, that
+          // data was failing to persist anyway (writes went to a stale
+          // path). At least now subsequent writes will reach Postgres.
+          dataCache = fresh;
+          _useDB = true;
+          dataDirty = false;
+          if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = null; }
+          _bumpDataVersion();
+          logger.info('data_promoted_from_file_to_postgres');
+        } catch (e) {
+          logger.error('pg_recovery_promotion_failed', { err: e.message });
+        }
+      }
+    } catch (e) {
+      // swallow — try again next interval
+    } finally {
+      _scheduleDbRecoveryPing();
+    }
+  }, PG_RECOVERY_INTERVAL_MS).unref();
+}
+
 async function loadData() {
   if (dataCache) return dataCache;
 
@@ -661,9 +746,17 @@ async function loadData() {
         logger.info('data_loaded', { backend: 'postgres', accounts: (dataCache.accounts || []).length });
       } else {
         logger.warn('pg_ping_failed_fallback_to_file');
+        if (PG_REQUIRE_ON_BOOT) {
+          throw new Error('PG_REQUIRE_ON_BOOT=true and Postgres ping failed; refusing to start in file fallback mode.');
+        }
+        // Schedule periodic re-ping so a transient connection blip doesn't
+        // strand us in file mode forever.
+        _scheduleDbRecoveryPing();
       }
     } catch (e) {
       logger.error('pg_init_failed_fallback_to_file', { err: e.message });
+      if (PG_REQUIRE_ON_BOOT) throw e;
+      _scheduleDbRecoveryPing();
     }
   }
 
@@ -1400,6 +1493,20 @@ app.get('/health/ready', async (_req, res) => {
     if (_useDB) checks.postgres = await dbRepo.ping();
   } catch (e) {
     return res.status(503).json({ ok: false, ...checks, error: 'data_unreachable' });
+  }
+  // Surface persist-failure state so monitoring can alert. The 2026-05-08
+  // incident's writes failed silently for an entire user session because
+  // there was no visible health signal — only buried log lines.
+  checks.persistFailuresConsecutive = _consecutiveFilePersistFailures;
+  checks.lastSuccessfulPersistAt    = _lastSuccessfulPersistAt;
+  if (_consecutiveFilePersistFailures >= 3) {
+    return res.status(503).json({
+      ok: false,
+      ...checks,
+      error: 'persist_repeatedly_failing',
+      message: 'File-mode persists are failing. Edits are not being saved. ' +
+               'Investigate DATA_FILE config or set PG_REQUIRE_ON_BOOT=true.',
+    });
   }
   const chain = await verifyAuditChain();
   checks.auditChain = chain.ok;
@@ -2733,14 +2840,88 @@ app.get('/api/admin/probe-pg', requireAuth, requireSuperAdmin, async (_req, res)
   res.json(result);
 });
 
+// POST /api/admin/snapshots/restore
+//
+// Hardened after the 2026-05-08 incident: a panic-debug session called this
+// endpoint 18× during diagnosis with snapshots that turned out to be empty,
+// each call wiped the in-memory cache (which was the ONLY copy of that
+// session's writes since the file-mode persist path was broken). The
+// edits from that session were lost.
+//
+// Two new safety gates:
+//   1. dryRun:true returns the snapshot's row counts and a diff vs the
+//      live cache, WITHOUT mutating dataCache or persisting. Use this to
+//      inspect a snapshot before committing to a restore.
+//   2. shrinkPercent guard: if the snapshot's collection counts are
+//      smaller than live by >= 10%, reject the restore unless the caller
+//      passes confirmShrink:true. This prevents accidentally rolling
+//      back into a near-empty snapshot.
 app.post('/api/admin/snapshots/restore', requireAuth, requireSuperAdmin, async (req, res) => {
   if (_useDB) return res.status(400).json({ error: 'Restore disabled in Postgres mode (use DB PITR)' });
   const filename = String(req.body?.filename || '');
   if (!filename) return res.status(400).json({ error: 'filename required' });
+  const dryRun        = !!req.body?.dryRun;
+  const confirmShrink = !!req.body?.confirmShrink;
   try {
+    if (!/^mms-snapshot-[0-9TZ:.\-]+\.json$/i.test(filename)) {
+      return res.status(400).json({ error: 'invalid snapshot name' });
+    }
+    const src = path.join(BACKUP_DIR, filename);
+    const raw = await fs.readFile(src, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!parsed.iv || !parsed.data || !parsed.authTag) {
+      return res.status(400).json({ error: 'snapshot is not in encrypted format' });
+    }
+    const decoded = await decrypt(parsed);
+
+    // Compare snapshot vs live counts so the caller can sanity-check
+    // before committing. dataCache is the live in-memory state; if it's
+    // null we just loaded fresh, so treat as empty for the diff.
+    const live = dataCache || {};
+    const cmp = (key) => {
+      const liveN = (live[key] || []).length;
+      const snapN = (decoded[key] || []).length;
+      const drop  = liveN - snapN;
+      const dropPct = liveN > 0 ? Math.round((drop / liveN) * 100) : 0;
+      return { live: liveN, snapshot: snapN, drop, dropPercent: dropPct };
+    };
+    const diff = {
+      buildings:        cmp('buildings'),
+      employees:        cmp('employees'),
+      shifts:           cmp('shifts'),
+      schedulePatterns: cmp('schedulePatterns'),
+      accounts:         cmp('accounts'),
+      companies:        cmp('companies'),
+    };
+    const maxDrop = Math.max(...Object.values(diff).map(d => d.dropPercent));
+
+    if (dryRun) {
+      // Read-only — no mutation, no persistCache. Safe to call repeatedly.
+      auditLog('BACKUP_SNAPSHOT_RESTORE_DRYRUN', req.user, { filename, maxDrop });
+      return res.json({
+        ok: true, dryRun: true, filename,
+        snapshotTakenAt: parsed._snapshottedAt || null,
+        diff, maxDropPercent: maxDrop,
+        wouldShrinkSignificantly: maxDrop >= 10,
+      });
+    }
+
+    // Block obviously-destructive restores unless explicitly confirmed.
+    // 10% drop threshold is intentionally conservative — operators in
+    // panic mode shouldn't accidentally roll back into a near-empty
+    // snapshot. confirmShrink:true bypasses the guard.
+    if (maxDrop >= 10 && !confirmShrink) {
+      auditLog('BACKUP_SNAPSHOT_RESTORE_BLOCKED_SHRINK', req.user, { filename, maxDrop, diff });
+      return res.status(409).json({
+        error: 'Restore would shrink data significantly. Pass confirmShrink:true to proceed.',
+        maxDropPercent: maxDrop,
+        diff,
+      });
+    }
+
     const result = await _restoreSnapshotFile(filename);
-    auditLog('BACKUP_SNAPSHOT_RESTORED', req.user, { filename, restoredAt: result.restoredAt });
-    res.json({ ok: true, ...result });
+    auditLog('BACKUP_SNAPSHOT_RESTORED', req.user, { filename, restoredAt: result.restoredAt, diff });
+    res.json({ ok: true, diff, ...result });
   } catch (e) {
     auditLog('BACKUP_SNAPSHOT_RESTORE_FAILED', req.user, { filename, err: e.message });
     res.status(500).json({ error: e.message });
