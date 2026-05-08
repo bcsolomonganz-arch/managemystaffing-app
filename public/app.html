@@ -271,6 +271,18 @@ a:active{opacity:.6}
   background:var(--green);color:#fff;display:flex;align-items:center;justify-content:center;
   box-shadow:var(--shadow-lg);z-index:5}
 .fab:active{background:var(--green-d)}
+/* Filter bar above the messages list — toggles between All / Groups / DMs.
+   Sticks just under the page header so it's always reachable. */
+.msg-filter-bar{display:flex;gap:6px;padding:8px 12px;background:#fff;
+  border-bottom:1px solid var(--g100);position:sticky;top:0;z-index:4}
+.msg-filter-tab{flex:1;padding:8px 10px;border-radius:999px;border:1.5px solid var(--g200);
+  background:#fff;color:var(--g600);font-size:13px;font-weight:600;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;transition:all .12s}
+.msg-filter-tab:hover{border-color:var(--g300);color:var(--g800)}
+.msg-filter-tab.active{background:var(--green);border-color:var(--green);color:#fff}
+.msg-filter-tab .count{background:rgba(255,255,255,.25);color:inherit;border-radius:99px;
+  padding:1px 7px;font-size:11px;font-weight:700;min-width:18px;text-align:center}
+.msg-filter-tab:not(.active) .count{background:var(--g100);color:var(--g600)}
 
 /* Group message composer modal */
 .modal-back{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:60;display:none;
@@ -1778,8 +1790,9 @@ function renderMessagesView() {
   }
 
   const me = State.user;
+
+  // ── DM threads (one row per direct conversation) ────────────────────────
   const dms = State.data?.directMessages || [];
-  // Build threads
   const threadMap = new Map();
   for (const m of dms) {
     if (m.fromId !== me.id && m.toId !== me.id) continue;
@@ -1798,25 +1811,71 @@ function renderMessagesView() {
     })
     .sort((a,b) => b.last.sentAt.localeCompare(a.last.sentAt));
 
+  // ── Group messages (each row opens the group composer for a one-shot
+  //     blast — groups don't carry persistent threads, by design) ──────────
+  const groups = (State.data?.textGroups || []).filter(g => !g.inactive);
+
+  // Filter tab state. Default 'all' so admins see both kinds at a glance.
+  // Persists for the session via State.msgFilter so tab navigation feels
+  // consistent. Tabs: All / Groups / DMs.
+  if (!State.msgFilter) State.msgFilter = 'all';
+  const filter = State.msgFilter;
+
+  const showGroups = (filter === 'all' || filter === 'groups') && groups.length > 0;
+  const showDMs    = (filter === 'all' || filter === 'dms')    && threads.length > 0;
+  const totalShown = (showGroups ? groups.length : 0) + (showDMs ? threads.length : 0);
+
+  const tabBtn = (key, label, count) => `
+    <button class="msg-filter-tab${filter===key?' active':''}" data-filter="${key}">
+      ${escapeHTML(label)}${count != null ? `<span class="count">${count}</span>` : ''}
+    </button>`;
+
   const main = $('#main');
   main.innerHTML = `
-    ${threads.length > 4 ? `
+    <div class="msg-filter-bar">
+      ${tabBtn('all',    'All',    threads.length + groups.length)}
+      ${tabBtn('groups', 'Groups', groups.length)}
+      ${tabBtn('dms',    'DMs',    threads.length)}
+    </div>
+    ${(threads.length + groups.length) > 4 ? `
       <div class="composer-search" style="border-bottom:1px solid var(--g100)">
         <input id="thread-search" type="search" placeholder="Search conversations…" autocomplete="off">
       </div>
     ` : ''}
     <div class="msg-list" id="thread-list">
-      ${threads.length
-        ? threads.map(threadRow).join('')
-        : emptyBlock('chat', 'No conversations yet', 'Tap the + button to start one.')}
+      ${showGroups ? `
+        <div class="section-head" style="padding:10px 16px 4px;margin:0">
+          <span class="section-title">Group messages</span>
+        </div>
+        ${groups.map(groupRow).join('')}
+      ` : ''}
+      ${showDMs ? `
+        ${showGroups ? `<div class="section-head" style="padding:10px 16px 4px;margin:0;border-top:8px solid var(--g100)"><span class="section-title">Direct messages</span></div>` : ''}
+        ${threads.map(threadRow).join('')}
+      ` : ''}
+      ${totalShown === 0 ? emptyBlock('chat',
+        filter === 'groups' ? 'No groups yet' : filter === 'dms' ? 'No conversations yet' : 'No messages yet',
+        'Tap the chat button to start a new message.') : ''}
     </div>
-    <button class="fab" id="fab-new" aria-label="New message">
-      <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    <button class="fab" id="fab-new" aria-label="New message" title="New message">
+      <!-- Chat-bubble + pencil icon (WhatsApp-style compose) so admins
+           recognise this as "start a new conversation" instead of generic + -->
+      <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+        <path d="M14.5 8.5l1.5 1.5M16.5 6.5a1.5 1.5 0 0 1 2.1 2.1L13 14l-2.5.5L11 12l5.5-5.5z" fill="#fff"/>
+      </svg>
     </button>
   `;
+
   $('#fab-new').addEventListener('click', () => {
     State.newMessageMode = true;
     render();
+  });
+  $$('.msg-filter-tab').forEach(el => {
+    el.addEventListener('click', () => {
+      State.msgFilter = el.dataset.filter;
+      render();
+    });
   });
   $$('.thread-row[data-tid]').forEach(el => {
     el.addEventListener('click', () => {
@@ -1825,13 +1884,56 @@ function renderMessagesView() {
       render();
     });
   });
+  $$('.thread-row[data-gid]').forEach(el => {
+    el.addEventListener('click', () => {
+      openGroupComposer(el.dataset.gid);
+    });
+  });
   // Search filter — case-insensitive match on visible text (name + preview)
   $('#thread-search')?.addEventListener('input', () => {
     const q = $('#thread-search').value.toLowerCase().trim();
     $$('#thread-list .thread-row').forEach(row => {
       row.style.display = !q || (row.textContent || '').toLowerCase().includes(q) ? '' : 'none';
     });
+    // Also hide section heads that have no visible rows under them so the
+    // search result list doesn't show a stray "Group messages" header above
+    // an empty section.
+    $$('#thread-list .section-head').forEach(head => {
+      let hasVisible = false;
+      let n = head.nextElementSibling;
+      while (n && !n.classList.contains('section-head')) {
+        if (n.classList.contains('thread-row') && n.style.display !== 'none') { hasVisible = true; break; }
+        n = n.nextElementSibling;
+      }
+      head.style.display = hasVisible ? '' : 'none';
+    });
   });
+}
+
+// One row in the unified messages list representing a Group (one-shot blast
+// target). Clicking it opens the group composer sheet.
+function groupRow(g) {
+  const memberCount = (typeof resolveGroupMemberIds === 'function')
+    ? resolveGroupMemberIds(g).length
+    : (g.memberIds || []).length;
+  const subtitle = (g.autoFromGroups || []).map(groupLabel).join(', ') || 'Custom list';
+  return `
+    <div class="thread-row" data-gid="${escapeHTML(g.id)}">
+      <div class="avatar" style="background:var(--green)">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="9" cy="7" r="3"/><path d="M2 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2"/>
+          <circle cx="17" cy="7" r="2"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+        </svg>
+      </div>
+      <div class="body">
+        <div class="top">
+          <span class="name">${escapeHTML(g.name)}</span>
+          <span class="time">${memberCount} member${memberCount===1?'':'s'}</span>
+        </div>
+        <div class="preview">${escapeHTML(subtitle)}</div>
+      </div>
+    </div>
+  `;
 }
 
 function threadRow(t) {
