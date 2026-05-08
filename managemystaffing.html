@@ -1159,6 +1159,14 @@ const getActualGroups = g => {
   if (!mapped) return [g];
   return mapped.includes(g) ? mapped : [g, ...mapped];
 };
+// matchesGroup: does shift `s` belong to the display group `g`? Use this
+// EVERYWHERE that previously did `s.group === g` for shift filtering — it
+// transparently handles display-group ↔ underlying-group mapping (Dietary ↔
+// Cook + Dietary Aid). Returns false if either argument is missing.
+function matchesGroup(s, g) {
+  if (!s || !g) return false;
+  return getActualGroups(g).includes(s.group);
+}
 const CLINICAL = ['Nurse Management','Charge Nurse','CNA','CMA'];
 // Positions where state-board licensing applies. Drives the License section
 // in the Add/Edit Employee form, the roster expiration badge, and the
@@ -5775,16 +5783,23 @@ const App = {
 
       if (!shouldWork) continue;
 
-      // Check if shift already exists for this employee on this day/type
+      // Check if shift already exists for this employee on this day/type.
+      // Use matchesGroup so a Dietary-tagged shift counts as a match even
+      // when this rotation is being applied under the Cook actual group
+      // (and vice versa) — without this, applying a rotation to a Dietary
+      // employee creates duplicate rows because the existing display-tagged
+      // open slot doesn't match an exact 'Cook' filter.
       const existing = this.S.shifts.find(s =>
-        s.date === ds && s.group === group && s.type === shiftDef.type &&
+        s.date === ds && matchesGroup(s, grp) && s.type === shiftDef.type &&
         s.buildingId === bId && s.employeeId === empId
       );
       if (existing) continue;
 
-      // Find or create an open slot for this shift
+      // Find or create an open slot for this shift. Match by display-group
+      // so an open slot saved under any of the underlying groups (or the
+      // display group itself) gets reused instead of duplicated.
       const openSlot = this.S.shifts.find(s =>
-        s.date === ds && s.group === group && s.type === shiftDef.type &&
+        s.date === ds && matchesGroup(s, grp) && s.type === shiftDef.type &&
         s.buildingId === bId && (s.status === 'open' || !s.employeeId)
       );
       if (openSlot) {
@@ -16005,8 +16020,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         const openShiftRows = allSlots.filter(s => s.status === 'open');
         for (let i = 0; i < numEmpty; i++) {
           const targetShift = openShiftRows[i];
+          // Use getActualGroups so Dietary view picks up Cook + Dietary Aid
+          // employees in the assign dropdown. Without this the dropdown is
+          // empty for any mapped display group.
+          const empAg = getActualGroups(g);
           const opts = this.S.employees
-            .filter(e=>e.group===g&&!e.inactive)
+            .filter(e => empAg.includes(e.group) && !e.inactive)
             .sort((a,b)=>{ try { return (a.name||'').localeCompare(b.name||'', undefined, {sensitivity:'base'}); } catch { return 0; } })
             .map(e=>`<option value="${e.id}">${sanitize(e.name)}</option>`).join('');
           // Inline ✕ button opens the per-slot remove modal with three
@@ -16206,6 +16225,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const groups = g ? getActualGroups(g) : (u.role==='admin' ? GROUPS : [u.group]);
 
     let blocksHtml = '';
+    // Build the assignable-employee pool from the FULL set of underlying
+    // groups for the selected display group (so picking Dietary surfaces
+    // both Cook and Dietary Aid employees regardless of which sub-group
+    // each open shift was tagged under). Without this fallback, shifts
+    // saved as group='Dietary' have an empty assign dropdown.
+    const _panelEmpPoolGroups = g ? getActualGroups(g) : null;
     groups.forEach(grp => {
       SHIFT_TYPES(grp).forEach(sh => {
         const slots = dayShifts.filter(s=>s.group===grp&&s.type===sh.type);
@@ -16214,7 +16239,16 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         slots.forEach(slot => {
           if (slot.status==='open') {
             if (u.role==='admin') {
-              const opts = this.S.employees.filter(e=>e.group===grp&&!e.inactive).map(e=>`<option value="${e.id}">${sanitize(e.name)}</option>`).join('');
+              // Try grp-specific employees first; fall back to the union
+              // of underlying groups for the display selection so display-
+              // group-tagged shifts still get a populated dropdown.
+              let empPool = this.S.employees.filter(e=>e.group===grp&&!e.inactive);
+              if (empPool.length === 0 && _panelEmpPoolGroups) {
+                empPool = this.S.employees.filter(e => _panelEmpPoolGroups.includes(e.group) && !e.inactive);
+              }
+              const opts = empPool
+                .sort((a,b)=>{ try { return (a.name||'').localeCompare(b.name||'', undefined, {sensitivity:'base'}); } catch { return 0; } })
+                .map(e=>`<option value="${e.id}">${sanitize(e.name)}</option>`).join('');
               slotsHtml += `<div class="emp-slot-open"><span class="emp-slot-open-label" style="display:flex;align-items:center;gap:4px"><svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 1L1 13h12z"/><line x1="7" y1="6" x2="7" y2="9"/></svg>OPEN</span><select class="assign-select" onchange="App.assignShift('${slot.id}',this.value)"><option value="">Assign to...</option>${opts}</select><button class="btn-agency-sm" onclick="App.openAgencyEntry('${slot.id}')" title="Record agency / contract worker for PBJ">Agency</button></div>`;
             } else if (!u.group || u.group === grp) {
               slotsHtml += `<div class="emp-slot-open"><span class="emp-slot-open-label" style="display:flex;align-items:center;gap:4px"><svg viewBox="0 0 14 14" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 1L1 13h12z"/><line x1="7" y1="6" x2="7" y2="9"/></svg>OPEN SHIFT</span><button class="btn-claim-sm" onclick="App.confirmClaim('${slot.id}')">Claim</button></div>`;
@@ -16701,8 +16735,11 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (!emp) return;
     this._pushUndo(`Assigned ${emp.name} to ${shiftType} ${date}`);
     const bId = this.S.user?.buildingId || 'b1';
-    // Find an existing open shift for this date/group/type, or create one and assign it
-    let shift = this.S.shifts.find(s => s.date === date && s.group === group && s.type === shiftType && s.status === 'open' && (s.buildingId === bId || !s.buildingId));
+    // Find an existing open shift for this date/group/type, or create one and assign it.
+    // matchesGroup so display-group selections (e.g. Dietary) reuse open
+    // slots tagged under any of the underlying actual groups (Cook,
+    // Dietary Aid) instead of duplicating them.
+    let shift = this.S.shifts.find(s => s.date === date && matchesGroup(s, group) && s.type === shiftType && s.status === 'open' && (s.buildingId === bId || !s.buildingId));
     if (!shift) {
       // Create a new shift record
       const shiftDef = SHIFT_TYPES(group).find(s => s.type === shiftType);
