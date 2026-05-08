@@ -6678,8 +6678,15 @@ const App = {
     }
 
     // ── Assign Employee view ────────────────────────────────────
+    // Sort alphabetically by name (case-insensitive, locale-aware) so admins
+    // can scan the picker quickly. Falls back to the raw name if compare
+    // somehow throws on weird input.
+    const sortedEmps = [...emps].sort((a, b) => {
+      try { return (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }); }
+      catch { return 0; }
+    });
     const empOpts = `<option value="">Select employee…</option>` +
-      emps.map(e => `<option value="${e.id}"${e.id===st.empId?' selected':''}>${sanitize(e.name)}</option>`).join('');
+      sortedEmps.map(e => `<option value="${e.id}"${e.id===st.empId?' selected':''}>${sanitize(e.name)}</option>`).join('');
 
     const makeDay = (idx) => {
       const d = new Date(st.dates[idx] + 'T12:00:00');
@@ -7090,6 +7097,125 @@ const App = {
     this.showToast(scope === 'allFuture'
       ? `Hours updated on ${updated} shift${updated===1?'':'s'} (${newStart}–${newEnd})`
       : `Hours updated to ${newStart}–${newEnd}`);
+  },
+
+  // ── EDIT SHIFT TIMES BY TYPE (clicked from the calendar Day/Nig label) ──
+  // Opens a small ad-hoc modal to change a shift type's start/end times,
+  // either for one specific date or for every shift of that type on the
+  // current calendar (same building + group + type, all dates).
+  openEditShiftTimesModal(date, group, shiftType) {
+    const bId = this.S.user?.buildingId || 'b1';
+    const shiftDef = this.resolveShiftDef(group, shiftType, bId) || {};
+    // Pull start/end from the first matching shift on this date if present;
+    // fall back to the type's default. This way the dialog shows the user's
+    // current hours, not the original definition, when they've already
+    // edited a particular date.
+    const sample = (this.S.shifts || []).find(s =>
+      s.date === date && s.group === group && s.type === shiftType &&
+      (s.buildingId === bId || !s.buildingId)
+    );
+    const curStart = (sample && sample.start) || shiftDef.start || '7:00 AM';
+    const curEnd   = (sample && sample.end)   || shiftDef.end   || '3:00 PM';
+    const startInputVal = this._timeToInput(curStart);
+    const endInputVal   = this._timeToInput(curEnd);
+    const dateLabel = new Date(date + 'T12:00:00').toLocaleDateString('en-US',
+      { weekday:'long', month:'long', day:'numeric' });
+
+    // Count how many shifts each scope would touch so the buttons can
+    // tell the admin exactly what they're changing.
+    const oneDayCount = (this.S.shifts || []).filter(s =>
+      s.date === date && s.group === group && s.type === shiftType &&
+      (s.buildingId === bId || !s.buildingId)).length;
+    const allCount = (this.S.shifts || []).filter(s =>
+      s.group === group && s.type === shiftType &&
+      (s.buildingId === bId || !s.buildingId)).length;
+
+    // Remove any existing instance of this dynamic modal before opening a
+    // fresh one — guards against double-open from rapid label clicks.
+    const old = document.getElementById('modal-edit-shift-times');
+    if (old) old.remove();
+
+    const div = document.createElement('div');
+    div.id = 'modal-edit-shift-times';
+    div.className = 'modal-overlay open';
+    div.innerHTML = `
+      <div class="modal" style="max-width:480px">
+        <div class="modal-header">
+          <span class="modal-title">Edit ${sanitize(shiftType)} hours</span>
+          <button class="modal-close" onclick="document.getElementById('modal-edit-shift-times').remove()">✕</button>
+        </div>
+        <div class="modal-body" style="padding:16px 20px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding:12px 14px;background:var(--g50);border-radius:8px;border:1px solid var(--g100)">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="var(--g600)" stroke-width="1.7" stroke-linecap="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 4v4l2.5 2"/></svg>
+            <div style="font-size:13px;color:var(--g700)">
+              <strong>${sanitize(group)} · ${sanitize(shiftType)}</strong> shift on <strong>${dateLabel}</strong><br>
+              <span style="font-size:11px;color:var(--g500)">Currently ${sanitize(curStart)}–${sanitize(curEnd)}</span>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+            <label style="font-size:12px;color:var(--g700);font-weight:600">Start</label>
+            <input type="time" id="ets-start" value="${startInputVal}" style="font-size:13px;padding:6px 8px;border:1.5px solid var(--g200);border-radius:6px">
+            <label style="font-size:12px;color:var(--g700);font-weight:600;margin-left:6px">End</label>
+            <input type="time" id="ets-end" value="${endInputVal}" style="font-size:13px;padding:6px 8px;border:1.5px solid var(--g200);border-radius:6px">
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <button class="btn btn-secondary" onclick="App.editShiftTimes('${date}','${sanitize(group)}','${sanitize(shiftType)}','one')" style="justify-content:flex-start;text-align:left;color:var(--g800)">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 8l3 3 9-9"/></svg>
+              Apply to ${new Date(date+'T00:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})} only
+              <span style="font-size:11px;color:var(--g500);margin-left:auto">${oneDayCount} shift${oneDayCount===1?'':'s'}</span>
+            </button>
+            <button class="btn btn-secondary" onclick="App.editShiftTimes('${date}','${sanitize(group)}','${sanitize(shiftType)}','all')" style="justify-content:flex-start;text-align:left;color:var(--g800)">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6h12M5 1v3M11 1v3"/></svg>
+              Apply to all ${sanitize(shiftType)} shifts on this calendar
+              <span style="font-size:11px;color:var(--g500);margin-left:auto">${allCount} total</span>
+            </button>
+            <button class="btn btn-secondary" onclick="document.getElementById('modal-edit-shift-times').remove()" style="justify-content:flex-start;color:var(--blue-d)">
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(div);
+  },
+
+  // Apply edited start/end to either a single date's shifts of this type,
+  // or every shift of this type on the active calendar (same group +
+  // building + type). Mutation only — no rows added or removed — so the
+  // standard /api/data POST persists the change without issues.
+  editShiftTimes(date, group, shiftType, scope) {
+    const startEl = document.getElementById('ets-start');
+    const endEl   = document.getElementById('ets-end');
+    if (!startEl || !endEl || !startEl.value || !endEl.value) {
+      this.showToast('Pick a start and end time', 'warn');
+      return;
+    }
+    const newStart = this._inputToTime(startEl.value);
+    const newEnd   = this._inputToTime(endEl.value);
+    const bId = this.S.user?.buildingId || 'b1';
+
+    let updated = 0;
+    for (const s of (this.S.shifts || [])) {
+      if (s.group !== group || s.type !== shiftType) continue;
+      if ((s.buildingId || bId) !== bId) continue;
+      if (scope === 'one' && s.date !== date) continue;
+      if (s.start === newStart && s.end === newEnd) continue;
+      s.start = newStart;
+      s.end   = newEnd;
+      updated++;
+    }
+    if (updated === 0) {
+      this.showToast('No shifts to update — start/end already match', 'warn');
+      return;
+    }
+
+    this._pushUndo(`Edited ${shiftType} hours on ${updated} shift${updated===1?'':'s'}`, ['shifts']);
+    this.logAudit('SHIFT_TIMES_EDITED',
+      `${shiftType} ${group} hours changed to ${newStart}–${newEnd} on ${updated} shift${updated===1?'':'s'} (${scope==='all' ? 'all on calendar' : date+' only'})`);
+    this.persistData();
+    const m = document.getElementById('modal-edit-shift-times');
+    if (m) m.remove();
+    this.renderMain();
+    this.showToast(`Hours updated on ${updated} ${shiftType} shift${updated===1?'':'s'} (${newStart}–${newEnd})`);
   },
 
   removeFromDay(shiftId, date, empId) {
@@ -15555,7 +15681,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           }
 
           content += `<div class="shift-row" style="flex-wrap:wrap;gap:2px;row-gap:2px">
-            <span class="shift-label" style="background:${allFull?'#DCFCE7':'#FEF2F2'};color:${allFull?'#166534':'#991B1B'}">${sh.type.slice(0,3)}</span>
+            <span class="shift-label" style="background:${allFull?'#DCFCE7':'#FEF2F2'};color:${allFull?'#166534':'#991B1B'};cursor:pointer" title="Click to edit hours for this shift type" onclick="event.stopPropagation();App.openEditShiftTimesModal('${ds}','${g}','${sh.type}')">${sh.type.slice(0,3)}</span>
             ${pills}${badge}
           </div>`;
         });
@@ -15675,7 +15801,10 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         const openShiftRows = allSlots.filter(s => s.status === 'open');
         for (let i = 0; i < numEmpty; i++) {
           const targetShift = openShiftRows[i];
-          const opts = this.S.employees.filter(e=>e.group===g&&!e.inactive).map(e=>`<option value="${e.id}">${sanitize(e.name)}</option>`).join('');
+          const opts = this.S.employees
+            .filter(e=>e.group===g&&!e.inactive)
+            .sort((a,b)=>{ try { return (a.name||'').localeCompare(b.name||'', undefined, {sensitivity:'base'}); } catch { return 0; } })
+            .map(e=>`<option value="${e.id}">${sanitize(e.name)}</option>`).join('');
           // Inline ✕ button opens the per-slot remove modal with three
           // options: just-this-day / all-future / weekday-only.
           const removeBtn = targetShift
