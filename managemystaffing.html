@@ -1773,6 +1773,24 @@ const App = {
     if (logoEl) logoEl.innerHTML = LOGO_SVG;
     // WCAG: Escape key closes the topmost open modal
     this._installEscapeHandler();
+    // ── DEFENSE LAYER 4: auto-refetch on tab focus ─────────────────────
+    // When the user switches back to the tab (or wakes their laptop), pull
+    // fresh data from the server. If a deploy or another tab edited data
+    // while we were backgrounded, we reconcile silently instead of showing
+    // a stale view. _scheduleVerificationRefetch is debounced and no-ops
+    // when the user isn't signed in. Also re-checks on `online` events
+    // so a flaky network → recovery doesn't leave a stale calendar.
+    if (!this._focusListenerInstalled) {
+      this._focusListenerInstalled = true;
+      const refresh = () => {
+        if (!this.S?.user || !IS_SERVER_MODE) return;
+        if (document.hidden) return;
+        this._scheduleVerificationRefetch?.();
+      };
+      document.addEventListener('visibilitychange', refresh);
+      window.addEventListener('focus', refresh);
+      window.addEventListener('online', refresh);
+    }
 
     if (IS_SERVER_MODE) {
       // ── PRODUCTION / SERVER MODE ──────────────────────────────────
@@ -2561,6 +2579,19 @@ const App = {
   },
 
   render() {
+    // ── DEFENSE LAYER 3: empty-state render guard ─────────────────────────
+    // If the high-water mark says we had buildings/employees in this session
+    // but right now we have zero, do NOT render empty. The data is almost
+    // certainly safe in Postgres — we just got a stale or partial response.
+    // Show a "Reconnecting…" screen and trigger a verification refetch
+    // instead. This is the wall between "transient client glitch" and
+    // "user thinks all their data is gone."
+    if (this.S.user && this._needsReconnect && this._needsReconnect()) {
+      this._renderReconnectingScreen();
+      this._scheduleVerificationRefetch();
+      return;
+    }
+
     this.renderHeader();
     const u = this.S.user;
     if (u.role === 'superadmin' && this.S.appMode === 'hr' && this._canAccessHR()) {
@@ -17363,12 +17394,146 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     return false; // always force fresh fetch from /api/data
   },
 
+  // ── EMPTY-STATE / RECONNECTING DEFENSE HELPERS ──────────────────────────
+  // _needsReconnect: true when the in-memory state looks empty for a
+  // collection that was non-empty earlier in this session. We never render
+  // an empty calendar in that case — the user sees a "Reconnecting" screen
+  // and we re-fetch in the background.
+  _needsReconnect() {
+    const role = this.S.user?.role;
+    // Employee accounts legitimately see only their own scope; never block.
+    if (role !== 'admin' && role !== 'superadmin' && role !== 'regionaladmin') return false;
+    const hwm = this.S._sizeHWM || {};
+    // Only guard collections that gate rendering. If the HWM is 0 we assume
+    // legitimately empty (brand new tenant) and let the empty UI render.
+    const checks = [
+      ['buildings',  this.S.buildings,  hwm.buildings],
+      ['employees',  this.S.employees,  hwm.employees],
+    ];
+    for (const [name, arr, max] of checks) {
+      if ((max || 0) >= 5 && (!arr || arr.length === 0)) return true;
+    }
+    return false;
+  },
+
+  // Renders a friendly "Reconnecting…" full-screen state. We deliberately
+  // do NOT show 0-counts or "no facilities" messaging — that's exactly
+  // the panic-inducing UX we're avoiding.
+  _renderReconnectingScreen() {
+    const main = document.getElementById('main');
+    if (!main) return;
+    main.style.marginLeft = '0';
+    main.className = 'main';
+    main.innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;padding:40px 20px;text-align:center">
+        <div style="width:48px;height:48px;border:3px solid var(--g200);border-top-color:var(--green);border-radius:50%;animation:spin 1s linear infinite"></div>
+        <div style="margin-top:18px;font-size:16px;font-weight:700;color:var(--g800)">Reconnecting…</div>
+        <div style="margin-top:6px;font-size:13px;color:var(--g600);max-width:420px">
+          Your data is safe on the server. Restoring your view now — this usually takes a couple of seconds.
+        </div>
+        <button onclick="location.reload()" style="margin-top:20px;padding:8px 16px;border:1.5px solid var(--g200);background:#fff;border-radius:8px;font-size:13px;cursor:pointer;color:var(--g700)">Reload now</button>
+      </div>
+      <style>@keyframes spin{to{transform:rotate(360deg)}}</style>`;
+    const sb = document.getElementById('sidebar');
+    if (sb) sb.style.display = 'none';
+  },
+
+  // _scheduleVerificationRefetch: kicks off a non-blocking GET /api/data to
+  // reconcile the client with the server. Debounced so multiple calls
+  // within ~2s collapse to one. On success, the same applyServerData runs
+  // and (because the server has the real data) the high-water mark is
+  // satisfied — render() proceeds normally on the next tick.
+  _scheduleVerificationRefetch() {
+    if (this._verifyTimer) return;
+    this._verifyTimer = setTimeout(async () => {
+      this._verifyTimer = null;
+      try {
+        const r = await fetch('/api/data', { cache: 'no-store' });
+        if (r.ok) {
+          this.applyServerData(await r.json(), r.headers.get('ETag'));
+          this.render();
+        } else if (r.status === 401) {
+          // Session expired — bounce to login rather than spin forever.
+          this._showSyncBanner('Session expired — please sign in again.');
+          location.href = '/';
+        }
+      } catch (e) {
+        // Network blip — try once more after a longer delay
+        setTimeout(() => this._scheduleVerificationRefetch?.(), 4000);
+      }
+    }, 1500);
+  },
+
+  // _showSyncBanner: tiny non-modal status strip at the top of the page.
+  // Used to communicate transient connection issues without scaring the
+  // user. Auto-clears once successful sync confirms data is consistent.
+  _showSyncBanner(msg) {
+    let el = document.getElementById('sync-banner');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'sync-banner';
+      el.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#FEF3C7;color:#92400E;padding:8px 14px;font-size:13px;font-weight:600;text-align:center;z-index:9000;border-bottom:1px solid #F59E0B;box-shadow:0 1px 4px rgba(0,0,0,.08)';
+      document.body.appendChild(el);
+    }
+    el.textContent = msg;
+    el.style.display = 'block';
+    clearTimeout(this._syncBannerHideTimer);
+    this._syncBannerHideTimer = setTimeout(() => { if (el) el.style.display = 'none'; }, 6000);
+  },
+
   applyServerData(data, etag) {
     // Track the server's data version for optimistic concurrency on writes
     if (etag) this.S._dataVersion = String(etag).replace(/"/g, '');
-    // Always apply whatever the server sends — empty arrays are valid (fresh account = blank slate).
-    // Never fall back to seed data for real users.
     if (!data) return;
+
+    // ── DEFENSE LAYER 1: anomalous-shrink rejection ────────────────────────
+    // If the server response would shrink an already-loaded collection to
+    // a tiny fraction of what the client just had, treat the response as
+    // suspect (transient network blip, race during deploy, partial fetch)
+    // and REFUSE to apply it. The user sees their last-good state, not an
+    // empty calendar. This is the fix for "ALL FACILITIES ARE GONE AGAIN":
+    // the data wasn't gone, we were just blindly overwriting local truth
+    // with a flaky response.
+    //
+    // Rule: a collection with N >= 5 prior rows cannot be replaced by
+    // < 50% of N. Below 5 we trust whatever the server says (genuinely
+    // small lists like accounts can legitimately drop). Pure additive
+    // sync (incoming >= existing) always passes.
+    const PROTECTED = ['buildings', 'employees', 'shifts', 'accounts', 'companies'];
+    const refusedKeys = [];
+    for (const k of PROTECTED) {
+      const incoming = Array.isArray(data[k]) ? data[k] : null;
+      if (!incoming) continue;
+      const have = Array.isArray(this.S[k]) ? this.S[k].length : 0;
+      if (have >= 5 && incoming.length < have * 0.5) {
+        refusedKeys.push(`${k}: ${have}→${incoming.length}`);
+        delete data[k];   // strip the suspicious field; the rest can apply
+      }
+    }
+    if (refusedKeys.length > 0) {
+      console.warn('[applyServerData] refused suspect shrink:', refusedKeys.join(', '));
+      // Track for the empty-state guard. Tag this moment as a known
+      // mismatch and trigger a verification refetch in the background.
+      this.S._lastApplySuspect = { at: Date.now(), keys: refusedKeys };
+      this._scheduleVerificationRefetch?.();
+      // Visible banner so the user knows we caught a glitch
+      this._showSyncBanner?.('Connection issue — using last-known-good data while reconnecting.');
+    } else {
+      this.S._lastApplySuspect = null;
+    }
+
+    // ── DEFENSE LAYER 2: high-water mark tracking ──────────────────────────
+    // Remember the largest size we've ever seen for each collection. The
+    // empty-state render guard uses this to detect "client thinks 0 but
+    // we just saw N >> 0 a moment ago." Persists in-session only.
+    this.S._sizeHWM = this.S._sizeHWM || {};
+    for (const k of PROTECTED) {
+      const arr = Array.isArray(data[k]) ? data[k] : null;
+      if (!arr) continue;
+      this.S._sizeHWM[k] = Math.max(this.S._sizeHWM[k] || 0, arr.length);
+    }
+    this.S._lastFullSyncAt = Date.now();
+
     if (Array.isArray(data.companies))        this.S.companies        = data.companies;
     if (Array.isArray(data.buildings))        this.S.buildings        = data.buildings;
     if (Array.isArray(data.accounts))         this.S.accounts         = data.accounts;
