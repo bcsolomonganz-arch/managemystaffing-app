@@ -11630,11 +11630,34 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
 
     return `<div style="display:flex;height:calc(100vh - 64px)">
       <div style="width:340px;border-right:1.5px solid var(--g200);overflow-y:auto;background:#fff">
-        <div style="padding:14px 18px;border-bottom:1px solid var(--g200);font-size:14px;font-weight:800;color:var(--g900)">Messages</div>
+        <div style="padding:10px 14px 10px;border-bottom:1px solid var(--g200);display:flex;align-items:center;gap:8px">
+          <button onclick="App.backToMessagesList()" class="btn btn-ghost btn-sm" style="padding:4px 8px;color:var(--g600);font-size:12px;font-weight:700;display:inline-flex;align-items:center;gap:4px">
+            <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9 12L4 7l5-5"/></svg>
+            Back
+          </button>
+          <span style="font-size:14px;font-weight:800;color:var(--g900);margin-left:auto">Messages</span>
+          <button onclick="App.openNewDmPicker()" title="New message" aria-label="New message"
+            style="background:var(--green);color:#fff;border:none;width:26px;height:26px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M8 1v14M1 8h14"/></svg>
+          </button>
+        </div>
         ${list || '<div style="padding:30px 18px;color:var(--g600);font-size:13px">No conversations yet.</div>'}
       </div>
       <div style="flex:1;background:#fff">${pane}</div>
     </div>`;
+  },
+
+  // Return to the unified Messages overview (pinned groups + DM list)
+  // from inside an active DM thread. Clears the active-thread pointer and
+  // re-renders the Texts view.
+  backToMessagesList() {
+    this.S._activeThreadId = null;
+    this.S._activeThreadOtherId = null;
+    if (this.S.textsView) {
+      document.getElementById('main').innerHTML = this.renderTexts();
+    } else {
+      this.renderMain();
+    }
   },
 
   openThread(threadId, otherId) {
@@ -11944,12 +11967,26 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
 
   // Open the membership-management sidebar for a given group.
+  // Auto-expands the message composer so the panel acts like a group
+  // chat (textarea ready to type) — matches the "click → start typing"
+  // expectation for the unified Messages page.
   openTextGroupPanel(groupId) {
     this._ensureTextGroups();
     const group = (this.S.textGroups || []).find(g => g.id === groupId);
     if (!group) { this.showToast('Group not found','warn'); return; }
     this.S.textGroupModal = { groupId };
     this._renderTextGroupPanel();
+    setTimeout(() => {
+      const composer = document.getElementById('tg-msg-composer');
+      const toggle   = document.getElementById('tg-msg-toggle');
+      // Only auto-expand if the composer isn't already visible (re-renders
+      // from add/remove member preserve open state via _toggleGroupMessageComposer).
+      if (composer && toggle && composer.style.display === 'none') {
+        composer.style.display = 'block';
+        toggle.style.display = 'none';
+        document.getElementById('tg-msg-body')?.focus();
+      }
+    }, 50);
   },
 
   closeTextGroupPanel() {
@@ -12204,83 +12241,188 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
 
   renderTexts() {
-    const tab = (this.S.textsTab === 'direct') ? 'direct' : 'group';
-    const groupUnread = this._textsUnreadCount();
-    const dmUnread    = this._dmUnreadCount();
-    const tabBtn = (id, label, badge) => {
-      const active = (id === tab);
-      return `<button onclick="App.openTexts('${id}')" style="
-        padding:8px 16px;border:none;background:${active?'#fff':'transparent'};
-        border-bottom:${active?'3px solid var(--green)':'3px solid transparent'};
-        color:${active?'var(--g900)':'var(--g600)'};
-        font-weight:${active?'800':'600'};font-size:13px;cursor:pointer;
-        display:inline-flex;align-items:center;gap:6px">
-        ${label}
-        ${badge>0?`<span style="background:#D97706;color:#fff;font-size:10px;font-weight:700;padding:1px 7px;border-radius:99px">${badge}</span>`:''}
-      </button>`;
-    };
-    const tabsBar = `<div style="display:flex;border-bottom:1.5px solid var(--g200);background:var(--g50);padding:0 8px;margin:-20px -20px 16px -20px">
-      ${tabBtn('group',  'Group Messages', groupUnread)}
-      ${tabBtn('direct', 'Direct Messages', dmUnread)}
-    </div>`;
-
-    if (tab === 'direct') {
-      const dmInner = this.renderMessages();
-      return `<div style="padding:20px;max-width:1200px">
-        ${tabsBar}
-        <div style="margin:0 -20px">${dmInner}</div>
-      </div>`;
+    // If a DM thread is currently active, render the full chat view.
+    // Picking a thread sets _activeThreadId; the back button clears it.
+    if (this.S._activeThreadId) {
+      return this.renderMessages();
     }
 
-    const log = (this.S.alertLog || []).slice().sort((a,b) =>
-      new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime());
-    const fmtTime = iso => {
+    const u = this.S.user;
+    const myId = u?.id;
+    const dms = this.S.directMessages || [];
+    const dmUnread = this._dmUnreadCount();
+
+    // ── DM threads list (newest-first, with last message + unread count) ──
+    const threadsMap = new Map();
+    for (const m of dms) {
+      const otherId = m.fromId === myId ? m.toId : m.fromId;
+      if (!otherId) continue;
+      const t = threadsMap.get(m.threadId) || {
+        threadId: m.threadId, otherId, messages: [], lastAt: 0, unread: 0,
+      };
+      t.messages.push(m);
+      t.otherId = otherId; // keep last seen
+      const ms = new Date(m.sentAt).getTime();
+      if (ms > t.lastAt) t.lastAt = ms;
+      if (m.toId === myId && !m.readAt) t.unread++;
+      threadsMap.set(m.threadId, t);
+    }
+    const threads = [...threadsMap.values()].sort((a, b) => b.lastAt - a.lastAt);
+
+    const empById  = new Map((this.S.employees || []).map(e => [e.id, e]));
+    const acctById = new Map((this.S.accounts  || []).map(a => [a.id, a]));
+    const nameOf = id => {
+      const e = empById.get(id);  if (e) return { name: e.name, sub: groupLabel(e.group||''), color: G_COLORS[e.group] || 'var(--blue)' };
+      const a = acctById.get(id); if (a) return { name: a.name || a.email, sub: a.role || '', color: 'var(--blue)' };
+      return { name: 'Unknown', sub: '', color: 'var(--g400)' };
+    };
+    const fmtWhen = iso => {
       try {
         const d = new Date(iso);
-        return d.toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
-      } catch { return iso; }
+        const today = new Date().toISOString().slice(0,10);
+        if (d.toISOString().slice(0,10) === today) return d.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' });
+        return d.toLocaleDateString([], { month:'short', day:'numeric' });
+      } catch { return ''; }
     };
-    const items = log.length ? log.map(e => {
-      const smsRecipients   = (e.recipients?.sms   || []);
-      const emailRecipients = (e.recipients?.email || []);
-      const replyHtml = (e.replies && e.replies.length)
-        ? e.replies.map(r => `<div style="background:var(--green-l);border-left:3px solid var(--green);padding:8px 10px;border-radius:4px;margin-top:6px">
-            <div style="font-size:11px;font-weight:700;color:#047857">${sanitize(r.from || 'Unknown')}<span style="font-weight:500;color:var(--g500);margin-left:6px">${fmtTime(r.receivedAt)}</span></div>
-            <div style="font-size:13px;color:var(--g800);margin-top:2px">${sanitize(r.body || '')}</div>
-          </div>`).join('')
-        : `<div style="font-size:11px;color:var(--g500);margin-top:6px;font-style:italic">No replies yet · point your inbound SMS webhook at /api/sms/inbound to capture replies here</div>`;
-      const channelChips = `${e.channels?.sms ? `<span style="background:var(--blue-l);color:var(--blue-d);padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700">SMS · ${smsRecipients.length}</span>` : ''}
-        ${e.channels?.email ? `<span style="background:var(--g100);color:var(--g700);padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700">EMAIL · ${emailRecipients.length}</span>` : ''}`;
-      return `<div style="background:#fff;border:1.5px solid var(--g200);border-radius:10px;padding:14px 16px;margin-bottom:10px">
-        <div style="display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:8px">
-          <div style="flex:1;min-width:0">
-            <div style="font-size:13px;font-weight:700;color:var(--g900)">${sanitize(e.subject || 'Alert')}</div>
-            <div style="font-size:11px;color:var(--g500);margin-top:2px">
-              <span>${fmtTime(e.sentAt)}</span> · <span>by ${sanitize(e.sentBy)}</span> · <span>${sanitize((e.groups||[]).join(', ') || '—')}</span>
-            </div>
+
+    const dmRows = threads.map(t => {
+      const o = nameOf(t.otherId);
+      const last = t.messages.slice().sort((a,b) => new Date(a.sentAt) - new Date(b.sentAt)).pop();
+      const initials = (o.name || '?').split(' ').map(w => w[0] || '').join('').slice(0,2).toUpperCase();
+      const preview = (last.fromId === myId ? 'You: ' : '') + (last.body || '');
+      return `<div onclick="App.openThread('${t.threadId}','${t.otherId}')" style="display:flex;align-items:center;gap:12px;padding:13px 16px;cursor:pointer;border-bottom:1px solid var(--g100);background:#fff;transition:background .12s" onmouseover="this.style.background='var(--g50)'" onmouseout="this.style.background='#fff'">
+        <div style="width:42px;height:42px;border-radius:50%;background:${o.color};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0">${sanitize(initials)}</div>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px">
+            <div style="font-weight:${t.unread>0?'800':'700'};font-size:14px;color:var(--g900);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${sanitize(o.name)}</div>
+            <div style="font-size:11px;color:var(--g500);flex-shrink:0;font-weight:600">${fmtWhen(last.sentAt)}</div>
           </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap">${channelChips}</div>
+          <div style="font-size:12px;color:${t.unread>0?'var(--g800)':'var(--g600)'};font-weight:${t.unread>0?'600':'400'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px">${sanitize(preview.slice(0, 120))}${preview.length>120?'…':''}</div>
         </div>
-        <div style="font-size:13px;color:var(--g800);background:var(--g50);padding:10px 12px;border-radius:6px;white-space:pre-wrap;word-break:break-word">${sanitize(e.message)}</div>
-        ${replyHtml}
+        ${t.unread > 0 ? `<span style="background:var(--green);color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;flex-shrink:0">${t.unread}</span>` : ''}
       </div>`;
-    }).join('') : `<div style="padding:60px;text-align:center;color:var(--g600)">
-      <svg viewBox="0 0 48 48" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" style="margin:0 auto 14px;display:block;opacity:.3"><path d="M6 9h36v27H18l-9 9V9z"/></svg>
-      <div style="font-weight:700;font-size:14px;color:var(--g600)">No alerts sent yet</div>
-      <div style="font-size:12px;margin-top:6px">When you click "Send Alert" in the header, the message and any replies will show here.</div>
+    }).join('');
+
+    const dmEmpty = `<div style="padding:36px 20px;text-align:center;color:var(--g600);font-size:13px;background:#fff">
+      <svg viewBox="0 0 48 48" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" style="margin:0 auto 8px;display:block;opacity:.3"><path d="M6 9h36v27H18l-9 9V9z"/></svg>
+      <div style="font-weight:700;color:var(--g700)">No direct messages yet</div>
+      <div style="font-size:12px;margin-top:4px">Tap the <strong style="color:var(--green-d)">+ New Message</strong> button to start a conversation.</div>
     </div>`;
 
-    return `<div style="padding:20px;max-width:760px">
-      ${tabsBar}
-      ${this._renderPinnedTextGroupsBar()}
+    return `<div style="padding:20px;max-width:780px">
+
+      <!-- Header: title + new-message button + unread chip -->
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
-        <div>
-          <div style="font-size:20px;font-weight:800;color:var(--g900)">Group Messages</div>
-          <div style="font-size:13px;color:var(--g500);margin-top:2px">All SMS / email alerts sent from this facility · replies inbound to your Twilio/ACS number land here</div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="font-size:20px;font-weight:800;color:var(--g900)">Messages</div>
+          ${dmUnread > 0 ? `<span style="background:var(--green);color:#fff;font-size:11px;font-weight:700;padding:2px 9px;border-radius:99px">${dmUnread} unread</span>` : ''}
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="App.openNewDmPicker()" style="display:inline-flex;align-items:center;gap:6px;font-weight:700">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M8 1v14M1 8h14"/></svg>
+          New Message
+        </button>
+      </div>
+
+      <!-- Pinned groups (clickable cards open the group composer) -->
+      ${this._renderPinnedTextGroupsBar()}
+
+      <!-- Recent direct messages -->
+      <div style="margin-top:8px">
+        <div style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;display:flex;align-items:center;gap:6px">
+          <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 10a2 2 0 0 1-2 2H5l-3 3V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/></svg>
+          Direct Messages
+        </div>
+        <div style="background:#fff;border:1.5px solid var(--g200);border-radius:10px;overflow:hidden">
+          ${threads.length ? dmRows : dmEmpty}
         </div>
       </div>
-      ${items}
+
     </div>`;
+  },
+
+  // Picker shown when the "+ New Message" button is clicked. Lists every
+  // active employee + admin in the current building, with a search filter,
+  // so the user can pick someone and start a thread.
+  openNewDmPicker() {
+    const u = this.S.user;
+    const bId = this.S.activeBuildingId || u?.buildingId || 'b1';
+    const me  = u?.id;
+    // Combine employees and admin accounts at this building (exclude self,
+    // inactive employees, and demo accounts so the list isn't cluttered).
+    const employees = (this.S.employees || []).filter(e =>
+      !e.inactive && e.buildingId === bId && e.id !== me);
+    const accounts = (this.S.accounts || []).filter(a =>
+      a.id !== me && a.buildingId === bId &&
+      ['admin','hradmin','scheduler','superadmin','regionaladmin'].includes(a.role));
+    // De-dupe: an admin who's also an employee shows up once (employee record wins).
+    const empIds = new Set(employees.map(e => e.id));
+    const people = [
+      ...employees.map(e => ({ id: e.id, name: e.name, sub: groupLabel(e.group||''), color: G_COLORS[e.group] || 'var(--blue)', kind: 'employee' })),
+      ...accounts.filter(a => !empIds.has(a.id)).map(a => ({ id: a.id, name: a.name || a.email, sub: a.role || '', color: 'var(--blue)', kind: 'admin' })),
+    ].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    const row = p => {
+      const initials = (p.name || '?').split(' ').map(w => w[0] || '').join('').slice(0,2).toUpperCase();
+      return `<div data-pid="${sanitize(p.id)}" data-search="${sanitize((p.name+' '+p.sub).toLowerCase())}"
+        onclick="App._pickNewDmRecipient('${sanitize(p.id)}')"
+        style="display:flex;align-items:center;gap:12px;padding:11px 14px;cursor:pointer;border-bottom:1px solid var(--g100);background:#fff;transition:background .12s"
+        onmouseover="this.style.background='var(--g50)'" onmouseout="this.style.background='#fff'">
+        <div style="width:36px;height:36px;border-radius:50%;background:${p.color};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0">${sanitize(initials)}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:13px;color:var(--g900)">${sanitize(p.name)}</div>
+          <div style="font-size:11px;color:var(--g500);margin-top:1px">${sanitize(p.sub)}</div>
+        </div>
+        <span style="font-size:10px;color:${p.kind==='admin'?'var(--blue-d)':'var(--g500)'};font-weight:700;text-transform:uppercase;letter-spacing:.04em">${p.kind}</span>
+      </div>`;
+    };
+
+    document.getElementById('modal-new-dm')?.remove();
+    const div = document.createElement('div');
+    div.id = 'modal-new-dm';
+    div.className = 'modal-overlay open';
+    div.innerHTML = `<div class="modal" style="max-width:480px;max-height:85vh;display:flex;flex-direction:column">
+      <div class="modal-header">
+        <span class="modal-title">New Message</span>
+        <button class="modal-close" aria-label="Close" onclick="document.getElementById('modal-new-dm').remove()">✕</button>
+      </div>
+      <div style="padding:14px 18px;border-bottom:1px solid var(--g100);background:var(--g50);position:relative">
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="position:absolute;left:30px;top:50%;transform:translateY(-50%);color:var(--g500);pointer-events:none"><circle cx="7" cy="7" r="5"/><path d="M11 11l3 3"/></svg>
+        <input id="new-dm-search" type="search" placeholder="Search by name or role…" autocomplete="off"
+          oninput="App._filterNewDmPicker(this.value)"
+          style="width:100%;padding:9px 12px 9px 32px;border:1.5px solid var(--g200);border-radius:8px;font-size:13px;background:#fff;outline:none;transition:border-color .15s"
+          onfocus="this.style.borderColor='var(--blue-d)'" onblur="this.style.borderColor='var(--g200)'">
+      </div>
+      <div id="new-dm-list" style="overflow-y:auto;flex:1;background:#fff">
+        ${people.length ? people.map(row).join('')
+          : '<div style="padding:30px 18px;text-align:center;color:var(--g600);font-size:13px">No employees or admins to message in this building.</div>'}
+      </div>
+    </div>`;
+    document.body.appendChild(div);
+    setTimeout(() => document.getElementById('new-dm-search')?.focus(), 30);
+  },
+
+  _filterNewDmPicker(q) {
+    const tokens = String(q || '').toLowerCase().trim().split(/\s+/).filter(Boolean);
+    document.querySelectorAll('#new-dm-list [data-pid]').forEach(el => {
+      const hay = el.getAttribute('data-search') || '';
+      const match = !tokens.length || tokens.every(t => hay.includes(t));
+      el.style.display = match ? '' : 'none';
+    });
+  },
+
+  _pickNewDmRecipient(otherId) {
+    document.getElementById('modal-new-dm')?.remove();
+    // Compute the deterministic threadId the same way the server does
+    // (lib/punch.js dmThreadId): sort the two participant IDs and join
+    // with the "dm:" prefix. Stays in sync with the server so an existing
+    // thread reopens cleanly instead of starting a parallel one.
+    const myId = this.S.user?.id;
+    if (!myId || !otherId) return;
+    const [a, b] = [String(myId), String(otherId)].sort();
+    this.S._activeThreadId = 'dm:' + a + ':' + b;
+    this.S._activeThreadOtherId = otherId;
+    this.renderMain();
+    setTimeout(() => document.getElementById('dm-input')?.focus(), 60);
   },
 
   // ── ROSTER ──────────────────────────────────────────────────
