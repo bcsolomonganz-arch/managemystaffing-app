@@ -12321,6 +12321,16 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const active   = allEmps.filter(e => !e.inactive).sort(cmp);
     const inactive = allEmps.filter(e =>  e.inactive).sort(cmp);
 
+    // Build a per-row search haystack from the fields a user is most likely
+    // to type (name, email, phone, group, smartlinx position). Stuffed into
+    // a data-attribute so the live filter doesn't match the action buttons
+    // ("IDs", "Set PIN", "Inactivate", etc.) that share words with queries.
+    const haystackFor = e => {
+      const phoneDigits = String(e.phone || '').replace(/\D/g, '');
+      return [e.name, e.email, e.phone, phoneDigits, e.group, e.smartlinxPosition,
+              e.initials, groupLabel(e.group)]
+        .filter(Boolean).join(' ').toLowerCase();
+    };
     const empRow = (emp, isActive) => {
       const col = G_COLORS[emp.group] || 'var(--blue)';
       const termLog = (emp.terminationLog || []);
@@ -12433,7 +12443,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         ? `<span style="color:#DC2626;font-style:italic;font-weight:500" title="Add ${label} via Edit">— ${label} ${RED_STAR}</span>`
         : sanitize(val);
 
-      return `<tr class="${isActive?'':'inactive-row'}" id="roster-row-${emp.id}">
+      return `<tr class="${isActive?'':'inactive-row'} roster-staff-row" id="roster-row-${emp.id}" data-emp-id="${sanitize(emp.id)}" data-active="${isActive?'1':'0'}" data-haystack="${sanitize(haystackFor(emp))}">
         <td>
           <div style="display:flex;align-items:center;gap:10px">
             <div class="roster-row-avatar" style="background:${isActive?col:'var(--g300)'};cursor:pointer" title="View employee card" onclick="App.openEmployeeCard('${emp.id}')">${sanitize(emp.initials)}</div>
@@ -12478,8 +12488,9 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     // viewport and a scrollbar appears at the bottom of the card; when
     // it's wide enough, all columns fit naturally.
     const TABLE_MIN_W = 'min-width:1080px';   // accommodates all action buttons without wrapping
+    const initialQ = sanitize(this.S._rosterQuery || '');
     return `<div style="padding:20px;width:100%;max-width:none">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
         <div>
           <div style="font-size:20px;font-weight:800;color:var(--g900)">Staff Roster</div>
           <div style="font-size:13px;color:var(--g500);margin-top:2px">${sanitize(building?.name||'')} · ${active.length} active · ${inactive.length} inactive</div>
@@ -12490,35 +12501,88 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         </div>
       </div>
 
+      <!-- Search bar — filters Active + Inactive tables in place via dataset
+           haystacks (set on each row in empRow above) so we don't lose input
+           focus on every keystroke. -->
+      <div style="position:relative;margin-bottom:14px;max-width:520px">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--g500);pointer-events:none"><circle cx="7" cy="7" r="5"/><path d="M11 11l3 3"/></svg>
+        <input id="roster-search" type="search" placeholder="Search by name, email, phone, or position…"
+               value="${initialQ}" autocomplete="off" spellcheck="false"
+               oninput="App.filterRoster(this.value)" onkeydown="if(event.key==='Escape'){this.value='';App.filterRoster('')}"
+               style="width:100%;padding:9px 12px 9px 34px;border:1.5px solid var(--g200);border-radius:9px;font-size:14px;background:#fff;outline:none;transition:border-color .15s, box-shadow .15s"
+               onfocus="this.style.borderColor='var(--blue-d)';this.style.boxShadow='0 0 0 3px rgba(37,99,235,.12)'"
+               onblur="this.style.borderColor='var(--g200)';this.style.boxShadow='none'">
+        ${initialQ ? `<button onclick="document.getElementById('roster-search').value='';App.filterRoster('')" aria-label="Clear search" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:var(--g100);border:none;border-radius:99px;width:22px;height:22px;cursor:pointer;color:var(--g600);font-size:13px;line-height:1;display:flex;align-items:center;justify-content:center">✕</button>` : ''}
+      </div>
+
       <!-- ACTIVE -->
-      <div style="background:#fff;border:1.5px solid var(--g200);border-radius:12px;overflow:hidden;margin-bottom:16px">
+      <div id="roster-card-active" style="background:#fff;border:1.5px solid var(--g200);border-radius:12px;overflow:hidden;margin-bottom:16px">
         <div style="padding:12px 16px;background:var(--g50);border-bottom:1px solid var(--g200);display:flex;align-items:center;justify-content:space-between">
           <div style="font-size:13px;font-weight:800;color:var(--g900);text-transform:uppercase;letter-spacing:.06em">Active Staff</div>
-          <span class="tag-active">${active.length} employees</span>
+          <span class="tag-active" id="roster-active-count">${active.length} employees</span>
         </div>
         <div style="overflow-x:auto">
           <table class="roster-table" style="${TABLE_MIN_W}">
             <thead>${tableHdr}</thead>
-            <tbody>${activeRows || '<tr><td colspan="5" style="text-align:center;color:var(--g600);padding:20px">No active employees</td></tr>'}</tbody>
+            <tbody id="roster-active-tbody">${activeRows || '<tr><td colspan="5" style="text-align:center;color:var(--g600);padding:20px">No active employees</td></tr>'}</tbody>
           </table>
         </div>
+        <div id="roster-active-empty" style="display:none;padding:20px;text-align:center;color:var(--g600);font-size:13px">No active employees match your search.</div>
       </div>
 
       ${inactive.length ? `
       <!-- INACTIVE -->
-      <div style="background:#fff;border:1.5px solid var(--g200);border-radius:12px;overflow:hidden">
+      <div id="roster-card-inactive" style="background:#fff;border:1.5px solid var(--g200);border-radius:12px;overflow:hidden">
         <div style="padding:12px 16px;background:var(--g50);border-bottom:1px solid var(--g200);display:flex;align-items:center;justify-content:space-between">
           <div style="font-size:13px;font-weight:800;color:var(--g500);text-transform:uppercase;letter-spacing:.06em">Inactive / Former Staff</div>
-          <span class="tag-inactive">${inactive.length} employees</span>
+          <span class="tag-inactive" id="roster-inactive-count">${inactive.length} employees</span>
         </div>
         <div style="overflow-x:auto">
           <table class="roster-table" style="${TABLE_MIN_W}">
             <thead>${tableHdr}</thead>
-            <tbody>${inactiveRows}</tbody>
+            <tbody id="roster-inactive-tbody">${inactiveRows}</tbody>
           </table>
         </div>
+        <div id="roster-inactive-empty" style="display:none;padding:20px;text-align:center;color:var(--g600);font-size:13px">No inactive employees match your search.</div>
       </div>` : ''}
     </div>`;
+  },
+
+  // Filter the roster tables in-place. Reads each row's data-haystack
+  // attribute (built by haystackFor() in renderRoster) and toggles
+  // display: none on misses. Supports multi-word AND queries — typing
+  // "amy phys" matches a row containing both "amy" and "physical".
+  filterRoster(q) {
+    this.S._rosterQuery = q || '';
+    const tokens = String(q || '').toLowerCase().trim().split(/\s+/).filter(Boolean);
+    let activeShown = 0, inactiveShown = 0;
+    const rows = document.querySelectorAll('.roster-staff-row');
+    rows.forEach(r => {
+      const hay = (r.getAttribute('data-haystack') || '').toLowerCase();
+      const match = !tokens.length || tokens.every(t => hay.includes(t));
+      r.style.display = match ? '' : 'none';
+      if (match) {
+        if (r.getAttribute('data-active') === '1') activeShown++;
+        else                                       inactiveShown++;
+      }
+    });
+    const aBadge = document.getElementById('roster-active-count');
+    const iBadge = document.getElementById('roster-inactive-count');
+    if (aBadge) aBadge.textContent = activeShown + ' employee' + (activeShown===1?'':'s');
+    if (iBadge) iBadge.textContent = inactiveShown + ' employee' + (inactiveShown===1?'':'s');
+    // Show "no match" placeholder when a filter is active and 0 rows match
+    const aEmpty = document.getElementById('roster-active-empty');
+    const iEmpty = document.getElementById('roster-inactive-empty');
+    const aTbody = document.getElementById('roster-active-tbody');
+    const iTbody = document.getElementById('roster-inactive-tbody');
+    if (aEmpty && aTbody) aEmpty.style.display = (tokens.length && activeShown === 0) ? '' : 'none';
+    if (iEmpty && iTbody) iEmpty.style.display = (tokens.length && inactiveShown === 0) ? '' : 'none';
+    // Show/hide the clear-search ✕ button by re-painting the input wrapper
+    // (cheap and avoids a separate DOM query for the button).
+    const xBtn = document.querySelector('#roster-search ~ button[aria-label="Clear search"]');
+    // The button is conditionally rendered; if absent and now we have a
+    // query, just leave it absent — the next sort/refresh will render it.
+    // (Keeps this filter purely additive — no innerHTML rewrites.)
   },
 
   sortRoster(col) {
@@ -12531,12 +12595,19 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     }
     this.S._rosterSort = cur;
     document.getElementById('main').innerHTML = this.renderRoster();
+    // Re-apply the active search filter so a sort doesn't reveal hidden rows
+    if (this.S._rosterQuery) this.filterRoster(this.S._rosterQuery);
+    // After a sort the search input was just re-rendered — restore focus
+    // so users can keep typing without clicking back in.
+    const inp = document.getElementById('roster-search');
+    if (inp && document.activeElement && document.activeElement.tagName !== 'INPUT') inp.focus();
   },
 
   // ── Disciplinary actions ────────────────────────────────────────────────
   toggleDisciplineDropdown(empId) {
     this.S._disciplineExpanded = (this.S._disciplineExpanded === empId) ? null : empId;
     document.getElementById('main').innerHTML = this.renderRoster();
+    if (this.S._rosterQuery) this.filterRoster(this.S._rosterQuery);
   },
 
   addDisciplineNote(empId) {
@@ -12606,6 +12677,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     document.getElementById('modal-discipline')?.remove();
     this.showToast(`Disciplinary note added for ${emp.name}`);
     document.getElementById('main').innerHTML = this.renderRoster();
+    if (this.S._rosterQuery) this.filterRoster(this.S._rosterQuery);
   },
 
   removeDisciplineNote(empId, idx) {
@@ -12618,6 +12690,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     Audit.log('DISCIPLINARY_NOTE_REMOVED', `${removed?.type||'note'} (${emp.name})`, this.S.user?.id, 'high');
     this.showToast('Disciplinary note removed');
     document.getElementById('main').innerHTML = this.renderRoster();
+    if (this.S._rosterQuery) this.filterRoster(this.S._rosterQuery);
   },
 
   showInactivateForm(empId) {
@@ -14116,6 +14189,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     // ── ROSTER ───────────────────────────────────────────────
     if (this.S.rosterView) {
       document.getElementById('main').innerHTML = this.renderRoster();
+    if (this.S._rosterQuery) this.filterRoster(this.S._rosterQuery);
       return;
     }
 
