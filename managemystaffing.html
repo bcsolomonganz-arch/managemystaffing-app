@@ -6870,13 +6870,51 @@ const App = {
     const dateDisplay = new Date(date + 'T00:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
     const shiftDef = SHIFT_TYPES(g).find(s => s.type === shiftType) || {};
 
+    // Resolve the shift's effective start/end for the editor — fall back to
+    // the group's default shift type if the shift row itself has none yet
+    // (older shifts were created without explicit times).
+    const shiftStart = shift.start || shiftDef.start || '7:00 AM';
+    const shiftEnd   = shift.end   || shiftDef.end   || '3:00 PM';
+    const startInputVal = this._timeToInput(shiftStart);
+    const endInputVal   = this._timeToInput(shiftEnd);
+
     document.getElementById('modal-remove-shift-body').innerHTML = `
       <div style="padding-top:16px">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:12px 14px;background:var(--g50);border-radius:8px;border:1px solid var(--g100)">
           <div onclick="App.openEmployeeCard('${empId}')" title="View employee card" style="width:36px;height:36px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;cursor:pointer">${sanitize(emp.name.split(' ').map(w=>w[0]).join('').slice(0,2))}</div>
           <div>
             <div style="font-weight:700;font-size:13px;color:var(--g900)"><a href="#" onclick="event.preventDefault();App.openEmployeeCard('${empId}')" style="color:inherit;text-decoration:none;border-bottom:1px dotted transparent;transition:border-color .12s" onmouseover="this.style.borderBottomColor='var(--blue-d)'" onmouseout="this.style.borderBottomColor='transparent'">${sanitize(emp.name)}</a></div>
-            <div style="font-size:12px;color:var(--g500)">${shiftType} Shift · ${dateDisplay}</div>
+            <div style="font-size:12px;color:var(--g500)">${shiftType} Shift · ${dateDisplay} · <span id="shift-hours-display">${sanitize(shiftStart)}–${sanitize(shiftEnd)}</span></div>
+          </div>
+        </div>
+
+        <!-- ── Edit hours ─────────────────────────────────────────────────────
+             Lets the admin change this shift's start/end and apply either to
+             just this date or to every future occurrence of the same shift
+             for this employee. Mutates fields in place — does not change row
+             count, so /api/data POST is fine (no anti-shrink tripwire). -->
+        <div style="border:1px solid var(--g200);border-radius:8px;padding:12px 14px;margin-bottom:16px;background:#fff">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="var(--g600)" stroke-width="1.7" stroke-linecap="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 4v4l2.5 2"/></svg>
+            <span style="font-size:12px;font-weight:700;color:var(--g700)">Edit hours</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+            <label style="font-size:11px;color:var(--g600);font-weight:600">Start</label>
+            <input type="time" id="edit-shift-start" value="${startInputVal}" style="font-size:13px;padding:6px 8px;border:1.5px solid var(--g200);border-radius:6px">
+            <label style="font-size:11px;color:var(--g600);font-weight:600;margin-left:6px">End</label>
+            <input type="time" id="edit-shift-end" value="${endInputVal}" style="font-size:13px;padding:6px 8px;border:1.5px solid var(--g200);border-radius:6px">
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <button class="btn btn-secondary btn-sm" onclick="App.editShiftHours('${shiftId}','one')" style="justify-content:flex-start;text-align:left;color:var(--g800)">
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 8l3 3 9-9"/></svg>
+              Apply to ${new Date(date+'T00:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})} only
+              <span style="font-size:11px;color:var(--g500);margin-left:auto">This shift</span>
+            </button>
+            <button class="btn btn-secondary btn-sm" onclick="App.editShiftHours('${shiftId}','allFuture')" style="justify-content:flex-start;text-align:left;color:var(--g800)">
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 4h12M2 8h12M2 12h8M12 12l2 2 2-3"/></svg>
+              Apply to this and all future shifts
+              <span style="font-size:11px;color:var(--g500);margin-left:auto">Same emp · same shift type</span>
+            </button>
           </div>
         </div>
 
@@ -6933,6 +6971,78 @@ const App = {
         </div>
       </div>`;
     this.openModal('modal-remove-shift');
+  },
+
+  // Change a shift's start/end time. Two scopes:
+  //   scope='one'        — modify only this shift
+  //   scope='allFuture'  — modify this shift and every future shift with the
+  //                        same group + type + employee + buildingId (so
+  //                        future occurrences of the same employee's rotation
+  //                        also pick up the new hours, but other employees on
+  //                        the same shift type are not touched)
+  // Mutation only — never adds or removes rows — so /api/data POST is the
+  // right path here (no anti-shrink concern).
+  editShiftHours(shiftId, scope) {
+    const shift = (this.S.shifts || []).find(s => s.id === shiftId);
+    if (!shift) { this.showToast('Shift not found', 'warn'); return; }
+    const startEl = document.getElementById('edit-shift-start');
+    const endEl   = document.getElementById('edit-shift-end');
+    if (!startEl || !endEl) return;
+    const newStart = this._inputToTime(startEl.value);
+    const newEnd   = this._inputToTime(endEl.value);
+    if (!startEl.value || !endEl.value) { this.showToast('Pick a start and end time', 'warn'); return; }
+    if (newStart === shift.start && newEnd === shift.end) {
+      this.showToast('No change — start/end already match', 'warn');
+      return;
+    }
+
+    let updated = 0;
+    if (scope === 'allFuture') {
+      // Affect every future shift with same group+type+employee+building.
+      // Open (unassigned) future shifts in the same rotation slot do NOT
+      // share the same employeeId, so we match by buildingId+group+type for
+      // those, but only if the seed shift HAS an employeeId — otherwise we
+      // play it safe and limit to identical group+type+building+open shifts
+      // (admin can verify visually before persisting).
+      for (const s of this.S.shifts) {
+        if (s.buildingId !== shift.buildingId) continue;
+        if (s.group     !== shift.group)      continue;
+        if (s.type      !== shift.type)       continue;
+        if (s.date      <  shift.date)        continue;
+        // For employee-bound rotation: only touch this employee's future
+        // slots. For unassigned (open) shifts: leave them alone unless the
+        // admin explicitly removes/recreates — too risky to mass-mutate
+        // future open slots that might belong to a different rotation.
+        if (shift.employeeId) {
+          if (s.employeeId !== shift.employeeId) continue;
+        } else {
+          if (s.employeeId) continue;          // skip filled future slots
+        }
+        s.start = newStart;
+        s.end   = newEnd;
+        updated++;
+      }
+    } else {
+      shift.start = newStart;
+      shift.end   = newEnd;
+      updated = 1;
+    }
+
+    const empName = shift.employeeId
+      ? (this.S.employees.find(e => e.id === shift.employeeId)?.name || '')
+      : 'open slot';
+    this._pushUndo(`Edited hours on ${updated} shift${updated===1?'':'s'}`, ['shifts']);
+    this.logAudit('SHIFT_HOURS_EDITED',
+      `Hours changed to ${newStart}–${newEnd} on ${updated} ${shift.type} ${shift.group} shift${updated===1?'':'s'} (${scope==='allFuture'?'all future for '+empName:'this shift only'})`);
+    this.persistData();
+    // Update the in-modal display so the user sees the new hours without
+    // closing/reopening the modal.
+    const disp = document.getElementById('shift-hours-display');
+    if (disp) disp.textContent = `${newStart}–${newEnd}`;
+    this.renderMain();
+    this.showToast(scope === 'allFuture'
+      ? `Hours updated on ${updated} shift${updated===1?'':'s'} (${newStart}–${newEnd})`
+      : `Hours updated to ${newStart}–${newEnd}`);
   },
 
   removeFromDay(shiftId, date, empId) {
