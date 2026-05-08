@@ -223,7 +223,12 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .cal-cell.today .cal-date{background:var(--blue);color:#fff;border-radius:50%}
 .cal-cell.other-month .cal-date{color:var(--g300)}
 .cal-cell.selected{background:var(--blue-l);outline:2px solid var(--blue-m);outline-offset:-1px}
-.cal-cell.has-open{background:linear-gradient(to bottom,#fff 55%,var(--blue-l))}
+/* Light yellow tint on cells that have open (unfilled) coverage so admins
+   can scan the calendar and instantly spot gaps. Not aggressive — meant to
+   stand out on a glance, not dominate. Uses the same shade as the open-
+   shift pill border for visual consistency. */
+.cal-cell.has-open{background:#FFFBEA}
+.cal-cell.has-open:hover{background:#FFF6D0}
 /* Month banner inside calendar */
 .cal-month-banner{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--g200);background:var(--g50)}
 .cal-month-title{font-size:16px;font-weight:800;color:var(--g900)}
@@ -240,7 +245,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .week14-cell:nth-child(7n){border-right:none}
 .week14-cell:hover{background:var(--g50)}
 .week14-cell.today{background:var(--blue-l)}
-.week14-cell.has-open{background:linear-gradient(to bottom,#fff 50%,var(--blue-l))}
+.week14-cell.has-open{background:#FFFBEA}
 .week14-cell.selected{background:var(--blue-l);outline:2px solid var(--blue-m);outline-offset:-1px}
 .week14-date{font-size:12px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px}
 .week14-cell.today .week14-date{color:var(--blue-d)}
@@ -15830,6 +15835,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
 
       const bId = this.S.user?.buildingId || 'b1';
       let content = '';
+      // Track whether ANY OPEN tag (real or virtual) shows on this cell so
+      // the cell-highlight follows the visual state, not just the row count.
+      // Without this, a cell with 5 visual OPEN placeholders driven by the
+      // staffing requirement wouldn't get the yellow tint, even though the
+      // admin clearly sees uncovered slots.
+      let cellHasOpenDisplayed = open.length > 0;
       if (g) {
         const ag       = getActualGroups(g);
         const shiftDefs = SHIFT_TYPES(g);
@@ -15844,6 +15855,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           const numFilled = scheduled.length;
           const numEmpty  = hasReqs ? Math.max(0, req - numFilled) : allSlots.filter(s=>s.status==='open').length;
           const total     = hasReqs ? req : (numFilled + numEmpty);
+          if (numEmpty > 0) cellHasOpenDisplayed = true;
 
           // skip in open-only filter if no empty slots
           if (filter === 'open' && numEmpty === 0 && total > 0) return;
@@ -15892,7 +15904,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           ${open.length?`<div class="cal-chip open"><svg viewBox="0 0 10 10" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="5" r="4"/><line x1="5" y1="3.5" x2="5" y2="5.5"/><circle cx="5" cy="7" r=".5" fill="currentColor"/></svg> ${open.length}</div>`:''}
         </div>`;
       }
-      cells += `<div class="cal-cell ${isToday?'today':''} ${isSel?'selected':''} ${open.length&&!isSel?'has-open':''}" onclick="App.selectDay('${ds}')">
+      cells += `<div class="cal-cell ${isToday?'today':''} ${isSel?'selected':''} ${cellHasOpenDisplayed&&!isSel?'has-open':''}" onclick="App.selectDay('${ds}')">
         <div class="cal-date">${d}</div>${content}</div>`;
     }
     const total = Math.ceil((firstDay+daysInMonth)/7)*7;
