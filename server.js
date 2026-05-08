@@ -2588,6 +2588,98 @@ app.post('/api/admin/snapshots', requireAuth, requireSuperAdmin, async (req, res
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /api/admin/inspect-disk — superadmin-only directory dump for recovery
+// Lists every file in SECURE_DIR and BACKUP_DIR, plus tries to decrypt
+// each .json/.json.tmp/.json.bak we find and returns row counts. Read-only;
+// safe to call repeatedly. Supplements the snapshots endpoint by surfacing
+// .tmp / .bak / stray copies that aren't tracked by the snapshot system.
+app.get('/api/admin/inspect-disk', requireAuth, requireSuperAdmin, async (req, res) => {
+  const out = {
+    config: {
+      IS_AZURE,
+      SECURE_DIR,
+      DATA_FILE,
+      BACKUP_DIR,
+      _useDB,
+      hasDataKey: !!process.env.DATA_ENCRYPTION_KEY,
+    },
+    secureDir: [],
+    backupDir: [],
+    home: [],
+  };
+  const fsSync2 = require('fs');
+  const cryptoLib = require('crypto');
+  const dataKey = process.env.DATA_ENCRYPTION_KEY;
+  function probe(filePath) {
+    try {
+      const raw = fsSync2.readFileSync(filePath, 'utf8');
+      if (!raw || raw[0] !== '{') return { error: 'not JSON' };
+      const obj = JSON.parse(raw);
+      let data;
+      let isEnc = false;
+      if (obj.iv && obj.data && obj.authTag) {
+        if (!dataKey) return { encrypted: true, error: 'no data key' };
+        isEnc = true;
+        const key = Buffer.from(dataKey, 'hex');
+        const iv  = Buffer.from(obj.iv, 'hex');
+        const tag = Buffer.from(obj.authTag, 'hex');
+        const dec = cryptoLib.createDecipheriv('aes-256-gcm', key, iv);
+        dec.setAuthTag(tag);
+        const buf = Buffer.concat([dec.update(Buffer.from(obj.data, 'hex')), dec.final()]);
+        data = JSON.parse(buf.toString());
+      } else {
+        data = obj;
+      }
+      return {
+        encrypted: isEnc,
+        buildings: (data.buildings || []).length,
+        employees: (data.employees || []).length,
+        shifts:    (data.shifts    || []).length,
+        accounts:  (data.accounts  || []).length,
+        companies: (data.companies || []).length,
+        firstBuildingNames: (data.buildings || []).slice(0, 8).map(b => b.name),
+      };
+    } catch (e) { return { error: e.message }; }
+  }
+  function scanDir(dir) {
+    const list = [];
+    if (!fsSync2.existsSync(dir)) return list;
+    for (const name of fsSync2.readdirSync(dir)) {
+      const fp = require('path').join(dir, name);
+      let st;
+      try { st = fsSync2.statSync(fp); } catch (e) { list.push({ name, error: e.message }); continue; }
+      const entry = {
+        name,
+        sizeKB: +(st.size / 1024).toFixed(1),
+        mtime: st.mtime.toISOString(),
+        isDir: st.isDirectory(),
+      };
+      if (!st.isDirectory() && /\.json(\.tmp|\.bak)?$/.test(name)) {
+        entry.probe = probe(fp);
+      }
+      list.push(entry);
+    }
+    return list;
+  }
+  out.secureDir = scanDir(SECURE_DIR);
+  out.backupDir = scanDir(BACKUP_DIR);
+  // /home top-level scan for any mc-*/mms-*/.bak/backup files
+  if (fsSync2.existsSync('/home')) {
+    try {
+      out.home = fsSync2.readdirSync('/home')
+        .filter(n => /^(mc-|mms-)|backup|\.bak$/i.test(n))
+        .map(n => {
+          const fp = '/home/' + n;
+          try {
+            const st = fsSync2.statSync(fp);
+            return { name: n, sizeKB: +(st.size/1024).toFixed(1), mtime: st.mtime.toISOString(), isDir: st.isDirectory() };
+          } catch (e) { return { name: n, error: e.message }; }
+        });
+    } catch (e) { out.home = [{ error: e.message }]; }
+  }
+  res.json(out);
+});
+
 app.post('/api/admin/snapshots/restore', requireAuth, requireSuperAdmin, async (req, res) => {
   if (_useDB) return res.status(400).json({ error: 'Restore disabled in Postgres mode (use DB PITR)' });
   const filename = String(req.body?.filename || '');
