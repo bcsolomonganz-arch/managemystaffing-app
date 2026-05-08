@@ -6470,22 +6470,53 @@ const App = {
       if (have < slotsPerDay) datesWithFewerOpen++;
     }
 
-    const before = this.S.shifts.length;
-    this.S.shifts = this.S.shifts.filter(s => !idsToDrop.has(s.id));
-    const removedCount = before - this.S.shifts.length;
+    if (idsToDrop.size === 0) {
+      this.closeModal('modal-add-shifts');
+      this.showToast('No open shifts matched the selected days', 'warn');
+      return;
+    }
 
-    Audit.log('SHIFTS_REMOVED', `Removed ${removedCount} open ${shiftType} ${g} shifts (${slotsPerDay} per day)`, this.S.user?.id, 'medium');
-    this.persistData();
-    this.closeModal('modal-add-shifts');
-    this.renderMain();
-    let msg = `${removedCount} open shift${removedCount===1?'':'s'} removed (${slotsPerDay}/day)`;
-    if (datesWithFewerOpen > 0) {
-      msg += ` · ${datesWithFewerOpen} day${datesWithFewerOpen===1?'':'s'} had fewer than ${slotsPerDay} open slot${slotsPerDay===1?'':'s'} available`;
-    }
-    if (assignedSkipped > 0) {
-      msg += ` · ${assignedSkipped} already-assigned shift${assignedSkipped===1?'':'s'} kept`;
-    }
-    this.showToast(msg);
+    // Send through the explicit batch DELETE endpoint. /api/data POST is
+    // upsert-only and would 409 with the anti-shrink tripwire on any
+    // payload that loses rows. The server also tags removedDates on the
+    // matching schedule patterns so the rotation extender doesn't bring
+    // these back on the next calendar advance.
+    (async () => {
+      try {
+        const r = await fetch('/api/shifts/delete-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: Array.from(idsToDrop) }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          this.showToast(d.error || `Bulk remove failed (HTTP ${r.status})`, 'warn');
+          return;
+        }
+        // Re-pull canonical state so the calendar matches the server.
+        try {
+          const dResp = await fetch('/api/data');
+          if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
+          else this.S.shifts = this.S.shifts.filter(s => !idsToDrop.has(s.id));
+        } catch {
+          this.S.shifts = this.S.shifts.filter(s => !idsToDrop.has(s.id));
+        }
+        const removedCount = d.removed != null ? d.removed : idsToDrop.size;
+        Audit.log('SHIFTS_REMOVED', `Removed ${removedCount} open ${shiftType} ${g} shifts (${slotsPerDay} per day)`, this.S.user?.id, 'medium');
+        this.closeModal('modal-add-shifts');
+        this.renderMain();
+        let msg = `${removedCount} open shift${removedCount===1?'':'s'} removed (${slotsPerDay}/day)`;
+        if (datesWithFewerOpen > 0) {
+          msg += ` · ${datesWithFewerOpen} day${datesWithFewerOpen===1?'':'s'} had fewer than ${slotsPerDay} open slot${slotsPerDay===1?'':'s'} available`;
+        }
+        if (assignedSkipped > 0) {
+          msg += ` · ${assignedSkipped} already-assigned shift${assignedSkipped===1?'':'s'} kept`;
+        }
+        this.showToast(msg);
+      } catch (e) {
+        this.showToast('Network error — try again', 'warn');
+      }
+    })();
   },
 
   // Submit dispatcher for the shared modal — picks add vs remove based on mode.

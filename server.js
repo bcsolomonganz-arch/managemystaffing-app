@@ -4588,9 +4588,13 @@ app.delete('/api/shifts/:id', requireAuth, requireAdmin, async (req, res) => {
 
 // POST /api/shifts/delete-batch — drop many shifts at once by id.
 // Body: { ids: ['shift_a', 'shift_b', ...] }
-// Used by the right-click "Remove all <DOW>s" path so we don't have to make
-// dozens of round-trips. Authz scoped per shift: any out-of-scope id silently
-// skipped (rather than 403'ing the whole batch).
+// Used by the bulk "Remove Shifts" toolbar modal and any other multi-shift
+// removal flow, so we avoid dozens of round-trips. Authz scoped per shift:
+// any out-of-scope id is silently skipped (rather than 403'ing the whole
+// batch). Mirrors DELETE /api/shifts/:id by also tagging each deleted
+// shift's date onto every matching schedule pattern's removedDates list,
+// so the client-side rotation extender (_extendRotationsThrough) doesn't
+// regenerate them on the next calendar advance.
 app.post('/api/shifts/delete-batch', requireAuth, requireAdmin, async (req, res) => {
   const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids : null;
   if (!ids || ids.length === 0) return res.status(400).json({ error: 'ids array required' });
@@ -4607,6 +4611,32 @@ app.post('/api/shifts/delete-batch', requireAuth, requireAdmin, async (req, res)
   const before = data.shifts.length;
   data.shifts = data.shifts.filter(s => !allowedIds.has(s.id));
   const removed = before - data.shifts.length;
+
+  // Tag removedDates on matching schedule patterns so the rotation extender
+  // doesn't bring back what we just removed. Same matching rules as the
+  // single-shift DELETE handler — group + shiftType + buildingId, plus
+  // employeeId for filled shifts (or no empId for open shifts).
+  let patternsTouched = 0;
+  if (Array.isArray(data.schedulePatterns)) {
+    for (const s of allowed) {
+      for (const p of data.schedulePatterns) {
+        if (p.group !== s.group) continue;
+        if (p.shiftType !== s.type) continue;
+        if (p.buildingId !== s.buildingId) continue;
+        if (s.employeeId) {
+          if (p.empId !== s.employeeId) continue;
+        } else {
+          if (p.empId) continue;
+        }
+        if (!Array.isArray(p.removedDates)) p.removedDates = [];
+        if (!p.removedDates.includes(s.date)) {
+          p.removedDates.push(s.date);
+          patternsTouched++;
+        }
+      }
+    }
+  }
+
   // Push notify any assigned employees whose shifts disappeared. Fire-and-
   // forget — don't block the response on push delivery.
   for (const s of allowed) {
@@ -4624,8 +4654,9 @@ app.post('/api/shifts/delete-batch', requireAuth, requireAdmin, async (req, res)
     matchedCount:   targets.length,
     removedCount:   removed,
     skippedAuthz,
+    patternsTouched,
   });
-  res.json({ ok: true, removed, skippedAuthz, notFound: ids.length - targets.length });
+  res.json({ ok: true, removed, skippedAuthz, notFound: ids.length - targets.length, patternsTouched });
 });
 
 // POST /api/shifts/trade — employee submits a trade request
