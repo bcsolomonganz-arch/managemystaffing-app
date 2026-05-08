@@ -4524,10 +4524,18 @@ app.post('/api/shifts/:id/end-rotation', requireAuth, requireAdmin, async (req, 
 });
 
 // DELETE /api/shifts/:id — remove a single shift slot entirely.
-// Used by the right-click context menu on the calendar. Distinct from
-// /unassign (which keeps the slot and just opens it up); this drops the
-// row entirely, which /api/data POST cannot do because of the anti-shrink
-// tripwire. Authz: superadmin always, admin only for their own building(s).
+// Used by the ✕ icon on the calendar shift modal. Distinct from /unassign
+// (which keeps the slot and just opens it up); this drops the row entirely,
+// which /api/data POST cannot do because of the anti-shrink tripwire.
+//
+// IMPORTANT: also records the deleted date on every matching schedule
+// pattern's `removedDates` list so the client-side rotation extender
+// (_extendRotationsThrough) skips that date on future runs. Without this,
+// signing out and back in re-creates the deleted shift via rotation
+// regeneration — exactly the bug reported on 2026-05-08 ("I deleted the
+// double Monday shift, signed back in, the shifts were back").
+//
+// Authz: superadmin always, admin only for their own building(s).
 app.delete('/api/shifts/:id', requireAuth, requireAdmin, async (req, res) => {
   const data = await loadData();
   const idx = (data.shifts || []).findIndex(s => s.id === req.params.id);
@@ -4535,10 +4543,35 @@ app.delete('/api/shifts/:id', requireAuth, requireAdmin, async (req, res) => {
   const shift = data.shifts[idx];
   if (!_shiftAdminAuthorized(req.user, shift)) return res.status(403).json({ error: 'Out of scope' });
   data.shifts.splice(idx, 1);
+
+  // Record the date as removed on any rotation pattern that would otherwise
+  // regenerate this shift. We match BOTH the open and assign cases.
+  let patternsTouched = 0;
+  if (Array.isArray(data.schedulePatterns)) {
+    for (const p of data.schedulePatterns) {
+      if (p.group !== shift.group) continue;
+      if (p.shiftType !== shift.type) continue;
+      if (p.buildingId !== shift.buildingId) continue;
+      // For filled shifts: only the matching employee's pattern.
+      // For open shifts: only patterns without an empId.
+      if (shift.employeeId) {
+        if (p.empId !== shift.employeeId) continue;
+      } else {
+        if (p.empId) continue;
+      }
+      if (!Array.isArray(p.removedDates)) p.removedDates = [];
+      if (!p.removedDates.includes(shift.date)) {
+        p.removedDates.push(shift.date);
+        patternsTouched++;
+      }
+    }
+  }
+
   markDirty();
   auditLog('SHIFT_DELETED', req.user, {
     shiftId: shift.id, date: shift.date, type: shift.type, group: shift.group,
     buildingId: shift.buildingId, hadEmployee: !!shift.employeeId,
+    patternsTouched,
   });
   // If the slot had an assigned employee, send them a heads-up push so they
   // see the schedule change instead of finding out at clock-in.
@@ -4550,7 +4583,7 @@ app.delete('/api/shifts/:id', requireAuth, requireAdmin, async (req, res) => {
       url: '/app',
     }).catch(() => {});
   }
-  res.json({ ok: true, shift });
+  res.json({ ok: true, shift, patternsTouched });
 });
 
 // POST /api/shifts/delete-batch — drop many shifts at once by id.

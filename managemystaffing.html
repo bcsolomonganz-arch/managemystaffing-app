@@ -16251,6 +16251,11 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         const diff = Math.round((cur - pickerStart) / 86400000);
         const cyclePos = ((diff % cycleLen) + cycleLen) % cycleLen;
         if (!pat.selectedDays.includes(cyclePos)) continue;
+        // Skip dates the admin has explicitly removed for this rotation.
+        // Without this guard, deleting a single shift via the ✕ icon would
+        // be undone the next time the calendar advances — the extender would
+        // see a "missing" rotation day and regenerate it.
+        if (Array.isArray(pat.removedDates) && pat.removedDates.includes(ds)) continue;
 
         if (kind === 'assign') {
           // Assign-rotation: skip if this employee already on this date/shift
