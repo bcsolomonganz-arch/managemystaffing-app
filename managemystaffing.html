@@ -5893,22 +5893,23 @@ const App = {
     if (titleEl)  titleEl.innerHTML = isRemove
       ? `<svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px;color:var(--red)"><rect x="2" y="3" width="16" height="14" rx="1.5"/><path d="M2 7h16M6 3v4M14 3v4M6 12h8"/></svg>Remove Shifts`
       : `<svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="vertical-align:-2px;margin-right:6px;color:var(--blue-d)"><rect x="2" y="3" width="16" height="14" rx="1.5"/><path d="M2 7h16M6 3v4M14 3v4M10 10v5M7.5 12.5h5"/></svg>Add Shifts`;
-    // Banner copy. In remove mode, also show the active staffing requirement
-    // so the admin understands why "OPEN" tags persist on the calendar even
-    // after a delete — those tags are virtual placeholders driven by this
-    // requirement, not by stored shift rows. Lowering the requirement is a
-    // separate flow (Manage Shifts toolbar button).
+    // Banner copy. In remove mode, also surface the building's current
+    // staffing requirement for the picked shift type — Remove Shifts now
+    // ALSO decrements that requirement by the chosen slotsPerDay so the
+    // OPEN tags on the calendar actually go down (they're computed as
+    // max(0, requirement - filled), not from stored open rows).
     if (bannerEl) {
       if (isRemove) {
         const slotReqsAll = this.getSlotReqs(st.buildingId, g) || {};
+        const curReq = slotReqsAll[st.shiftType] || 0;
         const reqLine = Object.entries(slotReqsAll)
           .filter(([, n]) => n > 0)
           .map(([t, n]) => `${n} ${t}`)
           .join(' · ');
         const reqNote = reqLine
-          ? ` · This building requires ${reqLine} for ${g} per day — those "OPEN" tags persist until you lower the requirement (Manage Shifts).`
+          ? ` Current ${g} requirement: ${reqLine}/day. Removing ${st.slots || 1} ${st.shiftType}/day will lower that to ${Math.max(0, curReq - (st.slots || 1))} ${st.shiftType}/day.`
           : '';
-        bannerEl.textContent = 'Pick the shift type and the days in the rotation to remove. By default only OPEN (unassigned) shift rows in the next 90 days are deleted; tick "Also remove assigned" to include filled ones.' + reqNote;
+        bannerEl.textContent = 'Pick the shift type and days, then how many slots/day to remove. Open shifts are deleted, the staffing requirement is lowered to match, and (with the toggle) assigned shifts can be unscheduled too.' + reqNote;
       } else {
         bannerEl.textContent = 'Choose a shift type, how many slots are needed each day, then select which days repeat every two weeks.';
       }
@@ -6546,42 +6547,56 @@ const App = {
           this.S.shifts = this.S.shifts.filter(s => !idsToDrop.has(s.id));
         }
         const removedCount = d.removed != null ? d.removed : idsToDrop.size;
+
+        // ── Also lower the building's staffing requirement ────────────────
+        // The OPEN tags on the calendar are computed as
+        // max(0, requirement - filled), not from the count of stored open
+        // rows. So deleting open rows alone produces zero visible change
+        // when a requirement is set. To match the admin's mental model
+        // ("remove N slots/day means the calendar should show N fewer
+        // OPENs"), also decrement the requirement by slotsPerDay.
+        // Caps at 0 so a requirement never goes negative. Skipped only if
+        // there's no requirement to begin with.
+        const slots = this.S.staffingSlots = this.S.staffingSlots || {};
+        slots[bId] = slots[bId] || {};
+        slots[bId][g] = slots[bId][g] || {};
+        const reqBefore = slots[bId][g][shiftType] || 0;
+        const reqAfter  = Math.max(0, reqBefore - slotsPerDay);
+        const reqChanged = reqAfter !== reqBefore;
+        if (reqChanged) {
+          slots[bId][g][shiftType] = reqAfter;
+          // Persist the slotReq change separately — this is purely a local
+          // state edit that won't conflict with the server-side delete just
+          // performed (different collections).
+          this.persistData();
+        }
+
         Audit.log('SHIFTS_REMOVED',
-          `Removed ${removedCount} ${includeAssigned?'':'open '}${shiftType} ${g} shifts (${slotsPerDay} per day${includeAssigned?', incl assigned':''})`,
+          `Removed ${removedCount} ${includeAssigned?'':'open '}${shiftType} ${g} shifts (${slotsPerDay} per day${includeAssigned?', incl assigned':''})${reqChanged?'; requirement '+reqBefore+'→'+reqAfter:''}`,
           this.S.user?.id, includeAssigned ? 'high' : 'medium');
         this.closeModal('modal-add-shifts');
         this.renderMain();
 
-        // Detect the "0 removed but the calendar still shows OPEN tags"
-        // confusion — the OPEN tags are virtual placeholders driven by the
-        // building's staffing requirement, not by stored shift rows. Spell
-        // that out instead of just saying "0 removed."
-        const slotReq = (this.getSlotReqs(bId, g) || {})[shiftType] || 0;
+        // Build success toast. Lead with the visible result the admin
+        // cares about: the staffing requirement change (which makes the
+        // OPEN tags disappear) and the actual rows removed.
         let msg;
-        if (removedCount === 0 && slotReq > 0) {
-          msg = `0 actual shift rows matched. Note: the OPEN tags you see ` +
-                `come from this building's staffing requirement (${slotReq} ` +
-                `${shiftType} ${g} per day). To remove those, lower the ` +
-                `requirement via the "Manage Shifts" toolbar button.`;
-          this.showToast(msg, 'warn');
-          return;
+        if (reqChanged) {
+          msg = `Required ${shiftType} slots: ${reqBefore} → ${reqAfter}/day`;
+          if (removedCount > 0) {
+            msg += ` · ${removedCount} ${includeAssigned?'':'open '}shift row${removedCount===1?'':'s'} also removed`;
+          }
+        } else {
+          msg = `${removedCount} ${includeAssigned?'':'open '}shift${removedCount===1?'':'s'} removed (${slotsPerDay}/day)`;
+          if (reqBefore === 0 && removedCount === 0) {
+            msg = 'Nothing to remove — no open shifts and no staffing requirement set for this group/type.';
+          }
         }
-        msg = `${removedCount} ${includeAssigned?'':'open '}shift${removedCount===1?'':'s'} removed (${slotsPerDay}/day)`;
         if (includeAssigned && assignedDeleted > 0) {
           msg += ` · ${assignedDeleted} assigned shift${assignedDeleted===1?'':'s'} unscheduled`;
         }
-        if (datesWithFewerOpen > 0) {
-          msg += ` · ${datesWithFewerOpen} day${datesWithFewerOpen===1?'':'s'} had fewer than ${slotsPerDay} matching slot${slotsPerDay===1?'':'s'}`;
-        }
         if (!includeAssigned && assignedSkipped > 0) {
-          msg += ` · ${assignedSkipped} already-assigned shift${assignedSkipped===1?'':'s'} kept (tick "Also remove assigned" to include)`;
-        }
-        // Also mention slot req if the user removed some but the calendar
-        // will STILL show OPEN placeholders because the requirement is
-        // higher than what's now scheduled. Helps avoid the same confusion
-        // on the next round.
-        if (slotReq > 0) {
-          msg += ` · Note: ${slotReq} ${shiftType} slot${slotReq===1?'':'s'}/day required for ${g} — virtual OPEN tags will continue to show until you lower the requirement.`;
+          msg += ` · ${assignedSkipped} already-assigned kept (tick "Also remove assigned" to include)`;
         }
         this.showToast(msg);
       } catch (e) {
