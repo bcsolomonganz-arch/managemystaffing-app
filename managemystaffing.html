@@ -7008,9 +7008,13 @@ const App = {
     // tell the admin exactly what they're about to remove.
     const futureCount = this._countShiftsByDOW(dateStr, group, shiftType);
 
-    // Build menu HTML. Use single-quote-safe JSON-escaped args via String.
-    // Args are short ids — no XSS surface — but defensive escape via JSON.
-    const a = (s) => JSON.stringify(String(s || ''));
+    // Build menu HTML. Args are stringified into single-quoted JS literals
+    // (via _attrJs) so they fit safely inside a double-quoted HTML attribute
+    // — JSON.stringify would emit double quotes that conflict with the
+    // attribute delimiter. Args are short ids with no XSS surface, but
+    // _attrJs still escapes single quotes / backslashes / HTML special chars
+    // defensively.
+    const a = (s) => this._attrJs(s);
     menu.innerHTML = `
       <div class="ctx-header">${this._escapeHtml(group || '')} · ${this._escapeHtml(shiftType || 'Shift')} · ${dateDisplay}</div>
       <button class="ctx-item destructive" role="menuitem"
@@ -7152,6 +7156,18 @@ const App = {
     return String(s == null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  },
+  // Stringify a JS value into a single-quoted JS literal that's also safe to
+  // sit inside a double-quoted HTML attribute. JSON.stringify can't be used
+  // here because it emits double quotes which collide with attribute delims.
+  // Backslash and single-quote get escaped; ' is encoded as &#39; so the
+  // double-quoted attribute parses cleanly, then the JS literal sees a real
+  // single quote when it's evaluated.
+  _attrJs(s) {
+    const str = String(s == null ? '' : s)
+      .replace(/\\/g, '\\\\')
+      .replace(/'/g, "\\'");
+    return `'${str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}'`;
   },
 
   assignCoverEmployee(shiftId, empId) {
