@@ -4523,6 +4523,78 @@ app.post('/api/shifts/:id/end-rotation', requireAuth, requireAdmin, async (req, 
   res.json({ ok: true, count });
 });
 
+// DELETE /api/shifts/:id — remove a single shift slot entirely.
+// Used by the right-click context menu on the calendar. Distinct from
+// /unassign (which keeps the slot and just opens it up); this drops the
+// row entirely, which /api/data POST cannot do because of the anti-shrink
+// tripwire. Authz: superadmin always, admin only for their own building(s).
+app.delete('/api/shifts/:id', requireAuth, requireAdmin, async (req, res) => {
+  const data = await loadData();
+  const idx = (data.shifts || []).findIndex(s => s.id === req.params.id);
+  if (idx < 0) return res.status(404).json({ error: 'Shift not found' });
+  const shift = data.shifts[idx];
+  if (!_shiftAdminAuthorized(req.user, shift)) return res.status(403).json({ error: 'Out of scope' });
+  data.shifts.splice(idx, 1);
+  markDirty();
+  auditLog('SHIFT_DELETED', req.user, {
+    shiftId: shift.id, date: shift.date, type: shift.type, group: shift.group,
+    buildingId: shift.buildingId, hadEmployee: !!shift.employeeId,
+  });
+  // If the slot had an assigned employee, send them a heads-up push so they
+  // see the schedule change instead of finding out at clock-in.
+  if (shift.employeeId) {
+    sendPushTo(shift.employeeId, {
+      title: 'Shift removed from your schedule',
+      body: `${shift.type || ''} ${shift.group || ''} on ${shift.date}`.replace(/\s+/g,' ').trim(),
+      tag: 'deleted:' + shift.id,
+      url: '/app',
+    }).catch(() => {});
+  }
+  res.json({ ok: true, shift });
+});
+
+// POST /api/shifts/delete-batch — drop many shifts at once by id.
+// Body: { ids: ['shift_a', 'shift_b', ...] }
+// Used by the right-click "Remove all <DOW>s" path so we don't have to make
+// dozens of round-trips. Authz scoped per shift: any out-of-scope id silently
+// skipped (rather than 403'ing the whole batch).
+app.post('/api/shifts/delete-batch', requireAuth, requireAdmin, async (req, res) => {
+  const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids : null;
+  if (!ids || ids.length === 0) return res.status(400).json({ error: 'ids array required' });
+  if (ids.length > 5000) return res.status(400).json({ error: 'Batch too large (max 5000)' });
+  const data = await loadData();
+  const idSet = new Set(ids);
+  const targets = (data.shifts || []).filter(s => idSet.has(s.id));
+  // Skip any shift the caller can't touch (e.g. building-scoped admin trying
+  // to nuke another facility's roster). Don't 403 the whole call — just keep
+  // the others. Report the skipped count so the client can surface it.
+  const allowed   = targets.filter(s => _shiftAdminAuthorized(req.user, s));
+  const skippedAuthz = targets.length - allowed.length;
+  const allowedIds = new Set(allowed.map(s => s.id));
+  const before = data.shifts.length;
+  data.shifts = data.shifts.filter(s => !allowedIds.has(s.id));
+  const removed = before - data.shifts.length;
+  // Push notify any assigned employees whose shifts disappeared. Fire-and-
+  // forget — don't block the response on push delivery.
+  for (const s of allowed) {
+    if (!s.employeeId) continue;
+    sendPushTo(s.employeeId, {
+      title: 'Shift removed from your schedule',
+      body: `${s.type || ''} ${s.group || ''} on ${s.date}`.replace(/\s+/g,' ').trim(),
+      tag: 'deleted:' + s.id,
+      url: '/app',
+    }).catch(() => {});
+  }
+  markDirty();
+  auditLog('SHIFTS_DELETED_BATCH', req.user, {
+    requestedCount: ids.length,
+    matchedCount:   targets.length,
+    removedCount:   removed,
+    skippedAuthz,
+  });
+  res.json({ ok: true, removed, skippedAuthz, notFound: ids.length - targets.length });
+});
+
 // POST /api/shifts/trade — employee submits a trade request
 // Body: { fromShiftId, toShiftId }
 app.post('/api/shifts/trade', requireAuth, async (req, res) => {

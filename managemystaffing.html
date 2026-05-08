@@ -7089,64 +7089,106 @@ const App = {
     }).length;
   },
 
-  // Delete a single shift slot (whether open or filled). Pushes undo first.
-  removeShiftSlot(shiftId, dateStr) {
+  // Delete a single shift slot (whether open or filled). Uses the explicit
+  // DELETE /api/shifts/:id endpoint — the bulk /api/data POST is upsert-only
+  // and refuses any payload that shrinks an existing collection (the
+  // anti-data-loss tripwire). On success we re-pull /api/data so local state
+  // matches the server. The undo stack still snapshots locally so a misclick
+  // can be reversed by re-creating the slot client-side and saving via the
+  // upsert path.
+  async removeShiftSlot(shiftId, dateStr) {
     this.hideShiftContextMenu();
     const shift = (this.S.shifts || []).find(s => s.id === shiftId);
     if (!shift) { this.showToast('Shift not found', 'warn'); return; }
     const empName = shift.employeeId
       ? (this.S.employees.find(e => e.id === shift.employeeId)?.name || 'an assigned employee')
       : null;
-    const desc = `${shift.group} ${shift.type} on ${shift.date}${empName ? ' (was assigned to ' + empName + ')' : ''}`;
     this._pushUndo('Removed 1 shift', ['shifts']);
-    this.S.shifts = this.S.shifts.filter(s => s.id !== shiftId);
-    this.logAudit('SHIFT_DELETED', `Removed ${desc}`);
-    this.persistData();
-    this.renderMain();
-    this.showToast(`Removed ${shift.group} ${shift.type} shift on ${shift.date}`);
+    try {
+      const r = await fetch(`/api/shifts/${encodeURIComponent(shiftId)}`, { method: 'DELETE' });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        this.showToast(d.error || `Delete failed (HTTP ${r.status})`, 'warn');
+        return;
+      }
+      // Re-pull canonical state so the client matches the server. If the
+      // refetch fails for any reason, fall back to local removal so the UI
+      // stays consistent with what the user just did — the server is the
+      // source of truth and will reconcile on the next reload.
+      try {
+        const dResp = await fetch('/api/data');
+        if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
+        else this.S.shifts = this.S.shifts.filter(s => s.id !== shiftId);
+      } catch {
+        this.S.shifts = this.S.shifts.filter(s => s.id !== shiftId);
+      }
+      this.renderMain();
+      this.showToast(`Removed ${shift.group} ${shift.type} shift on ${shift.date}${empName ? ' (was ' + empName.split(' ')[0] + ')' : ''}`);
+    } catch (e) {
+      this.showToast('Network error — try again', 'warn');
+    }
   },
 
   // Delete every shift on or after dateStr that matches the same group + type +
-  // day-of-week as the right-clicked one. Asks for confirmation since this
-  // affects many rows. Pushes undo so it's recoverable.
-  removeShiftSlotsByDOW(dateStr, group, shiftType) {
+  // day-of-week as the right-clicked one. Sends one batch DELETE to
+  // /api/shifts/delete-batch so we don't fire dozens of separate requests.
+  async removeShiftSlotsByDOW(dateStr, group, shiftType) {
     this.hideShiftContextMenu();
     const bId = this.S.user?.buildingId || 'b1';
     const refDow = new Date(dateStr + 'T12:00:00').getDay();
     const DOW_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
     const dowLabel = DOW_NAMES[refDow];
 
-    const matchingIds = new Set(
-      (this.S.shifts || []).filter(s => {
-        if ((s.buildingId || bId) !== bId) return false;
-        if (s.group !== group || s.type !== shiftType) return false;
-        if (s.date < dateStr) return false;
-        return new Date(s.date + 'T12:00:00').getDay() === refDow;
-      }).map(s => s.id)
-    );
+    const matchingIds = (this.S.shifts || []).filter(s => {
+      if ((s.buildingId || bId) !== bId) return false;
+      if (s.group !== group || s.type !== shiftType) return false;
+      if (s.date < dateStr) return false;
+      return new Date(s.date + 'T12:00:00').getDay() === refDow;
+    }).map(s => s.id);
 
-    if (matchingIds.size === 0) {
+    if (matchingIds.length === 0) {
       this.showToast(`No future ${dowLabel} ${shiftType} ${group} shifts to remove`, 'warn');
       return;
     }
 
     // Count how many of those have a person on them so the prompt is honest
     // about what's getting unscheduled (not just open slots).
-    const assigned = (this.S.shifts || []).filter(s => matchingIds.has(s.id) && s.status === 'scheduled').length;
-    let promptMsg = `Remove ${matchingIds.size} ${shiftType} ${group} shift${matchingIds.size===1?'':'s'} from every ${dowLabel} starting ${dateStr}?`;
+    const idSet = new Set(matchingIds);
+    const assigned = (this.S.shifts || []).filter(s => idSet.has(s.id) && s.status === 'scheduled').length;
+    let promptMsg = `Remove ${matchingIds.length} ${shiftType} ${group} shift${matchingIds.length===1?'':'s'} from every ${dowLabel} starting ${dateStr}?`;
     if (assigned > 0) promptMsg += `\n\n${assigned} of them ${assigned===1?'is':'are'} currently assigned to staff. Those staff will be unscheduled.`;
     promptMsg += `\n\nYou can undo this immediately if it was a mistake.`;
     if (!confirm(promptMsg)) return;
 
-    this._pushUndo(`Removed ${matchingIds.size} ${dowLabel} shifts`, ['shifts']);
-    const before = this.S.shifts.length;
-    this.S.shifts = this.S.shifts.filter(s => !matchingIds.has(s.id));
-    const removed = before - this.S.shifts.length;
-    this.logAudit('SHIFTS_REMOVED_BY_DOW',
-      `Removed ${removed} ${shiftType} ${group} shifts (every ${dowLabel} from ${dateStr}) — ${assigned} were assigned`);
-    this.persistData();
-    this.renderMain();
-    this.showToast(`Removed ${removed} ${dowLabel} ${shiftType} shift${removed===1?'':'s'}`);
+    this._pushUndo(`Removed ${matchingIds.length} ${dowLabel} shifts`, ['shifts']);
+    try {
+      const r = await fetch('/api/shifts/delete-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: matchingIds }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        this.showToast(d.error || `Bulk delete failed (HTTP ${r.status})`, 'warn');
+        return;
+      }
+      // Re-pull canonical state so the calendar reflects the server. Falls
+      // back to local removal if the refetch fails.
+      try {
+        const dResp = await fetch('/api/data');
+        if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
+        else this.S.shifts = this.S.shifts.filter(s => !idSet.has(s.id));
+      } catch {
+        this.S.shifts = this.S.shifts.filter(s => !idSet.has(s.id));
+      }
+      this.renderMain();
+      const removed = d.removed != null ? d.removed : matchingIds.length;
+      let msg = `Removed ${removed} ${dowLabel} ${shiftType} shift${removed===1?'':'s'}`;
+      if (d.skippedAuthz) msg += ` · ${d.skippedAuthz} skipped (out of scope)`;
+      this.showToast(msg);
+    } catch (e) {
+      this.showToast('Network error — try again', 'warn');
+    }
   },
 
   // Tiny HTML-escape for context menu labels. Group / shiftType / DOW are
