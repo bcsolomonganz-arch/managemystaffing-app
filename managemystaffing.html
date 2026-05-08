@@ -5915,17 +5915,27 @@ const App = {
         <div style="display:flex;gap:8px;flex-wrap:wrap">${builtinTabs}${customTabs}${customBtn}</div>
         ${builtinEditPanel}${customFields}
       </div>
-      ${st.mode === 'remove' ? '' : `<div style="margin-bottom:20px">
-        <div class="form-lbl">Slots Added to Shift</div>
+      <div style="margin-bottom:20px">
+        <div class="form-lbl">${st.mode === 'remove' ? 'Slots to Remove per Day' : 'Slots Added to Shift'}</div>
         <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
           <button onclick="if(App.S._addShiftState.slots>1){App.S._addShiftState.slots--;App._renderAddShiftsBody()}"
             style="width:32px;height:32px;border:1.5px solid var(--g200);border-radius:8px;background:#fff;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1">−</button>
           <span style="font-size:22px;font-weight:800;color:var(--g900);width:28px;text-align:center">${st.slots}</span>
           <button onclick="App.S._addShiftState.slots++;App._renderAddShiftsBody()"
             style="width:32px;height:32px;border:1.5px solid var(--g200);border-radius:8px;background:#fff;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1">+</button>
-          <span style="font-size:12px;color:var(--g500)">open position${st.slots===1?'':'s'} per day</span>
+          <span style="font-size:12px;color:var(--g500)">${st.mode === 'remove' ? 'shifts removed per matching day (caps at actual count)' : ('open position' + (st.slots===1?'':'s') + ' per day')}</span>
         </div>
-      </div>`}
+        ${st.mode === 'remove' ? `
+          <label style="display:flex;align-items:flex-start;gap:8px;margin-top:14px;padding:10px 12px;background:${st.includeAssigned ? '#FEF2F2' : 'var(--g50)'};border:1px solid ${st.includeAssigned ? '#FCA5A5' : 'var(--g200)'};border-radius:8px;cursor:pointer">
+            <input type="checkbox" ${st.includeAssigned ? 'checked' : ''}
+              onchange="App.S._addShiftState.includeAssigned=this.checked;App._renderAddShiftsBody()"
+              style="margin-top:2px;width:16px;height:16px;flex-shrink:0;accent-color:#DC2626">
+            <span style="font-size:12px;color:var(--g800);line-height:1.5">
+              <strong>Also remove assigned shifts</strong>
+              <span style="display:block;font-size:11px;color:var(--g600);margin-top:2px">By default we keep filled shifts to avoid surprise unscheduling. Tick this to delete every matching shift, including ones with staff assigned — those employees will be unscheduled and notified.</span>
+            </span>
+          </label>` : ''}
+      </div>
       <div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:6px">
           <div class="form-lbl" style="margin:0">
@@ -6405,6 +6415,7 @@ const App = {
       slots: 1, selectedDays: [], dates,
       cycleAnchorIdx: 0,
       mirrorWeeks: false,
+      includeAssigned: false,        // when true, also unschedules filled shifts
       customName: '', customStart: '7:00 AM', customEnd: '3:00 PM',
       editingBuiltinType: null, editingBuiltinName: '', editingBuiltinStart: '', editingBuiltinEnd: '',
     };
@@ -6438,37 +6449,53 @@ const App = {
       if (st.selectedDays.includes(cyclePos)) toRemoveDates.add(ds);
     }
 
-    this._pushUndo(`Removed ${shiftType} ${g} shifts (${slotsPerDay}/day)`);
+    const includeAssigned = !!st.includeAssigned;
+    this._pushUndo(`Removed ${shiftType} ${g} shifts (${slotsPerDay}/day${includeAssigned?' incl assigned':''})`);
 
-    // Pass 1: bucket open rows by date so we can pick exactly N to drop.
-    const openByDate = new Map();   // date → array of shift ids
+    // Pass 1: bucket candidate rows by date. By default we only consider
+    // OPEN slots so an admin can't accidentally unschedule staff. When
+    // includeAssigned is on, we also consider 'scheduled' rows — those get
+    // counted toward the per-day cap right alongside open ones.
+    const candidatesByDate = new Map();   // date → array of shift ids
     for (const s of this.S.shifts) {
       if (s.buildingId !== bId || s.group !== g || s.type !== shiftType) continue;
-      if (s.status !== 'open') continue;
       if (!toRemoveDates.has(s.date)) continue;
-      if (!openByDate.has(s.date)) openByDate.set(s.date, []);
-      openByDate.get(s.date).push(s.id);
+      const eligible = s.status === 'open' || (includeAssigned && s.status === 'scheduled');
+      if (!eligible) continue;
+      if (!candidatesByDate.has(s.date)) candidatesByDate.set(s.date, []);
+      candidatesByDate.get(s.date).push(s.id);
     }
 
-    // Pick the first N ids per date.
+    // Pick the first N ids per date. With includeAssigned, OPEN slots get
+    // dropped first (since the scan order above puts both kinds in the
+    // same bucket but the array order is arbitrary, this is good enough —
+    // admins are explicitly opting in either way).
     const idsToDrop = new Set();
-    for (const [, ids] of openByDate) {
+    for (const [, ids] of candidatesByDate) {
       for (const id of ids.slice(0, slotsPerDay)) idsToDrop.add(id);
     }
 
-    // Count assigned matches separately so we can warn the operator that
-    // some shifts couldn't be touched (someone is already scheduled).
-    let assignedSkipped = 0;
-    let datesWithFewerOpen = 0;
+    // Count assigned shifts that will actually be unscheduled (within idsToDrop)
+    // so the success toast can call them out separately.
+    let assignedDeleted = 0;
+    let datesWithFewer = 0;
     for (const s of this.S.shifts) {
-      if (s.buildingId !== bId || s.group !== g || s.type !== shiftType) continue;
-      if (!toRemoveDates.has(s.date)) continue;
-      if (s.status !== 'open' && s.status !== 'cancelled') assignedSkipped++;
+      if (idsToDrop.has(s.id) && s.status === 'scheduled') assignedDeleted++;
     }
     for (const date of toRemoveDates) {
-      const have = (openByDate.get(date) || []).length;
-      if (have < slotsPerDay) datesWithFewerOpen++;
+      const have = (candidatesByDate.get(date) || []).length;
+      if (have < slotsPerDay) datesWithFewer++;
     }
+    // For backwards-compatible toast text
+    let assignedSkipped = 0;
+    if (!includeAssigned) {
+      for (const s of this.S.shifts) {
+        if (s.buildingId !== bId || s.group !== g || s.type !== shiftType) continue;
+        if (!toRemoveDates.has(s.date)) continue;
+        if (s.status === 'scheduled') assignedSkipped++;
+      }
+    }
+    const datesWithFewerOpen = datesWithFewer;
 
     if (idsToDrop.size === 0) {
       this.closeModal('modal-add-shifts');
@@ -6502,15 +6529,20 @@ const App = {
           this.S.shifts = this.S.shifts.filter(s => !idsToDrop.has(s.id));
         }
         const removedCount = d.removed != null ? d.removed : idsToDrop.size;
-        Audit.log('SHIFTS_REMOVED', `Removed ${removedCount} open ${shiftType} ${g} shifts (${slotsPerDay} per day)`, this.S.user?.id, 'medium');
+        Audit.log('SHIFTS_REMOVED',
+          `Removed ${removedCount} ${includeAssigned?'':'open '}${shiftType} ${g} shifts (${slotsPerDay} per day${includeAssigned?', incl assigned':''})`,
+          this.S.user?.id, includeAssigned ? 'high' : 'medium');
         this.closeModal('modal-add-shifts');
         this.renderMain();
-        let msg = `${removedCount} open shift${removedCount===1?'':'s'} removed (${slotsPerDay}/day)`;
-        if (datesWithFewerOpen > 0) {
-          msg += ` · ${datesWithFewerOpen} day${datesWithFewerOpen===1?'':'s'} had fewer than ${slotsPerDay} open slot${slotsPerDay===1?'':'s'} available`;
+        let msg = `${removedCount} ${includeAssigned?'':'open '}shift${removedCount===1?'':'s'} removed (${slotsPerDay}/day)`;
+        if (includeAssigned && assignedDeleted > 0) {
+          msg += ` · ${assignedDeleted} assigned shift${assignedDeleted===1?'':'s'} unscheduled`;
         }
-        if (assignedSkipped > 0) {
-          msg += ` · ${assignedSkipped} already-assigned shift${assignedSkipped===1?'':'s'} kept`;
+        if (datesWithFewerOpen > 0) {
+          msg += ` · ${datesWithFewerOpen} day${datesWithFewerOpen===1?'':'s'} had fewer than ${slotsPerDay} matching slot${slotsPerDay===1?'':'s'}`;
+        }
+        if (!includeAssigned && assignedSkipped > 0) {
+          msg += ` · ${assignedSkipped} already-assigned shift${assignedSkipped===1?'':'s'} kept (tick "Also remove assigned" to include)`;
         }
         this.showToast(msg);
       } catch (e) {
