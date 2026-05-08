@@ -33,7 +33,12 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const bcrypt = require('bcrypt');
+// Use bcryptjs (pure JS) so this script works in environments where the
+// native bcrypt module hasn't been extracted from a compressed bundle yet
+// (e.g. Azure App Service post-deploy before container restart). The two
+// libs produce compatible hashes, so server.js's bcrypt.compare verifies
+// hashes made here without issue.
+const bcrypt = require('bcryptjs');
 
 // Mirror server.js env loading
 const IS_AZURE = !!process.env.WEBSITE_INSTANCE_ID;
