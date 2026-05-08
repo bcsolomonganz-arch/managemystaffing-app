@@ -15906,11 +15906,31 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const label = d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
     const bId = this.S.user?.buildingId || 'b1';
 
-    // Use selected group if clinical, else show all clinical groups
+    // Pick groups + shift types based on the user's sidebar selection.
+    //   • clinical group selected → show just that group with Day/Eve/Night
+    //   • non-clinical group selected → show just that group with its
+    //     own shift types (Morning/Afternoon, plus any custom templates)
+    //   • no group selected → fall back to the three nursing groups
+    //     (the original behaviour the day view was designed for)
+    // Bug fixed 2026-05-08: previously this hardcoded CLINICAL_SHIFTS for
+    // every render path, so picking Dietary/Housekeeping/Therapy on Day
+    // view showed an empty grid.
     const selGroup = this.S.selectedGroup;
-    const grps = selGroup && CLINICAL.includes(selGroup)
-      ? [selGroup]
-      : ['Charge Nurse','CNA','CMA'];
+    let grps;
+    if (selGroup) {
+      grps = [selGroup];
+    } else {
+      grps = ['Charge Nurse','CNA','CMA'];
+    }
+    // Build the row list dynamically per selected group so non-clinical
+    // groups get Morning/Afternoon, clinical groups get Day/Eve/Night,
+    // and custom shift templates show up too.
+    const rowShiftTypes = (() => {
+      if (grps.length === 1) {
+        return this.getEffectiveShiftTypes(bId, grps[0]);
+      }
+      return CLINICAL_SHIFTS;
+    })();
 
     const colStyle = `grid-template-columns:110px repeat(${grps.length},1fr)`;
 
@@ -15919,13 +15939,13 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       const slotReqsG = this.getSlotReqs(bId, g);
       const hasReqsG  = Object.values(slotReqsG).some(v=>v>0);
       hdr += `<div style="padding:10px 14px;border-left:3px solid ${G_COLORS[g]};background:${G_COLORS[g]}09">
-        <div style="font-weight:700;font-size:13px;color:${G_COLORS[g]}">${G_ICONS[g]} ${g}</div>
+        <div style="font-weight:700;font-size:13px;color:${G_COLORS[g]}">${G_ICONS[g]||''} ${groupLabel(g)}</div>
         ${hasReqsG?`<div style="font-size:10px;color:var(--g600);margin-top:2px">${Object.entries(slotReqsG).map(([t,n])=>`${n} ${t}`).join(' · ')}</div>`:''}
       </div>`;
     });
 
     let rows = '';
-    CLINICAL_SHIFTS.forEach(sh => {
+    rowShiftTypes.forEach(sh => {
       let row = `<div style="padding:12px 16px;background:var(--g50)">
         <div style="font-size:12px;font-weight:700;color:var(--g700)">${sh.type}</div>
         <div style="font-size:11px;color:var(--g600)">${sh.start}–${sh.end}</div>
@@ -15934,7 +15954,13 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       grps.forEach(g => {
         const slotReqsG  = this.getSlotReqs(bId, g);
         const req        = slotReqsG[sh.type] || 0;
-        const allSlots   = dayShifts.filter(s => s.group === g && s.type === sh.type);
+        // Use getActualGroups so display groups (e.g. Dietary) match
+        // shifts saved under either the display group itself or the
+        // underlying actual groups (Cook, Dietary Aid). Without this,
+        // selecting Dietary on Day view and adding shifts would render
+        // an empty grid even though the rows exist.
+        const agCell     = getActualGroups(g);
+        const allSlots   = dayShifts.filter(s => agCell.includes(s.group) && s.type === sh.type);
         const scheduled  = allSlots.filter(s => s.status === 'scheduled');
         const numFilled  = scheduled.length;
         const numEmpty   = req > 0 ? Math.max(0, req - numFilled) : allSlots.filter(s=>s.status==='open').length;
