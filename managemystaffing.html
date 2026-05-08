@@ -2798,15 +2798,25 @@ const App = {
         </table>`
       : `<div style="background:var(--g50);border:1px dashed var(--g200);border-radius:10px;padding:30px;text-align:center;color:var(--g600);font-size:13px">No snapshots yet — they're written automatically every time data changes.</div>`;
 
-    const retentionMsg = data.backend === 'postgres'
-      ? `<div style="background:var(--blue-l);color:var(--blue-d);padding:10px 14px;border-radius:8px;font-size:12px;margin-bottom:14px">Postgres mode: rely on Azure Database point-in-time restore (35-day window). File-based snapshots are disabled.</div>`
-      : `<div style="background:var(--green-l);color:#047857;padding:10px 14px;border-radius:8px;font-size:12px;margin-bottom:14px">Retention: every save kept for 24h · 1 per hour for 30 days · 1 per day for 365 days.</div>`;
+    // Two retention panels: in-app snapshots (encrypted JSON files) and
+    // Azure PITR window (only relevant in PG mode). The two layers stack —
+    // in-app snapshots are 1-click restorable from this page; PITR is a
+    // last-resort recovery for further-back states than the snapshots cover.
+    const retentionMsg = `
+      <div style="background:var(--green-l);color:#047857;padding:10px 14px;border-radius:8px;font-size:12px;margin-bottom:10px">
+        <strong>In-app snapshots:</strong> every save kept for 24h · 1 per hour for 30 days · 1 per day for 365 days.
+        Backend: ${data.backend === 'postgres' ? 'Postgres (snapshots written alongside DB writes)' : 'Encrypted file'}.
+      </div>
+      ${data.pitr ? `
+      <div style="background:var(--blue-l);color:var(--blue-d);padding:10px 14px;border-radius:8px;font-size:12px;margin-bottom:14px">
+        <strong>Azure PITR (deeper recovery):</strong> ${data.pitr.windowDays}-day window of continuous Postgres backup. ${data.pitr.note}
+      </div>` : ''}`;
 
     main.innerHTML = `<div style="padding:24px;max-width:1000px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px">
         <div>
           <div style="font-size:22px;font-weight:800;color:var(--g900)">Backups</div>
-          <div style="font-size:13px;color:var(--g500);margin-top:2px">Encrypted point-in-time copies of every change. Restore rolls the entire platform back to that moment.</div>
+          <div style="font-size:13px;color:var(--g500);margin-top:2px">Encrypted point-in-time copies. Restore rolls the entire platform back to that moment — pre-restore safety snapshot is taken first so you can roll forward again.</div>
         </div>
         <button class="btn btn-primary btn-sm" onclick="App.forceSnapshot()">Snapshot Now</button>
       </div>
@@ -2826,13 +2836,46 @@ const App = {
   },
 
   async restoreSnapshot(filename, takenAt) {
-    const ok = confirm(`Restore platform data to the snapshot taken at:\n\n${takenAt}\n\nThis replaces ALL current data (buildings, employees, shifts, accounts, messages). The current state will be saved as a "prerestore" snapshot first so you can roll forward again. Continue?`);
-    if (!ok) return;
+    // Two-step handshake: first call dryRun:true to get the diff, then
+    // surface that diff to the user so they see EXACTLY what will change
+    // before they commit. The server requires confirmShrink:true for any
+    // restore that drops a collection by >10% — we ask for that explicit
+    // confirmation when the diff would shrink anything.
+    let preview;
     try {
       const r = await fetch('/api/admin/snapshots/restore', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename }),
+        body: JSON.stringify({ filename, dryRun: true }),
+      });
+      preview = await r.json();
+      if (!r.ok) throw new Error(preview.error || 'Failed to preview');
+    } catch (e) { this.showToast(e.message, 'warn'); return; }
+
+    const diff = preview.diff || {};
+    const lines = [];
+    for (const k of ['buildings','employees','shifts','accounts','companies','schedulePatterns']) {
+      const d = diff[k];
+      if (!d) continue;
+      const arrow = d.drop > 0 ? '↓' : d.drop < 0 ? '↑' : '=';
+      lines.push(`  ${k.padEnd(18)} live=${d.live}  →  snapshot=${d.snapshot}  ${arrow}${Math.abs(d.drop)} (${d.dropPercent}%)`);
+    }
+    const willShrink = preview.wouldShrinkSignificantly;
+    const promptMsg =
+      `Restore platform data to the snapshot taken at:\n\n  ${takenAt}\n\n` +
+      `Current vs. snapshot:\n${lines.join('\n')}\n\n` +
+      (willShrink
+        ? `⚠ This will SHRINK at least one collection by ≥10%. The current state will be saved as a "prerestore" snapshot first so you can roll forward again, but you must explicitly confirm the shrink.\n\n`
+        : `Current state will be saved as a "prerestore" snapshot first so you can roll forward again.\n\n`) +
+      `Type RESTORE to confirm:`;
+    const typed = prompt(promptMsg);
+    if (typed !== 'RESTORE') { this.showToast('Restore cancelled', 'warn'); return; }
+
+    try {
+      const r = await fetch('/api/admin/snapshots/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename, confirmShrink: !!willShrink }),
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || 'Restore failed');

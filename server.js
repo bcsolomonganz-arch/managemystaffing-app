@@ -641,11 +641,22 @@ async function _restoreSnapshotFile(filename) {
   const decoded = await decrypt(parsed);
 
   // Save the *current* state as a pre-restore safety snapshot before swapping.
+  // In file mode we just copy the encrypted DATA_FILE; in PG mode there's
+  // no live file to copy, so we encrypt-write the current dataCache directly.
   try {
     const safetyStamp = new Date().toISOString().replace(/[:.]/g, '-');
     const safetyName  = `${SNAPSHOT_PREFIX}${safetyStamp}-prerestore.json`;
-    await fs.copyFile(DATA_FILE, path.join(BACKUP_DIR, safetyName));
-  } catch {}
+    const safetyPath  = path.join(BACKUP_DIR, safetyName);
+    if (_useDB) {
+      const encrypted = await encrypt({ ...(dataCache || {}), _lastSaved: new Date().toISOString() });
+      await fs.writeFile(safetyPath, JSON.stringify(encrypted, null, 2), 'utf8');
+    } else {
+      await fs.copyFile(DATA_FILE, safetyPath);
+    }
+  } catch (e) {
+    logger.warn('prerestore_snapshot_failed', { err: e.message });
+    // Don't abort the restore — the user already confirmed via dryRun + confirmShrink.
+  }
 
   // Hot-swap dataCache and persist
   dataCache = decoded;
@@ -2680,23 +2691,36 @@ app.post('/api/indeed/event',
 // All Super Admin only — restoring data is a destructive operation that must
 // be auditable. We log RESTORE events into the tamper-evident audit chain.
 app.get('/api/admin/snapshots', requireAuth, requireSuperAdmin, async (req, res) => {
-  if (_useDB) return res.json({ backend: 'postgres', message: 'Snapshots disabled in Postgres mode (use DB backups).', snapshots: [] });
+  // Snapshots run in BOTH modes. In PG mode the underlying _writeSnapshot
+  // encrypts dataCache directly (no DATA_FILE to copy); in file mode it
+  // copies the encrypted file. Either way the user gets the same
+  // restore-to-N-hours-ago capability.
   try {
     const all = await _listSnapshotFiles();
+    // Surface the Azure PITR window in PG mode as supplementary info — the
+    // human can use the portal to restore further back than the in-app
+    // snapshot retention if needed. Not actionable from this endpoint.
+    let pitr = null;
+    if (_useDB) {
+      pitr = {
+        windowDays: 7,        // Azure flexible-server default
+        note: 'For older recovery, use Azure PostgreSQL point-in-time restore via the portal or az CLI.',
+      };
+    }
     res.json({
-      backend: 'file',
+      backend: _useDB ? 'postgres' : 'file',
       retention: { allUnder: '24h', hourly: '30d', daily: '365d' },
+      pitr,
       snapshots: all.map(s => ({ filename: s.name, takenAt: new Date(s.ts).toISOString() })),
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/admin/snapshots', requireAuth, requireSuperAdmin, async (req, res) => {
-  if (_useDB) return res.status(400).json({ error: 'Snapshots disabled in Postgres mode' });
   try {
     _lastSnapshotAt = 0;                   // force through the throttle
     await _writeSnapshot();
-    auditLog('BACKUP_SNAPSHOT_FORCED', req.user, {});
+    auditLog('BACKUP_SNAPSHOT_FORCED', req.user, { backend: _useDB ? 'postgres' : 'file' });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2942,7 +2966,10 @@ app.post('/api/admin/provision-demo-admin', requireAuth, requireSuperAdmin, asyn
 });
 
 app.post('/api/admin/snapshots/restore', requireAuth, requireSuperAdmin, async (req, res) => {
-  if (_useDB) return res.status(400).json({ error: 'Restore disabled in Postgres mode (use DB PITR)' });
+  // Restore now works in BOTH modes. In PG mode the restored dataCache gets
+  // flushed to Postgres via persistCache() (dbRepo.saveAll under the hood);
+  // in file mode it gets re-encrypted to disk. Same safety guards in both:
+  // dryRun=true preview, confirmShrink=true required for >10% drops.
   const filename = String(req.body?.filename || '');
   if (!filename) return res.status(400).json({ error: 'filename required' });
   const dryRun        = !!req.body?.dryRun;
@@ -7996,6 +8023,28 @@ let _server;
       pcc: !!(PCC_CLIENT_ID && PCC_FACILITY_ID),
     });
   });
+
+  // ── DAILY AUTOMATIC SNAPSHOT ─────────────────────────────────────────────
+  // Snapshots already get written on every persistCache call (throttled to
+  // ~30s). But on a quiet day with no edits, no snapshot would be taken,
+  // and we could fall behind the user's expectation of "I have at least
+  // a daily backup point I can roll to." Belt-and-suspenders: schedule a
+  // forced snapshot every 24h regardless of activity. Cheap (KB-sized
+  // encrypted file) and the prune logic keeps storage bounded.
+  const DAILY_MS = 24 * 60 * 60 * 1000;
+  setInterval(() => {
+    if (!dataCache) return;             // nothing to snapshot yet
+    _lastSnapshotAt = 0;                 // bypass the per-30s throttle
+    _writeSnapshot().catch(e => logger.error('daily_snapshot_failed', { err: e.message }));
+  }, DAILY_MS);
+  // Take one ~30 seconds after boot too, so a fresh deploy immediately has
+  // a known-good restore point. (Gated behind dataCache existing — empty
+  // cache snapshot would be useless.)
+  setTimeout(() => {
+    if (!dataCache) return;
+    _lastSnapshotAt = 0;
+    _writeSnapshot().catch(e => logger.error('boot_snapshot_failed', { err: e.message }));
+  }, 30 * 1000);
 })();
 
 // ── GRACEFUL SHUTDOWN ─────────────────────────────────────────────────────────
