@@ -2680,6 +2680,59 @@ app.get('/api/admin/inspect-disk', requireAuth, requireSuperAdmin, async (req, r
   res.json(out);
 });
 
+// GET /api/admin/probe-pg — superadmin Postgres connectivity probe.
+// Creates a fresh pg client (independent of the global _pool that's
+// already failed) and reports the exact connection error + row counts
+// of the core tables. Used to diagnose "server fell back to file mode
+// with empty data" — if PG actually has the data, the snapshots / file
+// fallback are red herrings.
+app.get('/api/admin/probe-pg', requireAuth, requireSuperAdmin, async (_req, res) => {
+  const result = {
+    pgConnSet: !!process.env.PG_CONN,
+    pgConnRedacted: process.env.PG_CONN
+      ? process.env.PG_CONN.replace(/:[^:@]+@/, ':***@')
+      : null,
+    _useDB,
+    poolPing: null,
+    fresh: { connect: null, error: null, counts: null, sampleRows: null },
+  };
+  if (_useDB) {
+    try { result.poolPing = await dbRepo.ping(); }
+    catch (e) { result.poolPing = 'error: ' + e.message; }
+  }
+  if (!process.env.PG_CONN) return res.json(result);
+
+  // Fresh connection to bypass the cached pool that may have failed at boot.
+  const { Client } = require('pg');
+  const c = new Client({
+    connectionString: process.env.PG_CONN,
+    ssl: { rejectUnauthorized: false },
+    connectionTimeoutMillis: 10000,
+  });
+  try {
+    await c.connect();
+    result.fresh.connect = 'ok';
+    const counts = {};
+    for (const t of ['buildings','employees','shifts','accounts','companies','schedule_patterns']) {
+      try {
+        const r = await c.query(`SELECT count(*)::int AS n FROM ${t}`);
+        counts[t] = r.rows[0]?.n ?? null;
+      } catch (e) { counts[t] = 'error: ' + e.message; }
+    }
+    result.fresh.counts = counts;
+    // First few building names so we know if it's the user's real data
+    try {
+      const r = await c.query(`SELECT id, name, beds, company_id FROM buildings ORDER BY name LIMIT 8`);
+      result.fresh.sampleRows = r.rows;
+    } catch (e) { result.fresh.sampleRows = 'error: ' + e.message; }
+  } catch (e) {
+    result.fresh.error = e.message + (e.code ? ` [${e.code}]` : '');
+  } finally {
+    try { await c.end(); } catch (_) {}
+  }
+  res.json(result);
+});
+
 app.post('/api/admin/snapshots/restore', requireAuth, requireSuperAdmin, async (req, res) => {
   if (_useDB) return res.status(400).json({ error: 'Restore disabled in Postgres mode (use DB PITR)' });
   const filename = String(req.body?.filename || '');
