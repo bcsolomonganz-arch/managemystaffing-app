@@ -6546,38 +6546,46 @@ const App = {
     }
     const datesWithFewerOpen = datesWithFewer;
 
-    if (idsToDrop.size === 0) {
-      this.closeModal('modal-add-shifts');
-      this.showToast('No open shifts matched the selected days', 'warn');
-      return;
-    }
+    // We DON'T early-return when idsToDrop is empty anymore. Most "OPEN"
+    // tags on the calendar are virtual placeholders driven by the staffing
+    // requirement, not real shift rows — so a remove operation often has
+    // no rows to delete but still needs to lower the requirement. The
+    // logic below handles both cases:
+    //
+    //   • have rows to delete  → DELETE batch first, then lower req
+    //   • zero rows to delete  → skip the DELETE call, just lower req
+    //
+    // Either way the user sees the visible OPEN tags collapse, which is
+    // what they actually came here to do.
 
-    // Send through the explicit batch DELETE endpoint. /api/data POST is
-    // upsert-only and would 409 with the anti-shrink tripwire on any
-    // payload that loses rows. The server also tags removedDates on the
-    // matching schedule patterns so the rotation extender doesn't bring
-    // these back on the next calendar advance.
     (async () => {
       try {
-        const r = await fetch('/api/shifts/delete-batch', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ids: Array.from(idsToDrop) }),
-        });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok) {
-          this.showToast(d.error || `Bulk remove failed (HTTP ${r.status})`, 'warn');
-          return;
+        let d = { removed: 0, skippedAuthz: 0 };
+        // Step 1: delete real open rows if any matched. Skip the network
+        // call entirely when nothing matched — that's the common case
+        // when all OPEN tags on the calendar are virtual placeholders
+        // driven by the staffing requirement (rows don't exist in the DB).
+        if (idsToDrop.size > 0) {
+          const r = await fetch('/api/shifts/delete-batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: Array.from(idsToDrop) }),
+          });
+          d = await r.json().catch(() => ({}));
+          if (!r.ok) {
+            this.showToast(d.error || `Bulk remove failed (HTTP ${r.status})`, 'warn');
+            return;
+          }
+          // Re-pull canonical state so the calendar matches the server.
+          try {
+            const dResp = await fetch('/api/data');
+            if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
+            else this.S.shifts = this.S.shifts.filter(s => !idsToDrop.has(s.id));
+          } catch {
+            this.S.shifts = this.S.shifts.filter(s => !idsToDrop.has(s.id));
+          }
         }
-        // Re-pull canonical state so the calendar matches the server.
-        try {
-          const dResp = await fetch('/api/data');
-          if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
-          else this.S.shifts = this.S.shifts.filter(s => !idsToDrop.has(s.id));
-        } catch {
-          this.S.shifts = this.S.shifts.filter(s => !idsToDrop.has(s.id));
-        }
-        const removedCount = d.removed != null ? d.removed : idsToDrop.size;
+        const removedCount = d.removed != null ? d.removed : 0;
 
         // ── Also lower the building's staffing requirement ────────────────
         // The OPEN tags on the calendar are computed as
