@@ -1395,7 +1395,13 @@ app.use(cors({
   credentials: true,
 }));
 
-app.use(express.json({ limit: '1mb' }));      // Was 50mb — DoS surface
+// Body size limit: must accommodate the full app state on /api/data POST.
+// Live data payload is ~1.3 MB at 21 buildings / 1.6k staff / 1k shifts and
+// grows when admins add rotations (a year of weekday shifts adds ~250 rows).
+// Was 1mb — too tight, caused PayloadTooLargeError → 500 on weekday rotation
+// adds (incident 2026-05-08). Was previously 50mb — DoS surface.
+// 10mb gives ample headroom for tenant growth without opening DoS.
+app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser(JWT_SECRET));             // signed cookies for CSRF defense
 app.use('/api/', apiLimiter);
 
@@ -7726,6 +7732,23 @@ app.use((req, res) => {
 
 // ── ERROR HANDLER (don't leak stack traces) ──────────────────────────────────
 app.use((err, req, res, _next) => {
+  // Body parser errors: surface a real status code instead of swallowing them
+  // as a generic 500. Without this, PayloadTooLargeError became a vague "save
+  // failed" toast on the client and the admin had no way to tell why their
+  // edits weren't persisting (incident 2026-05-08 — Kirkland weekday rotation).
+  if (err && err.type === 'entity.too.large') {
+    logger.warn('payload_too_large', { reqId: req.id, length: err.length, limit: err.limit, path: req.path });
+    return res.status(413).json({
+      error: 'Request body exceeds the server limit. ' +
+             'This usually means the app state is unusually large; please reload and try again, ' +
+             'or contact support if it persists.',
+      code: 'PAYLOAD_TOO_LARGE',
+    });
+  }
+  if (err && err.type === 'entity.parse.failed') {
+    logger.warn('payload_parse_failed', { reqId: req.id, err: err.message, path: req.path });
+    return res.status(400).json({ error: 'Malformed JSON body', code: 'BAD_JSON' });
+  }
   logger.error('unhandled_error', { reqId: req.id, err: err.message, stack: IS_PROD ? undefined : err.stack });
   res.status(500).json({ error: IS_PROD ? 'Internal server error' : err.message });
 });
