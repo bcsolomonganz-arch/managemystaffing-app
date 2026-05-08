@@ -2862,6 +2862,85 @@ app.get('/api/admin/probe-pg', requireAuth, requireSuperAdmin, async (_req, res)
 //      smaller than live by >= 10%, reject the restore unless the caller
 //      passes confirmShrink:true. This prevents accidentally rolling
 //      back into a near-empty snapshot.
+// POST /api/admin/provision-demo-admin
+// Superadmin-only convenience endpoint to spin up (or refresh) a building-
+// scoped admin login that can be shared for product demos. Idempotent — if
+// an account with the given email already exists it gets the new password,
+// name, and building scope rather than a duplicate. Useful when the offline
+// bin/create-demo-admin.js script can't reach the running server's PG
+// connection (the bcrypt + PG_CONN env aren't surfaced to Kudu commands).
+//
+// Body: { email, name, password, buildingId }
+// Always grants role:'admin' (never superadmin). Always single-building.
+app.post('/api/admin/provision-demo-admin', requireAuth, requireSuperAdmin, async (req, res) => {
+  const email      = String((req.body && req.body.email)      || '').trim().toLowerCase();
+  const name       = String((req.body && req.body.name)       || '').trim();
+  const password   = String((req.body && req.body.password)   || '');
+  const buildingId = String((req.body && req.body.buildingId) || '').trim();
+  if (!email || !name || !password || !buildingId) {
+    return res.status(400).json({ error: 'email, name, password, buildingId are all required' });
+  }
+  if (password.length < 8) {
+    return res.status(400).json({ error: 'password must be at least 8 chars' });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'invalid email' });
+  }
+  const data = await loadData();
+  const building = (data.buildings || []).find(b => b.id === buildingId);
+  if (!building) return res.status(404).json({ error: 'building not found', buildingId });
+
+  const bcryptLib = require('bcrypt');
+  const ph = await bcryptLib.hash(password, 12);
+  const nowIso = new Date().toISOString();
+  data.accounts = data.accounts || [];
+  let acct = data.accounts.find(a => (a.email || '').toLowerCase() === email);
+  let mode;
+  if (acct) {
+    // Refresh in place. Don't change the id (preserves audit log refs).
+    acct.name        = name;
+    acct.role        = 'admin';
+    acct.buildingId  = buildingId;
+    acct.buildingIds = [buildingId];
+    acct.ph          = ph;
+    acct.activatedAt = acct.activatedAt || nowIso;
+    delete acct.passwordResetTokenHash;
+    delete acct.passwordResetExpiry;
+    delete acct.lockedUntil;
+    delete acct.failedAttempts;
+    mode = 'updated';
+  } else {
+    acct = {
+      id:           'acc_demo_' + Date.now(),
+      name, email,
+      role:         'admin',
+      buildingId,
+      buildingIds:  [buildingId],
+      ph,
+      schedulerOnly: false,
+      activatedAt: nowIso,
+      invitedBy:   req.user.email || req.user.id,
+      invitedAt:   nowIso,
+    };
+    data.accounts.push(acct);
+    mode = 'created';
+  }
+  dataCache = data;
+  _bumpDataVersion();
+  markDirty();
+  auditLog('DEMO_ADMIN_PROVISIONED', req.user, { email, buildingId, mode });
+  res.json({
+    ok: true,
+    mode,
+    accountId: acct.id,
+    email,
+    buildingId,
+    buildingName: building.name,
+    role: 'admin',
+    note: 'Account is live. Sign in at the app URL with these credentials.',
+  });
+});
+
 app.post('/api/admin/snapshots/restore', requireAuth, requireSuperAdmin, async (req, res) => {
   if (_useDB) return res.status(400).json({ error: 'Restore disabled in Postgres mode (use DB PITR)' });
   const filename = String(req.body?.filename || '');
