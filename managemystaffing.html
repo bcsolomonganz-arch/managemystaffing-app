@@ -1148,7 +1148,17 @@ const groupLabel = (g) => GROUP_LABEL[g] || g;
 const DISPLAY_GROUPS = ['Nurse Management','Charge Nurse','CNA','CMA','Housekeeping','Laundry','Dietary','Therapy','Office','Maintenance','Marketing'];
 // Maps display group → actual data groups
 const GROUP_MAP = {'Dietary':['Cook','Dietary Aid']};
-const getActualGroups = g => GROUP_MAP[g] || [g];
+// Returns the set of underlying group values that should match this display
+// group's filters. Always includes the display group itself so shifts saved
+// directly under the display group (e.g. group='Dietary' from the
+// Add Shifts modal) still render — without this, picking Dietary in the
+// sidebar and clicking Add Shifts would create invisible shifts because
+// the calendar filter would only look for group='Cook' or 'Dietary Aid'.
+const getActualGroups = g => {
+  const mapped = GROUP_MAP[g];
+  if (!mapped) return [g];
+  return mapped.includes(g) ? mapped : [g, ...mapped];
+};
 const CLINICAL = ['Nurse Management','Charge Nurse','CNA','CMA'];
 // Positions where state-board licensing applies. Drives the License section
 // in the Add/Edit Employee form, the roster expiration badge, and the
