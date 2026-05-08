@@ -1572,38 +1572,49 @@ app.get('/app/manifest.webmanifest', (_req, res) => {
   }));
 });
 
-// Inline SVG app icon (vector — scales for any required size).
-// Same medical-house silhouette as the main site's LOGO_SVG, recolored
-// with a solid green background for the maskable PWA tile.
+// Inline SVG app icon — exact same medical-house artwork as the main site's
+// LOGO_SVG (managemystaffing.html ~1232). Drawing in 100×92 source coords,
+// centered on a 512×512 tile with a green background. Updates here should
+// stay in sync with the website logo.
+//
+// Reuse the path data so the app icon and website logo can never drift.
+const _LOGO_PATHS = `
+    <rect x="70" y="2" width="14" height="26" rx="5" fill="#6B9E7A"/>
+    <path d="M50 5 L0 52 Q0 56 4 56 L96 56 Q100 56 100 52 Z" fill="#6B9E7A"/>
+    <rect x="3" y="50" width="94" height="42" rx="6" fill="#6B9E7A"/>
+    <rect x="38" y="20" width="9" height="9" rx="2" fill="white"/>
+    <rect x="52" y="20" width="9" height="9" rx="2" fill="white"/>
+    <rect x="38" y="32" width="9" height="9" rx="2" fill="white"/>
+    <rect x="52" y="32" width="9" height="9" rx="2" fill="white"/>
+    <rect x="63" y="57" width="10" height="9" rx="2" fill="white"/>
+    <rect x="76" y="57" width="10" height="9" rx="2" fill="white"/>
+    <rect x="63" y="69" width="10" height="9" rx="2" fill="white"/>
+    <rect x="76" y="69" width="10" height="9" rx="2" fill="white"/>
+    <rect x="7" y="71" width="26" height="8" rx="4" fill="white"/>
+    <rect x="16" y="62" width="8" height="26" rx="4" fill="white"/>
+    <rect x="41" y="70" width="18" height="22" rx="3" fill="white"/>
+`;
+// Standard icon: green tile with the website logo centered. Source SVG
+// is 100×92 — we scale to ~440×405 inside a 512×512 tile, then offset
+// by 36px to center.
 app.get('/app/icon.svg', (_req, res) => {
   res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
   res.setHeader('Cache-Control', 'public, max-age=86400');
   res.send(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <rect width="512" height="512" rx="96" fill="#1B5E3B"/>
-  <g transform="translate(76 88) scale(3.6)">
-    <rect x="70" y="2" width="14" height="26" rx="5" fill="#fff" opacity=".9"/>
-    <path d="M50 5 L0 52 Q0 56 4 56 L96 56 Q100 56 100 52 Z" fill="#fff"/>
-    <rect x="3" y="50" width="94" height="42" rx="6" fill="#fff"/>
-    <rect x="42" y="64" width="16" height="6" rx="1" fill="#1B5E3B"/>
-    <rect x="47" y="59" width="6" height="16" rx="1" fill="#1B5E3B"/>
-  </g>
+  <g transform="translate(36 53.5) scale(4.4)">${_LOGO_PATHS}</g>
 </svg>`);
 });
 
-// Maskable variant — same art with a 12% safe-area inset so OS tiles can
-// crop without clipping the logo. Required for Android adaptive icons.
+// Maskable variant — same art but inset by ~14% so Android adaptive-icon
+// crops never clip the logo. Background extends to the edges so OSes can
+// shape the tile freely (circle / squircle / rounded square).
 app.get('/app/icon-maskable.svg', (_req, res) => {
   res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
   res.setHeader('Cache-Control', 'public, max-age=86400');
   res.send(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <rect width="512" height="512" fill="#1B5E3B"/>
-  <g transform="translate(112 124) scale(2.88)">
-    <rect x="70" y="2" width="14" height="26" rx="5" fill="#fff" opacity=".9"/>
-    <path d="M50 5 L0 52 Q0 56 4 56 L96 56 Q100 56 100 52 Z" fill="#fff"/>
-    <rect x="3" y="50" width="94" height="42" rx="6" fill="#fff"/>
-    <rect x="42" y="64" width="16" height="6" rx="1" fill="#1B5E3B"/>
-    <rect x="47" y="59" width="6" height="16" rx="1" fill="#1B5E3B"/>
-  </g>
+  <g transform="translate(81 99) scale(3.5)">${_LOGO_PATHS}</g>
 </svg>`);
 });
 
@@ -1620,7 +1631,7 @@ app.get('/app/apple-touch-icon.png', (_req, res) => {
 // instantly. Network-first for /api/* (so live data wins when online),
 // cache-first for the static shell. Shipped from the same /app scope so
 // browsers register it for the right path.
-const APP_CACHE_VERSION = 'mms-app-v3';
+const APP_CACHE_VERSION = 'mms-app-v4';
 app.get('/app/sw.js', (_req, res) => {
   res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
   // SW must NOT be cached or you can never roll out a new one.

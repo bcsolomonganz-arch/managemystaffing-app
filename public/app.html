@@ -370,7 +370,7 @@ a:active{opacity:.6}
 
 <!-- Splash (first paint, before we know auth state) -->
 <div id="splash" class="splash">
-  <div class="splash-logo">M</div>
+  <div class="splash-logo" id="splash-logo"></div>
   <div style="font-size:13px;font-weight:700;letter-spacing:.04em">ManageMyStaffing</div>
   <div class="spinner"></div>
 </div>
@@ -381,7 +381,7 @@ a:active{opacity:.6}
 <!-- Login screen -->
 <div id="login-screen" class="login-wrap hidden">
   <div class="login-card">
-    <div class="logo">M</div>
+    <div class="logo" id="login-logo"></div>
     <h1>ManageMyStaffing</h1>
 
     <!-- Step 1: email + password -->
@@ -466,7 +466,7 @@ a:active{opacity:.6}
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
       </button>
       <div class="brand">
-        <div class="brand-logo">M</div>
+        <div class="brand-logo" id="brand-logo"></div>
         <div style="display:flex;flex-direction:column;line-height:1.15">
           <span id="brand-text" style="font-weight:800">ManageMyStaffing</span>
           <span id="bld-chip" class="bld-chip hidden" style="margin-top:3px;align-self:flex-start">
@@ -543,6 +543,41 @@ a:active{opacity:.6}
 //  Backend: shares /api/* endpoints with the main site.
 //  Auth:    same httpOnly cookie session as the main site.
 // ════════════════════════════════════════════════════════════
+
+// Canonical brand logo — same medical-house artwork as the main site's
+// LOGO_SVG. Two color variants:
+//   green: fill="#6B9E7A" — used on white backgrounds (e.g. header chip)
+//   white: fill="#fff"    — used on the green splash + login card
+function brandLogoSVG(variant) {
+  const houseFill = variant === 'white' ? '#fff' : '#6B9E7A';
+  const accent    = variant === 'white' ? '#1B5E3B' : '#fff';
+  return `<svg viewBox="0 0 100 92" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" style="display:block">
+    <rect x="70" y="2" width="14" height="26" rx="5" fill="${houseFill}"/>
+    <path d="M50 5 L0 52 Q0 56 4 56 L96 56 Q100 56 100 52 Z" fill="${houseFill}"/>
+    <rect x="3" y="50" width="94" height="42" rx="6" fill="${houseFill}"/>
+    <rect x="38" y="20" width="9" height="9" rx="2" fill="${accent}"/>
+    <rect x="52" y="20" width="9" height="9" rx="2" fill="${accent}"/>
+    <rect x="38" y="32" width="9" height="9" rx="2" fill="${accent}"/>
+    <rect x="52" y="32" width="9" height="9" rx="2" fill="${accent}"/>
+    <rect x="63" y="57" width="10" height="9" rx="2" fill="${accent}"/>
+    <rect x="76" y="57" width="10" height="9" rx="2" fill="${accent}"/>
+    <rect x="63" y="69" width="10" height="9" rx="2" fill="${accent}"/>
+    <rect x="76" y="69" width="10" height="9" rx="2" fill="${accent}"/>
+    <rect x="7" y="71" width="26" height="8" rx="4" fill="${accent}"/>
+    <rect x="16" y="62" width="8" height="26" rx="4" fill="${accent}"/>
+    <rect x="41" y="70" width="18" height="22" rx="3" fill="${accent}"/>
+  </svg>`;
+}
+// Inject brand logo into the three placeholders the moment the script runs.
+// Done before boot() so the splash already shows the real logo on first paint.
+(function injectBrandLogos() {
+  const splash = document.getElementById('splash-logo');
+  const login  = document.getElementById('login-logo');
+  const brand  = document.getElementById('brand-logo');
+  if (splash) { splash.innerHTML = brandLogoSVG('green');  splash.style.padding = '14px'; }
+  if (login)  { login.innerHTML  = brandLogoSVG('white');  login.style.padding  = '6px';  login.style.background = 'var(--green)'; }
+  if (brand)  { brand.innerHTML  = brandLogoSVG('green');  brand.style.padding  = '3px';  }
+})();
 
 const State = {
   user: null,

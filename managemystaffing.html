@@ -14136,6 +14136,13 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/></svg>
       Add Shifts
     </button>`;
+    // Contextual button: only on the Administration tab so admins can add
+    // a new administrator (employee with Position=Administration, Role=Building
+    // Admin) directly from the schedule. Pre-fills the Add Employee form.
+    const addAdminBtn = (g === 'Office') ? `<button class="btn btn-secondary btn-sm" onclick="App.openAddAdministrator()" style="display:flex;align-items:center;gap:6px;font-weight:600;color:var(--blue-d);border-color:var(--blue-m)">
+      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="6" cy="6" r="3"/><path d="M1 14a5 5 0 0 1 10 0"/><path d="M13 6v4M11 8h4"/></svg>
+      Add Administrator
+    </button>` : '';
     const removeShiftsBtn = `<button class="btn btn-secondary btn-sm" onclick="App.openRemoveShiftsModal()" style="display:flex;align-items:center;gap:6px;font-weight:600;color:var(--red);border-color:#FCA5A5">
       <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="2" y1="8" x2="14" y2="8"/></svg>
       Remove Shifts
@@ -14199,7 +14206,26 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     else calHtml = this.renderShiftView();
 
     document.getElementById('main').innerHTML = `${stats}
-      <div class="cal-toolbar">${viewTabs}${groupPill}${g?addShiftsBtn:''}${g?removeShiftsBtn:''}${undoBtn}${filterTabs}</div>${calHtml}`;
+      <div class="cal-toolbar">${viewTabs}${groupPill}${g?addShiftsBtn:''}${addAdminBtn}${g?removeShiftsBtn:''}${undoBtn}${filterTabs}</div>${calHtml}`;
+  },
+
+  // Open the Add Employee modal pre-filled for an administrator.
+  // Position=Office (labeled "Administration") and Role=Building Admin.
+  // Surfaced as a contextual button on the Administration schedule tab.
+  openAddAdministrator() {
+    this.openModal('modal-add-emp');
+    // Defer field setting until after the modal is in the DOM/visible.
+    setTimeout(() => {
+      const pos  = document.getElementById('emp-position');
+      const role = document.getElementById('emp-role');
+      if (pos)  pos.value  = 'Office';
+      if (role) role.value = 'admin';
+      // Show the Admin Access dropdown that's normally hidden until role=admin
+      if (typeof this.toggleAdminAccessRow === 'function') this.toggleAdminAccessRow();
+      if (typeof this.toggleEmpLicenseSection === 'function') this.toggleEmpLicenseSection();
+      const nameInput = document.getElementById('emp-name');
+      if (nameInput) nameInput.focus();
+    }, 30);
   },
 
   // ── PPD CALCULATOR ──────────────────────────────────────────
