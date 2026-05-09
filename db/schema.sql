@@ -219,3 +219,25 @@ CREATE TRIGGER buildings_updated  BEFORE UPDATE ON buildings  FOR EACH ROW EXECU
 CREATE TRIGGER accounts_updated   BEFORE UPDATE ON accounts   FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
 CREATE TRIGGER employees_updated  BEFORE UPDATE ON employees  FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
 CREATE TRIGGER shifts_updated     BEFORE UPDATE ON shifts     FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();
+
+-- ──────────────────────────────────────────────────────────────────────────
+-- app_state — JSONB key/value store for collections that the SPA persists
+-- via POST /api/data but that don't yet have dedicated tables. Holds:
+--   demos, billingData, shiftTemplates, staffingSlots, buildingShiftTypes,
+--   hrOnboarding, jobPostings, hrEmployees, hrAccounts, hrTimeClock.
+-- Before this table existed, db/repo.js loadAll() returned empty placeholders
+-- for these and POST /api/data silently dropped most of them on the way in,
+-- so anything saved through Demo Portal / Billing / shift-template UIs was
+-- gone after a server restart or after the dataCache was reloaded.
+-- HR collections (hrEmployees, hrAccounts, hrTimeClock) live here as a
+-- stopgap — when HR is fully built, migrate those to dedicated RLS-scoped
+-- tables. JSONB storage is fine for the others which are config-shaped.
+-- ──────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS app_state (
+  key         TEXT PRIMARY KEY,
+  value       JSONB NOT NULL,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TRIGGER app_state_updated BEFORE UPDATE ON app_state
+  FOR EACH ROW EXECUTE FUNCTION trg_set_updated_at();

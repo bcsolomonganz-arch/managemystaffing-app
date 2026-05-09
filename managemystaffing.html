@@ -1208,7 +1208,18 @@ const CLINICAL_SHIFTS = [{type:'Day',start:'7:00 AM',end:'3:00 PM'},{type:'Eveni
 const NON_CLINICAL_SHIFTS = [{type:'Morning',start:'6:00 AM',end:'2:00 PM'},{type:'Afternoon',start:'2:00 PM',end:'10:00 PM'}];
 const SHIFT_TYPES = g => CLINICAL.includes(g) ? CLINICAL_SHIFTS : NON_CLINICAL_SHIFTS;
 const SLOTS = {'Nurse Management':[1,0,0],'Charge Nurse':[1,1,1],'CNA':[3,3,2],'CMA':[1,1,1],'Housekeeping':[2,1],'Laundry':[1,1],'Cook':[2,1],'Dietary Aid':[2,1],'Maintenance':[1,0],'Marketing':[1]};
-const TODAY = new Date().toISOString().slice(0,10);
+// LOCAL-date YYYY-MM-DD. Was `new Date().toISOString().slice(0,10)` (UTC),
+// which made TODAY drift ahead of the user's actual day for any timezone
+// west of UTC — at 7pm CST on Sunday May 8 this returned "2026-05-09" even
+// though every other date display in the page (e.g. HR header's
+// `toLocaleDateString`) said "Friday, May 8". Shift dates are stored as
+// local YYYY-MM-DD strings (a nursing shift on May 9 means May 9 in the
+// facility's timezone), so TODAY needs to match that convention to keep
+// "today" highlighting, calendar navigation, and shift comparisons aligned.
+const TODAY = (() => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+})();
 // Server mode: true when served by Node.js (production)
 // false when opened as a local file (demo/dev)
 const IS_SERVER_MODE = window.location.protocol !== 'file:' && window.location.hostname !== '';
@@ -2247,6 +2258,16 @@ const App = {
   },
   _idleStart() {
     this._idleReset();
+    // Guard against multiple binds. _idleStart() is called from showApp(),
+    // post-TOTP-enroll, post-TOTP-login, and a few other places — without
+    // this flag, every login/re-entry path appends 5 fresh document-level
+    // listeners that fire on every mousemove/keydown/touchstart/scroll.
+    // Long browser sessions accumulated thousands of identical listeners,
+    // each calling _idleReset() (clearTimeout + setTimeout) per event,
+    // which is part of why long-running admin tabs eventually freeze
+    // under sustained automation or active use.
+    if (this._idleListenersBound) return;
+    this._idleListenersBound = true;
     ['mousemove','mousedown','keydown','touchstart','scroll'].forEach(ev =>
       document.addEventListener(ev, () => this._idleReset(), { passive: true }));
   },
@@ -2692,7 +2713,7 @@ const App = {
     if (u.role === 'superadmin') {
       adminBtns = `
         <button class="btn btn-ghost btn-sm" onclick="App.openAuditLog()" title="HIPAA Audit Log" style="display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg> Audit</button>
-        <button class="btn btn-primary btn-sm" onclick="App.openModal('modal-building')">+ Add Building</button>`;
+        <button class="btn btn-primary btn-sm" onclick="App.openModal('modal-building')">+ Add Facility</button>`;
     } else if (u.role === 'admin' || u.role === 'hradmin') {
       const backBtn = this.S._prevUser
         ? `<button class="btn btn-ghost btn-sm" onclick="App.backToPlatform()" style="color:var(--blue-d);border:1.5px solid var(--blue-m)">← Platform</button>`
@@ -2891,8 +2912,14 @@ const App = {
         ? `⚠ This will SHRINK at least one collection by ≥10%. The current state will be saved as a "prerestore" snapshot first so you can roll forward again, but you must explicitly confirm the shrink.\n\n`
         : `Current state will be saved as a "prerestore" snapshot first so you can roll forward again.\n\n`) +
       `Type RESTORE to confirm:`;
-    const typed = prompt(promptMsg);
-    if (typed !== 'RESTORE') { this.showToast('Restore cancelled', 'warn'); return; }
+    const typed = await this.mmsPrompt({
+      title: willShrink ? 'Confirm restore (data shrink)' : 'Confirm restore',
+      message: promptMsg,
+      placeholder: 'RESTORE',
+      submitLabel: willShrink ? 'Restore (with shrink)' : 'Restore',
+      validate: v => v === 'RESTORE' ? null : 'Type RESTORE in all caps to confirm',
+    });
+    if (typed == null) { this.showToast('Restore cancelled', 'warn'); return; }
 
     try {
       const r = await fetch('/api/admin/snapshots/restore', {
@@ -3085,9 +3112,16 @@ const App = {
     this.renderSADemos();
   },
 
-  deleteDemoAppointment(id) {
+  async deleteDemoAppointment(id) {
     const d = (this.S.demos||[]).find(x=>x.id===id);
-    if (!d || !confirm(`Delete demo with ${d.prospectName}?`)) return;
+    if (!d) return;
+    const ok = await this.mmsConfirm({
+      title: 'Delete demo',
+      message: `Delete the demo appointment with ${d.prospectName}?`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     this.S.demos = this.S.demos.filter(x=>x.id!==id);
     this.persistData();
     this.showToast('Demo deleted');
@@ -3623,12 +3657,24 @@ const App = {
       confirmMsg += `No area code derived from ZIP. You'll be asked to enter one.\n`;
     }
     confirmMsg += `Approximate cost: $2/month\n\nNote: requires 10DLC brand + campaign registration in Azure portal.`;
-    if (!confirm(confirmMsg)) return;
+    const proceed = await this.mmsConfirm({
+      title: 'Activate SMS number',
+      message: confirmMsg,
+      confirmLabel: 'Activate',
+    });
+    if (!proceed) return;
     let body = {};
     if (!areaCode) {
-      const manualArea = prompt('Enter the 3-digit area code to search:', '');
-      if (!manualArea || !/^\d{3}$/.test(manualArea)) return;
-      body.areaCode = manualArea;
+      const manualArea = await this.mmsPrompt({
+        title: 'Area code',
+        message: 'No area code could be derived from the ZIP. Enter the 3-digit area code to search.',
+        placeholder: '918',
+        inputmode: 'numeric',
+        submitLabel: 'Search',
+        validate: v => /^\d{3}$/.test((v||'').trim()) ? null : '3 digits required',
+      });
+      if (manualArea == null) return;
+      body.areaCode = manualArea.trim();
     }
     this.showToast('Provisioning SMS number — this can take a minute…');
     try {
@@ -3655,7 +3701,13 @@ const App = {
   async releaseBuildingSMS(buildingId) {
     const b = this.S.buildings.find(x => x.id === buildingId);
     if (!b || !b.smsFromPhone) return;
-    if (!confirm(`Release ${b.smsFromPhone} from ${b.name}?\n\nThis stops the monthly charge but the number cannot be recovered — you'd get a different one if you re-provision.`)) return;
+    const ok = await this.mmsConfirm({
+      title: 'Release SMS number',
+      message: `Release ${b.smsFromPhone} from ${b.name}?\n\nThis stops the monthly charge but the number cannot be recovered — you'd get a different one if you re-provision.`,
+      confirmLabel: 'Release number',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       const r = await fetch(`/api/buildings/${buildingId}/provision-sms`, {
         method: 'DELETE',
@@ -4646,7 +4698,12 @@ const App = {
       e.buildingId === (shift.buildingId || this.S.user?.buildingId) &&
       !e.inactive && e.phone && e.id !== shift.employeeId);
     if (!eligible.length) { this.showToast('No eligible staff with phone numbers found', 'warn'); return; }
-    if (!confirm(`Send shift-coverage SMS to ${eligible.length} eligible staff?\n\nMessage: "An open shift is available. Sign in at ManageMyStaffing.com to view and claim."`)) return;
+    const ok = await this.mmsConfirm({
+      title: 'Send coverage SMS',
+      message: `Send shift-coverage SMS to ${eligible.length} eligible staff?\n\nMessage:\n"An open shift is available. Sign in at ManageMyStaffing.com to view and claim."`,
+      confirmLabel: `Send to ${eligible.length}`,
+    });
+    if (!ok) return;
     const msg = 'An open shift is available. Sign in at ManageMyStaffing.com to view and claim.';
     let sent = 0; const failed = [];
     for (const emp of eligible) {
@@ -4660,8 +4717,15 @@ const App = {
       this.showToast(`Notification sent to ${sent} eligible staff`);
     }
   },
-  cancelHRShift(idx) {
-    if (!confirm('Cancel this open shift?')) return;
+  async cancelHRShift(idx) {
+    const ok = await this.mmsConfirm({
+      title: 'Cancel open shift',
+      message: 'Cancel this open shift? It will be removed from the open-shift list.',
+      confirmLabel: 'Cancel shift',
+      cancelLabel: 'Keep',
+      danger: true,
+    });
+    if (!ok) return;
     this.S.hrOpenShifts.splice(idx,1);
     this.persistData(); this.renderHRMain(); this.showToast('Shift cancelled');
   },
@@ -5196,9 +5260,28 @@ const App = {
   // server-side PATCH handler bcrypts nothing (no secrets) but does require
   // admin scope and rebuilds the audit trail on every edit.
   async tcEditPunch(empId, date, currentIn, currentOut) {
-    const newIn  = prompt(`Edit clock-in time for ${date} (HH:MM 24-hr, blank to clear):`, currentIn || '');
+    const validTimeOrEmpty = v => {
+      const t = (v || '').trim();
+      if (t === '') return null;
+      return /^\d{1,2}:\d{2}$/.test(t) ? null : 'Use HH:MM (24-hour) or leave blank';
+    };
+    const newIn  = await this.mmsPrompt({
+      title: `Edit clock-in — ${date}`,
+      message: 'HH:MM (24-hour). Leave blank to clear.',
+      defaultValue: currentIn || '',
+      placeholder: '07:00',
+      submitLabel: 'Next →',
+      validate: validTimeOrEmpty,
+    });
     if (newIn === null) return;
-    const newOut = prompt(`Edit clock-out time for ${date} (HH:MM 24-hr, blank to clear):`, currentOut || '');
+    const newOut = await this.mmsPrompt({
+      title: `Edit clock-out — ${date}`,
+      message: 'HH:MM (24-hour). Leave blank to clear.',
+      defaultValue: currentOut || '',
+      placeholder: '15:00',
+      submitLabel: 'Save',
+      validate: validTimeOrEmpty,
+    });
     if (newOut === null) return;
     const validTime = t => t === '' || /^\d{1,2}:\d{2}$/.test(t.trim());
     if (!validTime(newIn) || !validTime(newOut)) { this.showToast('Times must be HH:MM','warn'); return; }
@@ -6701,13 +6784,27 @@ const App = {
         } else {
           msg = `${removedCount} ${includeAssigned?'':'open '}shift${removedCount===1?'':'s'} removed (${slotsPerDay}/day)`;
           if (reqBefore === 0 && removedCount === 0) {
-            msg = 'Nothing to remove — no open shifts and no staffing requirement set for this group/type.';
+            // Lead with the actionable answer when the only matches were
+            // assigned shifts. The previous wording ("no open shifts and no
+            // staffing requirement set") read as "the calendar is full" even
+            // when 92 staff were assigned on the selected days — the user
+            // saw OPEN tags on the calendar (driven by real open rows on
+            // OTHER dates, or by a now-zeroed staffing requirement) and got
+            // confused. Surface "they're already assigned" first.
+            if (!includeAssigned && assignedSkipped > 0) {
+              msg = `All ${shiftType} ${g} slots on the selected day(s) are already assigned (${assignedSkipped} shift${assignedSkipped===1?'':'s'}). Re-open Remove Shifts and tick "Also remove assigned" if you want to unschedule them too.`;
+            } else {
+              msg = `Nothing to remove on the selected day(s) — no open ${shiftType} ${g} shifts on those dates and no staffing requirement set. The OPEN tags you see may be on different days; pick those days in the picker.`;
+            }
           }
         }
         if (includeAssigned && assignedDeleted > 0) {
           msg += ` · ${assignedDeleted} assigned shift${assignedDeleted===1?'':'s'} unscheduled`;
         }
-        if (!includeAssigned && assignedSkipped > 0) {
+        if (!includeAssigned && assignedSkipped > 0 && !(reqBefore === 0 && removedCount === 0)) {
+          // Only append the bare "X assigned kept" when we DIDN'T already
+          // lead with the assigned-shifts message above. Avoids the
+          // duplicate "(tick checkbox)" the previous version produced.
           msg += ` · ${assignedSkipped} already-assigned kept (tick "Also remove assigned" to include)`;
         }
         this.showToast(msg);
@@ -7431,12 +7528,18 @@ const App = {
     this.showToast(`${emp?.name||'Employee'} removed from ${date} shift`);
   },
 
-  removeFromAllFuture(shiftId, date, empId, shiftType) {
+  async removeFromAllFuture(shiftId, date, empId, shiftType) {
     const emp = this.S.employees.find(e => e.id === empId);
     const shift = this.S.shifts.find(s => s.id === shiftId);
     if (!emp || !shift) return;
     const g = shift.group;
-    if (!confirm(`Remove ${emp.name} from ALL future ${shiftType} ${g} shifts starting ${date}?\n\nThis ends the rotation and opens every future shift currently assigned to them.`)) return;
+    const ok = await this.mmsConfirm({
+      title: 'End rotation',
+      message: `Remove ${emp.name} from ALL future ${shiftType} ${g} shifts starting ${date}?\n\nThis ends the rotation and opens every future shift currently assigned to them.`,
+      confirmLabel: 'End rotation',
+      danger: true,
+    });
+    if (!ok) return;
 
     let removed = 0;
     for (const s of this.S.shifts) {
@@ -8799,7 +8902,12 @@ const App = {
     if (!accountId) return;
     const acct = this.S.accounts.find(a => a.id === accountId);
     if (!acct) return;
-    if (!confirm(`Resend invitation to ${acct.name} (${acct.email})?\n\nTheir current password will be cleared. The password they set on first login becomes their permanent password.`)) return;
+    const ok = await this.mmsConfirm({
+      title: 'Resend invitation',
+      message: `Resend invitation to ${acct.name} (${acct.email})?\n\nTheir current password will be cleared. The password they set on first login becomes their permanent password.`,
+      confirmLabel: 'Resend',
+    });
+    if (!ok) return;
 
     const btn = document.getElementById('resend-invite-btn');
     if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
@@ -9500,10 +9608,16 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.renderHRMain();
   },
 
-  deleteJobPosting(id) {
+  async deleteJobPosting(id) {
     const job = this.S.jobPostings.find(j => j.id === id);
     if (!job) return;
-    if (!confirm(`Delete "${job.title}"? This cannot be undone.`)) return;
+    const ok = await this.mmsConfirm({
+      title: 'Delete job posting',
+      message: `Delete "${job.title}"? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     this.S.jobPostings = this.S.jobPostings.filter(j => j.id !== id);
     this.persistData();
     this.showToast('Job posting deleted');
@@ -9990,7 +10104,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const p = (this.S.prospects || []).find(x => x.id === id);
     if (!p) return;
     if (!p.email) { this.showToast('No email on file for this prospect','warn'); return; }
-    if (!confirm(`Send onboarding docs to ${p.email}?\n\nThey will receive a link to fill out new-hire paperwork.`)) return;
+    const ok = await this.mmsConfirm({
+      title: 'Start onboarding',
+      message: `Send onboarding docs to ${p.email}?\n\nThey will receive a link to fill out new-hire paperwork.`,
+      confirmLabel: 'Send onboarding',
+    });
+    if (!ok) return;
     try {
       const r = await fetch('/api/recruiting/onboard', {
         method: 'POST',
@@ -11188,7 +11307,13 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
 
   async deleteReport(id) {
-    if (!confirm('Delete this report subscription?')) return;
+    const ok = await this.mmsConfirm({
+      title: 'Delete subscription',
+      message: 'Delete this report subscription? Anyone receiving the recurring email will stop getting it.',
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       const r = await fetch('/api/reports/subscriptions/' + encodeURIComponent(id), { method: 'DELETE' });
       if (!r.ok) { const d = await r.json().catch(()=>({})); this.showToast(d.error || 'Delete failed','warn'); return; }
@@ -11802,13 +11927,19 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.persistData(); this.renderHRMain();
   },
 
-  removeHRStep(state, idx) {
+  async removeHRStep(state, idx) {
     const steps = this._obPkg(state).steps;
     if (steps[idx]?.locked) {
       this.showToast('This step is required for SMS compliance and cannot be removed.', 'warn');
       return;
     }
-    if (!confirm('Remove this onboarding step?')) return;
+    const ok = await this.mmsConfirm({
+      title: 'Remove onboarding step',
+      message: 'Remove this step from the onboarding flow? New hires won’t see it after this change.',
+      confirmLabel: 'Remove',
+      danger: true,
+    });
+    if (!ok) return;
     steps.splice(idx,1);
     this.persistData(); this.renderHRMain();
   },
@@ -11985,12 +12116,25 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     return out;
   },
 
-  addStaffEvent(dateISO) {
-    const title = prompt(`Event title for ${dateISO}:`);
-    if (!title || !title.trim()) return;
-    const type = (prompt('Type — nursing / activity / appreciation / other:', 'activity') || 'activity').trim().toLowerCase();
+  async addStaffEvent(dateISO) {
+    const title = await this.mmsPrompt({
+      title: `New event — ${dateISO}`,
+      message: 'Event title (e.g. "Mandatory in-service", "Bonus payout day").',
+      placeholder: 'Event title',
+      submitLabel: 'Next →',
+      validate: v => v && v.trim() ? null : 'Title required',
+    });
+    if (title == null) return;
+    const type = await this.mmsPrompt({
+      title: 'Event type',
+      message: 'One of: nursing, activity, appreciation, other.',
+      defaultValue: 'activity',
+      placeholder: 'activity',
+      submitLabel: 'Save event',
+    });
+    if (type == null) return;
     const validTypes = ['nursing','activity','appreciation','other'];
-    const t = validTypes.includes(type) ? type : 'other';
+    const t = validTypes.includes((type||'').trim().toLowerCase()) ? (type||'').trim().toLowerCase() : 'other';
     if (!Array.isArray(this.S.staffEvents)) this.S.staffEvents = [];
     this.S.staffEvents.push({
       id: 'ev_' + Date.now(),
@@ -12005,8 +12149,14 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.renderMain();
   },
 
-  removeStaffEvent(id) {
-    if (!confirm('Remove this event?')) return;
+  async removeStaffEvent(id) {
+    const ok = await this.mmsConfirm({
+      title: 'Remove event',
+      message: 'Remove this event from the calendar?',
+      confirmLabel: 'Remove',
+      danger: true,
+    });
+    if (!ok) return;
     this.S.staffEvents = (this.S.staffEvents || []).filter(e => e.id !== id);
     this.persistData();
     this.renderMain();
@@ -13014,7 +13164,13 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const [a, b] = [String(myId), String(otherId)].sort();
     this.S._activeThreadId = 'dm:' + a + ':' + b;
     this.S._activeThreadOtherId = otherId;
-    this.renderMain();
+    // Switch to the Texts page on the Direct tab so the thread actually
+    // renders. Without this, picking from the + New Message modal on the
+    // Messages page would just call renderMain() in whichever view we
+    // happened to be in — which dropped the user onto the empty
+    // "No conversations yet" state instead of a compose view.
+    // Mirrors what startDmWith() does from the roster row path.
+    this.openTexts('direct');
     setTimeout(() => document.getElementById('dm-input')?.focus(), 60);
   },
 
@@ -13418,11 +13574,17 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (this.S._rosterQuery) this.filterRoster(this.S._rosterQuery);
   },
 
-  removeDisciplineNote(empId, idx) {
+  async removeDisciplineNote(empId, idx) {
     const emp = this.S.employees.find(e => e.id === empId);
     if (!emp || !Array.isArray(emp.disciplinary)) return;
     if (idx < 0 || idx >= emp.disciplinary.length) return;
-    if (!confirm('Remove this disciplinary entry? This is permanent and audit-logged.')) return;
+    const _ok = await this.mmsConfirm({
+      title: 'Remove disciplinary entry',
+      message: 'Remove this disciplinary entry?\n\nThis is permanent and audit-logged.',
+      confirmLabel: 'Remove',
+      danger: true,
+    });
+    if (!_ok) return;
     const removed = emp.disciplinary.splice(idx, 1)[0];
     this.persistData();
     Audit.log('DISCIPLINARY_NOTE_REMOVED', `${removed?.type||'note'} (${emp.name})`, this.S.user?.id, 'high');
@@ -13515,9 +13677,15 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   async setEmpPin(empId) {
     const emp = this.S.employees.find(e => e.id === empId);
     if (!emp) return;
-    const pin = prompt(`Set kiosk PIN for ${emp.name}\n\n4 to 6 digits. Used to clock in/out at the tablet kiosk.`, '');
-    if (!pin) return;
-    if (!/^\d{4,6}$/.test(pin)) { this.showToast('PIN must be 4–6 digits','warn'); return; }
+    const pin = await this.mmsPrompt({
+      title: 'Kiosk PIN',
+      message: `Set kiosk PIN for ${emp.name}\n\n4 to 6 digits. Used to clock in/out at the tablet kiosk.`,
+      placeholder: '••••',
+      inputmode: 'numeric',
+      submitLabel: 'Save PIN',
+      validate: v => /^\d{4,6}$/.test(v) ? null : 'PIN must be 4–6 digits',
+    });
+    if (pin == null) return;
     try {
       const r = await fetch('/api/timeclock/set-pin', {
         method: 'POST',
@@ -13612,12 +13780,17 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       </div>`;
   },
 
-  executeMassSwap() {
+  async executeMassSwap() {
     const m = this._massSwapMatches();
     if (!m) { this.showToast('Pick employees + date range','warn'); return; }
     if (m.error) { this.showToast(m.error,'warn'); return; }
     if (!m.movable.length) { this.showToast('Nothing to move','warn'); return; }
-    if (!confirm(`Move ${m.movable.length} shift${m.movable.length===1?'':'s'} from ${m.from.name} to ${m.to.name}?\n\n${m.conflicts.length} day${m.conflicts.length===1?'':'s'} will be skipped (target already has a shift).`)) return;
+    const ok = await this.mmsConfirm({
+      title: 'Confirm mass shift swap',
+      message: `Move ${m.movable.length} shift${m.movable.length===1?'':'s'} from ${m.from.name} to ${m.to.name}?\n\n${m.conflicts.length} day${m.conflicts.length===1?'':'s'} will be skipped (target already has a shift).`,
+      confirmLabel: `Move ${m.movable.length} shift${m.movable.length===1?'':'s'}`,
+    });
+    if (!ok) return;
     this._pushUndo(`Mass swap: ${m.from.name} → ${m.to.name} (${m.movable.length} shifts)`);
     let moved = 0;
     for (const s of m.movable) {
@@ -15782,7 +15955,13 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
 
   async cancelTrade(tradeId) {
-    if (!confirm('Cancel your trade request?')) return;
+    const ok = await this.mmsConfirm({
+      title: 'Cancel trade request',
+      message: 'Cancel your trade request? The other employee will be notified.',
+      confirmLabel: 'Cancel request',
+      cancelLabel: 'Keep',
+    });
+    if (!ok) return;
     try {
       const r = await fetch('/api/shifts/trade/' + tradeId, { method: 'DELETE' });
       if (!r.ok) { const d = await r.json().catch(()=>({})); this.showToast(d.error || 'Cancel failed','warn'); return; }
@@ -15797,7 +15976,13 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   // Admin: approve or reject a pending trade.
   async decideTrade(tradeId, decision) {
     const verb = decision === 'approve' ? 'approve' : 'reject';
-    if (!confirm(`Are you sure you want to ${verb} this trade?`)) return;
+    const ok = await this.mmsConfirm({
+      title: `${verb[0].toUpperCase()+verb.slice(1)} trade`,
+      message: `Are you sure you want to ${verb} this trade?`,
+      confirmLabel: verb[0].toUpperCase()+verb.slice(1),
+      danger: decision === 'reject',
+    });
+    if (!ok) return;
     try {
       const r = await fetch(`/api/shifts/trade/${tradeId}/decide`, {
         method: 'POST',
@@ -16997,7 +17182,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
 
   // ── SAVE EMPLOYEE ────────────────────────────────────────────
-  saveEmployee() {
+  async saveEmployee() {
     if(this.S.user?.role !== 'admin' && this.S.user?.role !== 'superadmin') { this.showToast('Unauthorized','warn'); return; }
     const name=sanitizeInput(document.getElementById('emp-name').value.trim(), 100);
     const pos=document.getElementById('emp-position').value;
@@ -17111,9 +17296,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         }
         // Else fall through to creating a new record (rare).
       } else if (matched && !matched.inactive) {
-        if (!confirm(`An ACTIVE employee already exists with the same ${nameDobMatch?'name + DOB':'email'} (${matched.name}). Add anyway?`)) {
-          return;
-        }
+        const ok = await this.mmsConfirm({
+          title: 'Possible duplicate',
+          message: `An ACTIVE employee already exists with the same ${nameDobMatch?'name + DOB':'email'} (${matched.name}).\n\nAdd anyway?`,
+          confirmLabel: 'Add anyway',
+        });
+        if (!ok) return;
       }
 
       const termLog = (emailMatch?.terminationLog) || [];
@@ -17771,6 +17959,88 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       if (top) { e.preventDefault(); this.closeModal(top.id); }
     });
     this._escapeInstalled = true;
+  },
+
+  // ── Promise-based modal replacements for native prompt() / confirm() ──
+  // Native browser prompts are Web 1.0 UX, can't be styled, and block any
+  // automation tooling (each one freezes the renderer until the user
+  // clicks OK/Cancel). These helpers render the same in-app modal style
+  // we use everywhere else and resolve a Promise instead of blocking.
+  //
+  // Usage:
+  //   const ok = await App.mmsConfirm({ message: 'Delete this shift?' });
+  //   if (!ok) return;
+  //
+  //   const v = await App.mmsPrompt({ message: 'Enter PIN', validate: x => /^\d{4,6}$/.test(x) ? null : '4–6 digits' });
+  //   if (v == null) return;   // user cancelled
+  mmsConfirm(opts) {
+    opts = opts || {};
+    return new Promise(resolve => {
+      const div = document.createElement('div');
+      div.className = 'modal-overlay open';
+      const okLabel     = opts.confirmLabel || 'Confirm';
+      const cancelLabel = opts.cancelLabel || 'Cancel';
+      const okClass     = opts.danger ? 'btn-secondary' : 'btn-primary';
+      const okStyle     = opts.danger ? 'color:var(--red);border-color:#FCA5A5' : '';
+      div.innerHTML = `<div class="modal" style="max-width:440px">
+        <div class="modal-header"><span class="modal-title">${sanitize(opts.title || 'Confirm')}</span></div>
+        <div class="modal-body" style="padding:18px;font-size:13px;color:var(--g700);white-space:pre-wrap;line-height:1.5">${sanitize(opts.message || '')}</div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" data-act="cancel">${sanitize(cancelLabel)}</button>
+          <button class="btn ${okClass}" data-act="ok" style="${okStyle}">${sanitize(okLabel)}</button>
+        </div>
+      </div>`;
+      const cleanup = (val) => { div.remove(); document.removeEventListener('keydown', onKey); resolve(val); };
+      const onKey = (e) => { if (e.key === 'Escape') cleanup(false); };
+      div.querySelector('[data-act=cancel]').addEventListener('click', () => cleanup(false));
+      div.querySelector('[data-act=ok]').addEventListener('click', () => cleanup(true));
+      document.body.appendChild(div);
+      document.addEventListener('keydown', onKey);
+      setTimeout(() => div.querySelector('[data-act=ok]')?.focus(), 30);
+    });
+  },
+
+  mmsPrompt(opts) {
+    opts = opts || {};
+    return new Promise(resolve => {
+      const div = document.createElement('div');
+      div.className = 'modal-overlay open';
+      const submitLabel = opts.submitLabel || 'OK';
+      div.innerHTML = `<div class="modal" style="max-width:480px">
+        <div class="modal-header"><span class="modal-title">${sanitize(opts.title || 'Input required')}</span></div>
+        <div class="modal-body" style="padding:18px">
+          ${opts.message ? `<div style="font-size:13px;color:var(--g700);margin-bottom:12px;white-space:pre-wrap;line-height:1.5">${sanitize(opts.message)}</div>` : ''}
+          <input type="${opts.type === 'password' ? 'password' : 'text'}" data-mms-prompt-input
+            value="${sanitize(opts.defaultValue == null ? '' : String(opts.defaultValue))}"
+            placeholder="${sanitize(opts.placeholder || '')}"
+            inputmode="${sanitize(opts.inputmode || '')}"
+            style="width:100%;padding:9px 12px;border:1.5px solid var(--g200);border-radius:8px;font-size:13px;outline:none">
+          <div data-mms-prompt-err style="color:var(--red);font-size:12px;margin-top:6px;display:none"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" data-act="cancel">Cancel</button>
+          <button class="btn btn-primary" data-act="ok">${sanitize(submitLabel)}</button>
+        </div>
+      </div>`;
+      const inp   = div.querySelector('[data-mms-prompt-input]');
+      const errEl = div.querySelector('[data-mms-prompt-err]');
+      const cleanup = (val) => { div.remove(); document.removeEventListener('keydown', onKey); resolve(val); };
+      const submit = () => {
+        const v = inp.value;
+        if (typeof opts.validate === 'function') {
+          const err = opts.validate(v);
+          if (err) { errEl.textContent = err; errEl.style.display = 'block'; inp.focus(); return; }
+        }
+        cleanup(v);
+      };
+      const onKey = (e) => { if (e.key === 'Escape') cleanup(null); };
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+      div.querySelector('[data-act=cancel]').addEventListener('click', () => cleanup(null));
+      div.querySelector('[data-act=ok]').addEventListener('click', submit);
+      document.body.appendChild(div);
+      document.addEventListener('keydown', onKey);
+      setTimeout(() => { inp.focus(); inp.select(); }, 30);
+    });
   },
 
   showToast(msg, type) {

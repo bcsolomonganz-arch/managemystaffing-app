@@ -301,6 +301,20 @@ async function ensureSchema() {
       observed_at  TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `);
+
+  // ── app_state — JSONB blob store for collections that the SPA persists
+  // via POST /api/data but that don't have dedicated tables yet.
+  // Pre-fix, loadAll() returned empty placeholders for these and POST /api/data
+  // dropped most of them on the way in, so anything saved through the Demo
+  // Portal / Billing / shift-template / PPD-staffing UIs never reached PG.
+  // Migrate the HR rows out of here once HR has dedicated RLS-scoped tables.
+  await _pool.query(`
+    CREATE TABLE IF NOT EXISTS app_state (
+      key         TEXT PRIMARY KEY,
+      value       JSONB NOT NULL,
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
 }
 
 // Read all persistent migration flags into a Set of names.
@@ -351,17 +365,42 @@ async function setContext(client, user) {
 // Note: when called WITH a user, RLS restricts what's returned.
 //       When called as superadmin or no user, returns everything.
 // ──────────────────────────────────────────────────────────────────────────
+// Collections stored as single JSONB rows in app_state. Default value type
+// per key — array vs object — matches what the SPA expects on first load,
+// so first-time empties don't break .filter() / .findIndex() etc.
+const APP_STATE_KEYS = {
+  demos:              [],
+  billingData:        {},
+  shiftTemplates:     [],
+  staffingSlots:      {},
+  buildingShiftTypes: {},
+  hrOnboarding:       {},
+  jobPostings:        [],
+  hrEmployees:        [],
+  hrAccounts:         [],
+  hrTimeClock:        [],
+};
+
+async function loadAppState(c) {
+  const r = await c.query('SELECT key, value FROM app_state WHERE key = ANY($1)', [Object.keys(APP_STATE_KEYS)]);
+  const out = {};
+  for (const [k, def] of Object.entries(APP_STATE_KEYS)) out[k] = Array.isArray(def) ? [] : {};
+  for (const row of r.rows) out[row.key] = row.value;
+  return out;
+}
+
 async function loadAll() {
   const c = await _pool.connect();
   try {
     // Bypass RLS for the unconditional read — caller is server-trusted code
-    const [companies, buildings, accounts, employees, shifts, patterns] = await Promise.all([
+    const [companies, buildings, accounts, employees, shifts, patterns, appState] = await Promise.all([
       c.query('SELECT * FROM companies ORDER BY name'),
       c.query('SELECT * FROM buildings ORDER BY name'),
       c.query('SELECT * FROM accounts'),
       c.query('SELECT * FROM employees'),
       c.query('SELECT * FROM shifts ORDER BY shift_date'),
       c.query('SELECT * FROM schedule_patterns'),
+      loadAppState(c),
     ]);
     return {
       companies: companies.rows.map(rowCompany),
@@ -370,10 +409,9 @@ async function loadAll() {
       employees: employees.rows.map(rowEmployee),
       shifts:    shifts.rows.map(rowShift),
       schedulePatterns: patterns.rows.map(rowPattern),
-      // HR collections still empty until HR is built — placeholder to maintain shape
-      hrEmployees: [], hrAccounts: [], hrTimeClock: [],
-      jobPostings: [], demos: [], billingData: {},
-      shiftTemplates: [], staffingSlots: {}, buildingShiftTypes: {},
+      // app_state-backed collections — see APP_STATE_KEYS above. HR rows live
+      // here as a stopgap until HR migrates to its own RLS-scoped tables.
+      ...appState,
     };
   } finally {
     c.release();
@@ -825,6 +863,24 @@ async function saveAll(data) {
            p.shiftType || null, p.group || null, JSON.stringify(p.pattern || {}),
            p.startDate || null, p.endDate || null, p.active !== false]);
       }
+    }
+
+    // ── app_state blobs (demos, billingData, shiftTemplates, etc.) ───────
+    // Only write keys present on `data` so a partial save doesn't blow away
+    // a collection we weren't given. Default-typing matters: for a key whose
+    // expected shape is an object, an array sneaking in (or vice versa)
+    // would corrupt the SPA's reads later, so coerce to the expected type.
+    for (const [k, def] of Object.entries(APP_STATE_KEYS)) {
+      if (data[k] === undefined) continue;
+      const expectArray = Array.isArray(def);
+      const v = expectArray
+        ? (Array.isArray(data[k]) ? data[k] : [])
+        : (data[k] && typeof data[k] === 'object' && !Array.isArray(data[k]) ? data[k] : {});
+      await c.query(
+        `INSERT INTO app_state (key, value) VALUES ($1, $2::jsonb)
+         ON CONFLICT (key) DO UPDATE SET value = $2::jsonb, updated_at = now()`,
+        [k, JSON.stringify(v)]
+      );
     }
   });
 }

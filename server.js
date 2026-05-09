@@ -460,6 +460,17 @@ function markDirty() {
   dataDirty = true;
   if (saveTimeout) clearTimeout(saveTimeout);
   saveTimeout = setTimeout(persistCache, _useDB ? 200 : 2000);
+  // Bump the data version on every mutation so:
+  //   1. Any future intermediate cache layer (CDN, proxy) that respects ETag
+  //      won't serve a stale /api/data body after a write — the response
+  //      Cache-Control: no-store added at GET /api/data prevents this today,
+  //      but defense in depth is cheap.
+  //   2. Concurrent /api/data POSTs from another tab/admin actually hit the
+  //      412 If-Match conflict path instead of silently overwriting state
+  //      that mutated under them via /api/shifts/* etc. Pre-fix, only POST
+  //      /api/data bumped the version, so out-of-band shift writes left the
+  //      ETag unchanged and a stale follow-up POST would slip through.
+  _bumpDataVersion();
 }
 
 // Tracks consecutive file-mode persist failures. If we hit too many in a
@@ -6540,6 +6551,14 @@ app.get('/api/data', requireAuth, async (req, res) => {
   try {
     const data     = await loadData();
     const filtered = getDataForUser(req.user, data);
+    // Disable HTTP caching: shift mutation endpoints (POST /api/shifts,
+    // /assign, /unassign, /end-rotation, /claim*, /trade*, etc.) don't all
+    // call _bumpDataVersion(), so the ETag can stay constant across writes.
+    // With ETag-only freshness, Express's res.json auto-returns 304 on the
+    // next GET, and the browser serves a stale cached body that's missing
+    // the just-written rows. That manifests as the "assign returns 200,
+    // PG has scheduled, next GET shows open" symptom from 2026-05-08.
+    res.setHeader('Cache-Control', 'no-store');
     res.setHeader('ETag', `"${_dataVersion}"`);
     auditLog('DATA_ACCESS', req.user, { role: req.user.role });
     res.json(filtered);
@@ -6562,7 +6581,12 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   // refuse to write rather than risk no-op or partial overwrite.
   const KNOWN_KEYS = ['buildings','employees','shifts','schedulePatterns',
                       'hrEmployees','hrTimeClock','accounts','companies',
-                      'jobPostings','hrAccounts'];
+                      'jobPostings','hrAccounts',
+                      // app_state-backed config collections
+                      'demos','billingData','shiftTemplates','staffingSlots',
+                      'buildingShiftTypes','hrOnboarding',
+                      // already-handled scoped collections
+                      'staffEvents','prospects','ppdDailyCensus'];
   const present = KNOWN_KEYS.filter(k => k in payload);
   if (present.length === 0) {
     auditLog('DATA_UPDATE_REJECTED_EMPTY', req.user, { keys: Object.keys(payload) });
@@ -6768,6 +6792,33 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
     if (Array.isArray(payload.companies))   data.companies   = payload.companies;
     if (Array.isArray(payload.jobPostings)) data.jobPostings = payload.jobPostings;
     if (Array.isArray(payload.hrAccounts))  data.hrAccounts  = payload.hrAccounts;
+    // SA-managed admin collections — pre-fix these were silently dropped on
+    // the way in AND returned as empty placeholders by db/repo.js loadAll(),
+    // so anything saved through the Demo Portal / Billing UIs disappeared
+    // on reload. Now wholesale-replaced for SA on every POST and persisted
+    // via the app_state table.
+    if (Array.isArray(payload.demos))          data.demos          = payload.demos;
+    if (Array.isArray(payload.shiftTemplates)) data.shiftTemplates = payload.shiftTemplates;
+    if (payload.billingData  && typeof payload.billingData  === 'object' && !Array.isArray(payload.billingData))  data.billingData  = payload.billingData;
+    if (payload.hrOnboarding && typeof payload.hrOnboarding === 'object' && !Array.isArray(payload.hrOnboarding)) data.hrOnboarding = payload.hrOnboarding;
+  }
+
+  // Per-building config maps: { [buildingId]: { ... } }
+  // Both SA and building admins can write — SA wholesale, building admins only
+  // for buildings in their own scope. Without this, PPD staffing config and
+  // custom shift types vanished on reload (loadAll() returned {} placeholders
+  // and POST /api/data had no handler to update the per-building keys).
+  for (const key of ['staffingSlots', 'buildingShiftTypes']) {
+    const incoming = payload[key];
+    if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) continue;
+    if (isSA) {
+      data[key] = incoming;
+    } else {
+      data[key] = data[key] || {};
+      for (const bId of Object.keys(incoming)) {
+        if (callerBIds.has(bId)) data[key][bId] = incoming[bId];
+      }
+    }
   }
 
   // Per-day census map ({ 'YYYY-MM-DD': number }) — populated by PPD calendar
