@@ -227,8 +227,11 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
    can scan the calendar and instantly spot gaps. Not aggressive — meant to
    stand out on a glance, not dominate. Uses the same shade as the open-
    shift pill border for visual consistency. */
-.cal-cell.has-open{background:#FFFBEA}
-.cal-cell.has-open:hover{background:#FFF6D0}
+/* Yellow highlight is per-pill (.shift-open-tag below) so unmet open
+   slots stand out without staining the whole day. The previous
+   cell-level rule made the entire square yellow when any one slot was
+   open, which was visually loud and didn't tell the eye WHERE the gap
+   was. Per-pill highlight points the eye directly at the missing seat. */
 /* Month banner inside calendar */
 .cal-month-banner{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--g200);background:var(--g50)}
 .cal-month-title{font-size:16px;font-weight:800;color:var(--g900)}
@@ -245,7 +248,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .week14-cell:nth-child(7n){border-right:none}
 .week14-cell:hover{background:var(--g50)}
 .week14-cell.today{background:var(--blue-l)}
-.week14-cell.has-open{background:#FFFBEA}
+/* (.week14-cell.has-open removed — per-pill .shift-open-tag tint instead) */
 .week14-cell.selected{background:var(--blue-l);outline:2px solid var(--blue-m);outline-offset:-1px}
 .week14-date{font-size:12px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px}
 .week14-cell.today .week14-date{color:var(--blue-d)}
@@ -257,7 +260,12 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .shift-row{display:flex;align-items:center;gap:4px;margin-bottom:2px}
 .shift-label{font-size:10px;font-weight:700;color:var(--g600);width:22px;flex-shrink:0}
 .shift-emp{background:var(--blue-l);color:var(--blue-d);padding:1px 5px;border-radius:3px;font-size:10px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:66px}
-.shift-open-tag{background:#fff;color:var(--blue-d);padding:1px 5px;border-radius:3px;font-size:10px;font-weight:600;border:1.5px dashed var(--blue-m)}
+/* OPEN slot pill — soft yellow background so unmet coverage stands out
+   directly behind the placeholder, not behind the whole day. The dashed
+   border keeps it visually distinct from filled (solid-bg) employee pills
+   while remaining clearly clickable. */
+.shift-open-tag{background:#FFFBEA;color:#92400E;padding:1px 5px;border-radius:3px;font-size:10px;font-weight:600;border:1.5px dashed #F59E0B}
+.shift-open-tag:hover{background:#FEF3C7}
 .pattern-dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:2px}
 
 /* RIGHT PANEL */
@@ -1106,7 +1114,20 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
       <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-assign-shift')">✕</button>
     </div>
     <div id="modal-assign-shift-body" style="overflow-y:auto;flex:1;padding:20px"></div>
-    <div id="modal-assign-shift-footer" class="modal-footer" style="flex-shrink:0">
+    <div id="modal-assign-shift-footer" class="modal-footer" style="flex-shrink:0;display:flex;align-items:center;gap:8px">
+      <!-- Bottom-left "Remove this slot" button. Shows when the modal was
+           opened against a resolvable open shift row (st.shiftId is set) so
+           an admin can drop the slot from the schedule entirely without
+           first having to assign someone. The id is set to '' on open and
+           filled in by openAssignShiftModal/_renderAssignShiftBody when a
+           seed shift is found; the button stays disabled-looking otherwise. -->
+      <button id="modal-assign-shift-delete" class="btn btn-secondary"
+        style="color:var(--red);border:1.5px solid #FCA5A5;display:none"
+        onclick="App._removeSlotFromAssignModal()" title="Remove this open slot from the schedule">
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6h12M5 2v3M11 2v3M6 9l4 4M10 9l-4 4"/></svg>
+        Remove from schedule
+      </button>
+      <div style="flex:1"></div>
       <button class="btn btn-secondary" onclick="App.closeModal('modal-assign-shift')">Cancel</button>
       <button class="btn btn-ghost" onclick="App.saveAssignShiftOnly()">This Shift Only</button>
       <button class="btn btn-primary" onclick="App.saveAssignShift()">Assign &amp; Apply Rotation</button>
@@ -6103,10 +6124,14 @@ const App = {
     const makeDay = (idx) => {
       const d = new Date(st.dates[idx] + 'T12:00:00');
       const sel = st.selectedDays.includes(idx);
+      // Derive the weekday label from the actual date instead of DOW[idx%7].
+      // Now that the picker can start on any day (not just Monday — Remove
+      // Shifts starts at TODAY), DOW[0] would no longer mean Monday.
+      const dayLabel = d.toLocaleDateString('en-US', { weekday:'short' });
       return `<button onclick="App.toggleShiftDay('add',${idx},event.shiftKey)"
         style="flex:1;padding:9px 3px;border-radius:8px;border:2px solid ${sel?col:'var(--g200)'};
           background:${sel?col+'1A':'#fff'};cursor:pointer;min-width:0;transition:all .12s">
-        <div style="font-size:10px;font-weight:700;color:${sel?col:'var(--g400)'}">${DOW[idx%7]}</div>
+        <div style="font-size:10px;font-weight:700;color:${sel?col:'var(--g400)'}">${dayLabel}</div>
         <div style="font-size:15px;font-weight:800;color:${sel?col:'var(--g800)'};margin:2px 0">${d.getDate()}</div>
         <div style="font-size:9px;color:${sel?col:'var(--g400)'}">${d.toLocaleDateString('en-US',{month:'short'})}</div>
       </button>`;
@@ -6647,9 +6672,13 @@ const App = {
     const g = this.S.selectedGroup;
     if (!g) { this.showToast('Select a department from the sidebar first', 'warn'); return; }
     const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
+    // Picker always starts at TODAY (not Monday-of-the-week). Past days
+    // are no longer "removable" — the day has already happened, so showing
+    // selectable past dates created confusing UX where a user could "select"
+    // a past Monday but the actual delete iterates from TODAY forward only.
+    // Cycle anchors at TODAY so selectedDays positions map to the dates the
+    // user actually sees in the picker.
     const startD = new Date(TODAY + 'T12:00:00');
-    const dow = startD.getDay();
-    startD.setDate(startD.getDate() - (dow === 0 ? 6 : dow - 1));
     const dates = [];
     for (let i = 0; i < 14; i++) {
       const d = new Date(startD); d.setDate(d.getDate() + i);
@@ -6927,6 +6956,13 @@ const App = {
     const emps = this.S.employees.filter(e =>
       e.buildingId === st.buildingId && ag.includes(e.group) && !e.inactive
     );
+
+    // Bottom-left "Remove from schedule" button visibility — only show when
+    // we have a real shift row to delete. The user-visible behavior the
+    // admin asked for: clicking an open shift should expose a single
+    // prominent way to drop it from the schedule, not just the small ✕ icon.
+    const delBtn = document.getElementById('modal-assign-shift-delete');
+    if (delBtn) delBtn.style.display = st.shiftId ? 'inline-flex' : 'none';
 
     const clickedD = new Date(st.date + 'T12:00:00');
     const dateLabel = clickedD.toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric'});
@@ -7611,13 +7647,28 @@ const App = {
     this.showToast(`${emp.name} removed from ${removed} future ${shiftType} shift${removed===1?'':'s'}`, removed?'success':'warn');
   },
 
+  // Bottom-left "Remove from schedule" button on the Assign Employee modal
+  // footer. Reads the current shiftId from _assignShiftState and delegates
+  // to the shared removeShiftSlot() flow (which handles the confirm modal
+  // and DELETE /api/shifts/:id call). Closes the assign modal first so the
+  // confirmation dialog isn't fighting it for focus.
+  async _removeSlotFromAssignModal() {
+    const st = this.S._assignShiftState;
+    if (!st || !st.shiftId) { this.showToast('No slot to remove', 'warn'); return; }
+    const id = st.shiftId;
+    this.closeModal('modal-assign-shift');
+    await this.removeShiftSlot(id);
+  },
+
   // ── DELETE A SHIFT SLOT ─────────────────────────────────────────────────────
   // Fired by the small ✕ icon shown in the corner of the shift modal (both
-  // the filled "Shift Options" modal and the open "Assign Employee" modal).
-  // Confirms with the admin first, then calls DELETE /api/shifts/:id so the
-  // anti-shrink tripwire on /api/data POST is bypassed cleanly. The shift
-  // must be deleted via this dedicated endpoint — direct mutation of the
-  // shifts array followed by /api/data POST will be rejected as a shrink.
+  // the filled "Shift Options" modal and the open "Assign Employee" modal),
+  // and by the prominent bottom-left "Remove from schedule" button in the
+  // assign modal footer. Confirms with the admin first, then calls DELETE
+  // /api/shifts/:id so the anti-shrink tripwire on /api/data POST is
+  // bypassed cleanly. The shift must be deleted via this dedicated endpoint
+  // — direct mutation of the shifts array followed by /api/data POST will
+  // be rejected as a shrink.
   async removeShiftSlot(shiftId) {
     const shift = (this.S.shifts || []).find(s => s.id === shiftId);
     if (!shift) { this.showToast('Shift not found', 'warn'); return; }
@@ -16167,14 +16218,27 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         const hasReqs   = Object.values(slotReqs).some(v => v > 0);
         let anyShown = false;
 
+        // Past dates: a day that's already happened can't have OPEN slots —
+        // either someone worked or the shift simply didn't get covered, but
+        // there's no "open" anymore. Render only the actual scheduled
+        // employees and skip the OPEN placeholders + the "X/Y" coverage
+        // badge. Today and future dates render normally.
+        const isPastDay = ds < TODAY;
+
         shiftDefs.forEach(sh => {
           const req       = slotReqs[sh.type] || 0;
           const allSlots  = dayShifts.filter(s => ag.includes(s.group) && s.type === sh.type);
           const scheduled = allSlots.filter(s => s.status === 'scheduled');
           const numFilled = scheduled.length;
-          const numEmpty  = hasReqs ? Math.max(0, req - numFilled) : allSlots.filter(s=>s.status==='open').length;
+          const rawEmpty  = hasReqs ? Math.max(0, req - numFilled) : allSlots.filter(s=>s.status==='open').length;
+          const numEmpty  = isPastDay ? 0 : rawEmpty;
           const total     = hasReqs ? req : (numFilled + numEmpty);
           if (numEmpty > 0) cellHasOpenDisplayed = true;
+
+          // Past day with no one actually scheduled → don't render an empty
+          // row for this shift type. Avoids showing stale "Day · 0/3" badges
+          // for past days where coverage wasn't met but is no longer actionable.
+          if (isPastDay && numFilled === 0) return;
 
           // skip in open-only filter if no empty slots
           if (filter === 'open' && numEmpty === 0 && total > 0) return;
@@ -16183,7 +16247,10 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
 
           anyShown = true;
           const allFull = hasReqs && numEmpty === 0 && req > 0;
-          const badge = hasReqs && req > 0
+          // Hide the "X/Y" coverage badge on past days — coverage is no
+          // longer actionable once the day has passed; only the actual
+          // worked headcount is meaningful.
+          const badge = (!isPastDay && hasReqs && req > 0)
             ? `<span style="margin-left:auto;font-size:9px;font-weight:700;color:${allFull?'#16A34A':'#DC2626'}">${numFilled}/${req}</span>`
             : '';
 
@@ -16223,7 +16290,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           ${open.length?`<div class="cal-chip open"><svg viewBox="0 0 10 10" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="5" r="4"/><line x1="5" y1="3.5" x2="5" y2="5.5"/><circle cx="5" cy="7" r=".5" fill="currentColor"/></svg> ${open.length}</div>`:''}
         </div>`;
       }
-      cells += `<div class="cal-cell ${isToday?'today':''} ${isSel?'selected':''} ${cellHasOpenDisplayed&&!isSel?'has-open':''}" onclick="App.selectDay('${ds}')">
+      cells += `<div class="cal-cell ${isToday?'today':''} ${isSel?'selected':''}" onclick="App.selectDay('${ds}')">
         <div class="cal-date">${d}</div>${content}</div>`;
     }
     const total = Math.ceil((firstDay+daysInMonth)/7)*7;
@@ -16297,6 +16364,9 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         <div style="font-size:11px;color:var(--g600)">${sh.start}–${sh.end}</div>
       </div>`;
 
+      // Past dates: a day that's already happened can't have OPEN slots;
+      // render only actual scheduled employees.
+      const isPastDay = date < TODAY;
       grps.forEach(g => {
         const slotReqsG  = this.getSlotReqs(bId, g);
         const req        = slotReqsG[sh.type] || 0;
@@ -16309,7 +16379,8 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         const allSlots   = dayShifts.filter(s => agCell.includes(s.group) && s.type === sh.type);
         const scheduled  = allSlots.filter(s => s.status === 'scheduled');
         const numFilled  = scheduled.length;
-        const numEmpty   = req > 0 ? Math.max(0, req - numFilled) : allSlots.filter(s=>s.status==='open').length;
+        const rawEmpty   = req > 0 ? Math.max(0, req - numFilled) : allSlots.filter(s=>s.status==='open').length;
+        const numEmpty   = isPastDay ? 0 : rawEmpty;
         const allFull    = req > 0 && numEmpty === 0;
 
         let cell = '';
@@ -16442,16 +16513,22 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
 
       let content = '';
       let hasAnyOpen = false;
+      // Past dates: a day that's already happened can't have OPEN slots;
+      // render only actual scheduled employees (see month-view for the
+      // full rationale).
+      const isPastDay = ds < TODAY;
 
       shiftDefs.forEach(sh => {
         const req       = slotReqs[sh.type] || 0;
         const allSlots  = dayShifts.filter(s => s.type === sh.type);
         const scheduled = allSlots.filter(s => s.status === 'scheduled');
         const numFilled = scheduled.length;
-        const numEmpty  = hasReqs ? Math.max(0, req - numFilled) : allSlots.filter(s=>s.status==='open').length;
+        const rawEmpty  = hasReqs ? Math.max(0, req - numFilled) : allSlots.filter(s=>s.status==='open').length;
+        const numEmpty  = isPastDay ? 0 : rawEmpty;
         const total     = hasReqs ? req : (numFilled + numEmpty);
 
         if (numEmpty > 0) hasAnyOpen = true;
+        if (isPastDay && numFilled === 0) return;
         if (filter === 'open' && numEmpty === 0 && total > 0) return;
         if (total === 0 && numFilled === 0) return;
 
@@ -16465,12 +16542,14 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           return `<span class="shift-emp" title="${sanitize(emp.name)}" style="display:block;width:100%;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px">${sanitize(firstName)} ${emp.name.split(' ').slice(1).map(w=>w[0]).join('.')}.</span>`;
         }).join('');
 
-        // Empty slot placeholders — clickable to assign
+        // Empty slot placeholders — clickable to assign. Yellow tint
+        // (matches the month-view .shift-open-tag pill) so unmet coverage
+        // shows up directly behind the placeholder, not behind the cell.
         for (let i = 0; i < numEmpty; i++) {
-          pills += `<div style="border:1.5px dashed #FCA5A5;border-radius:5px;padding:2px 5px;font-size:10px;font-weight:700;color:#DC2626;text-align:center;margin-top:1px;cursor:pointer" title="Click to assign" onclick="event.stopPropagation();App.openAssignShiftModal('${ds}','${g}','${sh.type}')">OPEN</div>`;
+          pills += `<div style="background:#FFFBEA;border:1.5px dashed #F59E0B;border-radius:5px;padding:2px 5px;font-size:10px;font-weight:700;color:#92400E;text-align:center;margin-top:1px;cursor:pointer" title="Click to assign" onclick="event.stopPropagation();App.openAssignShiftModal('${ds}','${g}','${sh.type}')" onmouseover="this.style.background='#FEF3C7'" onmouseout="this.style.background='#FFFBEA'">OPEN</div>`;
         }
 
-        const badge = hasReqs && req > 0
+        const badge = (!isPastDay && hasReqs && req > 0)
           ? `<span style="font-size:9px;font-weight:700;color:${allFull?'#16A34A':'#DC2626'};float:right">${numFilled}/${req}</span>`
           : '';
 
@@ -16488,7 +16567,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           : `<div style="font-size:10px;color:var(--g300);margin-top:4px">${filter==='open'?'No open':'No shifts'}</div>`;
       }
 
-      const cls = `week14-cell${isToday?' today':''}${isSel?' selected':''}${hasAnyOpen&&!isSel?' has-open':''}`;
+      const cls = `week14-cell${isToday?' today':''}${isSel?' selected':''}`;
       return `<div class="${cls}" onclick="App.selectDay('${ds}')">
         <div class="week14-date">${DOW[d.getDay()]} ${d.getDate()}</div>
         ${content}
