@@ -549,7 +549,12 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
         <span class="login-logo-sub">Nursing Home Staffing Platform</span>
       </div>
     </div>
-    <div class="demo-bar">
+    <!-- Demo accounts are server-side disabled in production (see server.js login
+         handler "demo_disabled_in_prod"). Showing buttons that always 401 was
+         creating a UX dead-end on the production login page. JS at runtime
+         hides this section when location.hostname === 'managemystaffing.com'
+         (i.e. real prod), keeps it visible on dev / preview / local. -->
+    <div class="demo-bar" id="demo-access-bar">
       <strong>Quick Demo Access</strong>
       <div class="demo-links">
         <button type="button" class="demo-link" onclick="App.quickLogin('solomong@managemystaffing.com','demo')">
@@ -585,11 +590,13 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
       </div>
       <div class="pw-strength-bar" id="pw-strength-bar"></div>
     </div>
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:12px;flex-wrap:wrap">
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;color:var(--g600)">
         <input type="checkbox" id="remember-me" style="accent-color:var(--blue-d);width:15px;height:15px">
         Stay logged in on this device for 30 days
       </label>
+      <button type="button" onclick="App._showForgotPassword();document.getElementById('forgot-pwd-section').scrollIntoView({behavior:'smooth',block:'nearest'})"
+        style="background:none;border:none;color:var(--blue-d);font-size:13px;cursor:pointer;padding:0;text-decoration:underline;text-underline-offset:3px">Forgot password?</button>
     </div>
     <button class="btn btn-primary btn-full" onclick="App.loginForm()">Sign In</button>
     <div id="forgot-pwd-section" style="display:none;margin-top:14px;padding:12px;border:1px solid var(--g200);border-radius:8px;background:var(--g50)">
@@ -1223,6 +1230,20 @@ const TODAY = (() => {
 // Server mode: true when served by Node.js (production)
 // false when opened as a local file (demo/dev)
 const IS_SERVER_MODE = window.location.protocol !== 'file:' && window.location.hostname !== '';
+// Production = the public managemystaffing.com domain. The server's auth
+// handler hard-disables the SEED_DEMO / SEED_DEMO_NURSE accounts when
+// IS_PROD is true (server.js:6349-6354 "demo_disabled_in_prod"), so showing
+// the Quick Demo Access buttons on the prod login page just dead-ends users
+// with "Invalid email or password". Keep the buttons visible on dev / local
+// / preview hosts where the demo bypass is allowed.
+const IS_PROD_HOST = /(^|\.)managemystaffing\.com$/i.test(window.location.hostname || '');
+if (IS_PROD_HOST) {
+  // Hide the demo-bar before login renders so it never flashes.
+  document.addEventListener('DOMContentLoaded', () => {
+    const bar = document.getElementById('demo-access-bar');
+    if (bar) bar.style.display = 'none';
+  });
+}
 
 // HIPAA §164.312(a)(2)(iv) — JWT lives in httpOnly cookie set by the server.
 // JS cannot read or write it.
