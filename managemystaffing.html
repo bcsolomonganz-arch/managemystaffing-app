@@ -1114,24 +1114,12 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
       <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-assign-shift')">✕</button>
     </div>
     <div id="modal-assign-shift-body" style="overflow-y:auto;flex:1;padding:20px"></div>
-    <div id="modal-assign-shift-footer" class="modal-footer" style="flex-shrink:0;display:flex;align-items:center;gap:8px">
-      <!-- Bottom-left "Remove this slot" button. Shows when the modal was
-           opened against a resolvable open shift row (st.shiftId is set) so
-           an admin can drop the slot from the schedule entirely without
-           first having to assign someone. The id is set to '' on open and
-           filled in by openAssignShiftModal/_renderAssignShiftBody when a
-           seed shift is found; the button stays disabled-looking otherwise. -->
-      <button id="modal-assign-shift-delete" class="btn btn-secondary"
-        style="color:var(--red);border:1.5px solid #FCA5A5;display:none"
-        onclick="App._removeSlotFromAssignModal()" title="Remove this open slot from the schedule">
-        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6h12M5 2v3M11 2v3M6 9l4 4M10 9l-4 4"/></svg>
-        Remove from schedule
-      </button>
-      <div style="flex:1"></div>
-      <button class="btn btn-secondary" onclick="App.closeModal('modal-assign-shift')">Cancel</button>
-      <button class="btn btn-ghost" onclick="App.saveAssignShiftOnly()">This Shift Only</button>
-      <button class="btn btn-primary" onclick="App.saveAssignShift()">Assign &amp; Apply Rotation</button>
-    </div>
+    <!-- Footer is fully replaced on every _renderAssignShiftBody() call
+         (and on the Message Staff sub-view). The static markup below is
+         a placeholder — the real footer (including the bottom-left
+         "Remove from schedule" button) is emitted from JS so it can react
+         to the current view (assign vs message) and the current shiftId. -->
+    <div id="modal-assign-shift-footer" class="modal-footer" style="flex-shrink:0;display:flex;align-items:center;gap:8px"></div>
   </div>
 </div>
 
@@ -6957,13 +6945,6 @@ const App = {
       e.buildingId === st.buildingId && ag.includes(e.group) && !e.inactive
     );
 
-    // Bottom-left "Remove from schedule" button visibility — only show when
-    // we have a real shift row to delete. The user-visible behavior the
-    // admin asked for: clicking an open shift should expose a single
-    // prominent way to drop it from the schedule, not just the small ✕ icon.
-    const delBtn = document.getElementById('modal-assign-shift-delete');
-    if (delBtn) delBtn.style.display = st.shiftId ? 'inline-flex' : 'none';
-
     const clickedD = new Date(st.date + 'T12:00:00');
     const dateLabel = clickedD.toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric'});
 
@@ -7118,8 +7099,20 @@ const App = {
         </div>
       </div>`;
 
-    // Restore default footer
+    // Restore default footer. Includes the bottom-left "Remove from
+    // schedule" button when there's a resolvable shift row to delete —
+    // this footer HTML blows away the static markup from index, so the
+    // button must be re-emitted here on every render.
+    const removeBtn = st.shiftId
+      ? `<button class="btn btn-secondary" style="color:var(--red);border:1.5px solid #FCA5A5"
+            onclick="App._removeSlotFromAssignModal()" title="Remove this open slot from the schedule">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" style="vertical-align:-2px;margin-right:5px"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6h12M5 2v3M11 2v3M6 9l4 4M10 9l-4 4"/></svg>
+            Remove from schedule
+          </button>`
+      : '';
     document.getElementById('modal-assign-shift-footer').innerHTML = `
+      ${removeBtn}
+      <div style="flex:1"></div>
       <button class="btn btn-secondary" onclick="App.closeModal('modal-assign-shift')">Cancel</button>
       <button class="btn btn-ghost" onclick="App.saveAssignShiftOnly()">This Shift Only</button>
       <button class="btn btn-primary" onclick="App.saveAssignShift()">Assign &amp; Apply Rotation</button>`;
