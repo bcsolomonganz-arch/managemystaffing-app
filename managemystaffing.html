@@ -4674,18 +4674,34 @@ const App = {
       <div class="hr-section">${openRows}</div>`;
   },
 
-  openCreateHRShiftModal() {
-    // Inline prompt — a real modal would be added later
-    const date  = prompt('Date (YYYY-MM-DD):');
-    if (!date) return;
-    const shift = prompt('Shift (Day / Eve / Night):', 'Day') || 'Day';
-    const role  = prompt('Role needed (RN / LPN / CNA / CMA):') || '';
-    const time  = prompt('Time (e.g. 7a–3p):', '7a–3p') || '';
-    const needs = parseInt(prompt('How many staff needed:', '1') || '1', 10);
-    const notes = prompt('Notes (optional):') || '';
-    if (!role) return;
+  async openCreateHRShiftModal() {
+    const v = await this.mmsForm({
+      title: 'New open shift',
+      submitLabel: 'Create',
+      fields: [
+        { key:'date',  label:'Date',         type:'date', required:true,
+          validate: x => /^\d{4}-\d{2}-\d{2}$/.test(x||'') ? null : 'YYYY-MM-DD required' },
+        { key:'shift', label:'Shift',        type:'select', defaultValue:'Day',
+          options:['Day','Eve','Night'] },
+        { key:'role',  label:'Role needed',  type:'select', required:true, defaultValue:'CNA',
+          options:['RN','LPN','CNA','CMA','Charge Nurse','Nurse Management'] },
+        { key:'time',  label:'Time window',  defaultValue:'7a–3p', placeholder:'7a–3p' },
+        { key:'needs', label:'Staff needed', type:'number', defaultValue:'1',
+          validate: x => { const n = parseInt(x,10); return (n>0 && n<100) ? null : '1–99'; } },
+        { key:'notes', label:'Notes',        type:'textarea', placeholder:'Optional notes for the request' },
+      ],
+    });
+    if (v == null) return;
     if (!this.S.hrOpenShifts) this.S.hrOpenShifts = [];
-    this.S.hrOpenShifts.push({date, shift, role, time, needs, notes, id: Date.now()});
+    this.S.hrOpenShifts.push({
+      date: v.date,
+      shift: v.shift || 'Day',
+      role: v.role,
+      time: v.time || '7a–3p',
+      needs: parseInt(v.needs || '1', 10),
+      notes: v.notes || '',
+      id: Date.now(),
+    });
     this.persistData(); this.renderHRMain(); this.showToast('Open shift created');
   },
 
@@ -5285,7 +5301,14 @@ const App = {
     if (newOut === null) return;
     const validTime = t => t === '' || /^\d{1,2}:\d{2}$/.test(t.trim());
     if (!validTime(newIn) || !validTime(newOut)) { this.showToast('Times must be HH:MM','warn'); return; }
-    const note = prompt('Reason for edit (recorded in audit log):', '') || '';
+    const noteRaw = await this.mmsPrompt({
+      title: 'Reason for edit',
+      message: 'Recorded in the audit log alongside the change. Optional but recommended.',
+      placeholder: 'e.g. Forgot to punch out at end of shift',
+      submitLabel: 'Save edit',
+    });
+    if (noteRaw === null) return;
+    const note = noteRaw || '';
     try {
       const r = await fetch('/api/timeclock/punch', {
         method: 'PATCH',
@@ -7586,7 +7609,13 @@ const App = {
     const promptMsg = emp
       ? `Delete this ${shift.group} ${shift.type} shift on ${dateLabel}?\n\n${emp.name} is currently assigned and will be unscheduled.`
       : `Delete this open ${shift.group} ${shift.type} slot on ${dateLabel}?`;
-    if (!confirm(promptMsg)) return;
+    const ok = await this.mmsConfirm({
+      title: 'Delete shift slot',
+      message: promptMsg,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
 
     this._pushUndo('Removed 1 shift', ['shifts']);
     try {
@@ -9348,12 +9377,17 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     return TEMPLATES[category] || TEMPLATES.other;
   },
 
-  applyStarterAd() {
+  async applyStarterAd() {
     if (!this.S.jobModal) return;
     const j = this.S.jobModal.job;
     const cat = this._jobCategory(j.department);
     const t   = this._starterAd(cat, j.title);
-    if (!confirm(`Drop in a starter ${this._categoryLabel(cat).toLowerCase()} template?\n\nThis replaces the title (if blank), description, and requirements — keep editing from there.`)) return;
+    const ok = await this.mmsConfirm({
+      title: 'Apply starter template',
+      message: `Drop in a starter ${this._categoryLabel(cat).toLowerCase()} template?\n\nThis replaces the title (if blank), description, and requirements — keep editing from there.`,
+      confirmLabel: 'Apply template',
+    });
+    if (!ok) return;
     const titleEl = document.getElementById('jm-title');
     const descEl  = document.getElementById('jm-desc');
     const reqsEl  = document.getElementById('jm-reqs');
@@ -9559,7 +9593,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this._runLiveLint();
   },
 
-  saveJobPosting() {
+  async saveJobPosting() {
     const { mode, job } = this.S.jobModal;
     const title = document.getElementById('jm-title')?.value.trim();
     const desc  = document.getElementById('jm-desc')?.value.trim();
@@ -9588,11 +9622,14 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       return;
     }
     if (warns.length && updated.status === 'active') {
-      const ok = confirm(
-        `${warns.length} warning${warns.length===1?'':'s'} on this listing:\n\n` +
-        warns.map((w,i) => `${i+1}. [${w.field}] ${w.msg}`).join('\n') +
-        `\n\nIndeed may deprioritize or reject the listing. Post anyway?`
-      );
+      const ok = await this.mmsConfirm({
+        title: 'Listing warnings',
+        message:
+          `${warns.length} warning${warns.length===1?'':'s'} on this listing:\n\n` +
+          warns.map((w,i) => `${i+1}. [${w.field}] ${w.msg}`).join('\n') +
+          `\n\nIndeed may deprioritize or reject the listing. Post anyway?`,
+        confirmLabel: 'Post anyway',
+      });
       if (!ok) return;
     }
     if (mode === 'create') {
@@ -10563,9 +10600,15 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     return true;
   },
 
-  disconnectPayrollProvider(provider) {
+  async disconnectPayrollProvider(provider) {
     const info = this.payrollProviderInfo(provider);
-    if (!confirm(`Disconnect ${info.name}?\n\nCredentials will be removed and no further hire pushes or payroll syncs will be sent. This does NOT remove employees that have already been synced.`)) return;
+    const ok = await this.mmsConfirm({
+      title: `Disconnect ${info.name}`,
+      message: `Disconnect ${info.name}?\n\nCredentials will be removed and no further hire pushes or payroll syncs will be sent. This does NOT remove employees that have already been synced.`,
+      confirmLabel: 'Disconnect',
+      danger: true,
+    });
+    if (!ok) return;
     const i = this._payrollState(provider);
     i.configured = false;
     i.status = 'disconnected';
@@ -10633,7 +10676,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       this.showToast(`No pending hires to push to ${info.name}`, 'warn');
       return;
     }
-    if (!confirm(`Push ${pending.length} employee${pending.length===1?'':'s'} to ${info.name}?\n\nThis creates ${pending.length===1?'a record':'records'} in ${info.name} with name, role, hourly rate, hire date, and contact info.`)) return;
+    const okPush = await this.mmsConfirm({
+      title: `Push hires to ${info.name}`,
+      message: `Push ${pending.length} employee${pending.length===1?'':'s'} to ${info.name}?\n\nThis creates ${pending.length===1?'a record':'records'} in ${info.name} with name, role, hourly rate, hire date, and contact info.`,
+      confirmLabel: `Push ${pending.length}`,
+    });
+    if (!okPush) return;
     let ok = 0, fail = 0;
     const errors = [];
     for (const emp of pending) {
@@ -10738,7 +10786,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     let confirmMsg = `Sync payroll for ${p.periodStart} → ${p.periodEnd} to ${info.name}?\n\n` +
                      `${report.empCount} employees · ${report.regHrs.toFixed(1)} reg hrs · ${report.otHrs.toFixed(1)} OT hrs · $${report.totalGross.toFixed(2)} gross\n\n`;
     if (unsyncedCount) confirmMsg += `⚠ ${unsyncedCount} employees not yet pushed to ${info.name}. They will be skipped — push hires first.`;
-    if (!confirm(confirmMsg)) return;
+    const okSync = await this.mmsConfirm({
+      title: `Sync payroll to ${info.name}`,
+      message: confirmMsg,
+      confirmLabel: 'Sync',
+    });
+    if (!okSync) return;
 
     const syncedRows = report.rows.filter(r => {
       const emp = (this.S.employees||[]).find(e=>e.id===r.empId);
@@ -10778,7 +10831,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       this.showToast(`No ${info.name}-synced employees yet — push hires first`, 'warn');
       return;
     }
-    if (!confirm(`Pull punches from ${info.name} for ${eligible.length} employees over ${isoStart} → ${isoEnd}?\n\nNew punches will be added to the Time Clock; duplicates will be skipped.`)) return;
+    const okPull = await this.mmsConfirm({
+      title: `Pull punches from ${info.name}`,
+      message: `Pull punches from ${info.name} for ${eligible.length} employees over ${isoStart} → ${isoEnd}?\n\nNew punches will be added to the Time Clock; duplicates will be skipped.`,
+      confirmLabel: 'Pull punches',
+    });
+    if (!okPull) return;
 
     await new Promise(r => setTimeout(r, 700));
     // Generate a plausible synthetic batch — in real deployment this would be
@@ -10823,8 +10881,14 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (this.S.hrPage === 'integrations') this.renderHRMain();
   },
 
-  clearPayrollHistory() {
-    if (!confirm('Clear all sync history? This does not affect employees that have already been synced.')) return;
+  async clearPayrollHistory() {
+    const okClear = await this.mmsConfirm({
+      title: 'Clear sync history',
+      message: 'Clear all sync history? This does not affect employees that have already been synced.',
+      confirmLabel: 'Clear history',
+      danger: true,
+    });
+    if (!okClear) return;
     if (this.S.integrations?.paycom) this.S.integrations.paycom.history = [];
     if (this.S.integrations?.adp)    this.S.integrations.adp.history    = [];
     this.persistData();
@@ -11717,17 +11781,32 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   // Maps the HR-onboarding fields → employees row. Same shape as the
   // /api/recruiting/push-to-roster endpoint, but for the HR-paperwork
   // origin (hrEmployees) which is separate from the recruiting pipeline.
-  pushHrToRoster(hrId) {
+  async pushHrToRoster(hrId) {
     const h = this.S.hrEmployees.find(e => e.id === hrId);
     if (!h) return;
     if (h.employeeId) {
       const existing = this.S.employees.find(e => e.id === h.employeeId);
       if (existing) { this.showToast(`${h.name} is already on the roster`,'warn'); return; }
     }
-    if (!confirm(`Push ${h.name} into the active employee roster?\n\nThis creates a new staff record on the schedule for ${h.role || 'their role'}. Their hourly rate ${h.hourlyRate ? '($' + h.hourlyRate + '/hr)' : 'is not set'} and hire date ${h.hireDate || '(today)'} will carry over.`)) return;
+    const ok = await this.mmsConfirm({
+      title: 'Push to roster',
+      message: `Push ${h.name} into the active employee roster?\n\nThis creates a new staff record on the schedule for ${h.role || 'their role'}. Their hourly rate ${h.hourlyRate ? '($' + h.hourlyRate + '/hr)' : 'is not set'} and hire date ${h.hireDate || '(today)'} will carry over.`,
+      confirmLabel: 'Push',
+    });
+    if (!ok) return;
     if (!h.hourlyRate) {
-      const rate = prompt('Set hourly rate before adding to roster ($):', '');
-      if (!rate) return;
+      const rate = await this.mmsPrompt({
+        title: 'Set hourly rate',
+        message: 'Hourly rate is required before adding this hire to the active roster.',
+        placeholder: 'e.g. 22.50',
+        inputmode: 'decimal',
+        submitLabel: 'Save rate',
+        validate: v => {
+          const n = parseFloat(v);
+          return (isFinite(n) && n > 0) ? null : 'Enter a positive number';
+        },
+      });
+      if (rate == null) return;
       h.hourlyRate = parseFloat(rate);
     }
     const initials = String(h.name || '').split(' ').map(w => w[0] || '').join('').slice(0,2).toUpperCase();
@@ -11944,13 +12023,30 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.persistData(); this.renderHRMain();
   },
 
-  addHRStep(state) {
-    const title = prompt('Step title:');
-    if (!title) return;
-    const desc = prompt('Step description:') || '';
-    const type = prompt('Type (form / video / ack / upload):', 'form') || 'form';
+  async addHRStep(state) {
+    const v = await this.mmsForm({
+      title: `New onboarding step — ${state}`,
+      submitLabel: 'Add step',
+      fields: [
+        { key:'title', label:'Step title', required:true, placeholder:'e.g. I-9 Identification' },
+        { key:'desc',  label:'Description', type:'textarea', placeholder:'What the new hire is asked to do' },
+        { key:'type',  label:'Type', type:'select', defaultValue:'form',
+          options:[
+            { value:'form',   label:'Form (filled in-app)' },
+            { value:'video',  label:'Video (must watch)' },
+            { value:'ack',    label:'Acknowledgment (read + agree)' },
+            { value:'upload', label:'Upload (file submission)' },
+          ] },
+      ],
+    });
+    if (v == null) return;
     const id = state.toLowerCase() + '_' + Date.now();
-    this._obPkg(state).steps.push({id, type:type.trim(), title:title.trim(), desc:desc.trim()});
+    this._obPkg(state).steps.push({
+      id,
+      type: (v.type || 'form').trim(),
+      title: (v.title || '').trim(),
+      desc: (v.desc || '').trim(),
+    });
     this.persistData(); this.renderHRMain(); this.showToast('Step added');
   },
 
@@ -12621,7 +12717,14 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   async decidePunchEdit(editId, action) {
     let note = '';
     if (action === 'reject') {
-      note = prompt('Optional reason (shared with HR Admin):') || '';
+      const v = await this.mmsPrompt({
+        title: 'Reject punch edit',
+        message: 'Optional reason — shared with the HR Admin who submitted this correction.',
+        placeholder: 'Why this edit was rejected',
+        submitLabel: 'Reject',
+      });
+      if (v == null) return;
+      note = v || '';
     }
     try {
       const r = await fetch(`/api/timeclock/punch/${encodeURIComponent(editId)}/decide`, {
@@ -14223,7 +14326,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   // confirmation since this changes how the daily cost calc treats them.
   // The previous-mode field is preserved (so a former salaried emp's last
   // annualSalary stays on file), but only the active-mode field is honored.
-  empCardSwitchPayType(empId) {
+  async empCardSwitchPayType(empId) {
     const emp = (this.S.employees || []).find(e => e.id === empId);
     if (!emp) { this.showToast('Employee not found', 'warn'); return; }
     if (!this.canViewFinancials?.()) { this.showToast('Not allowed to change pay type', 'warn'); return; }
@@ -14235,7 +14338,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const msg = wasSalaried
       ? `Switch ${emp.name} to HOURLY pay?\n\nTheir current annual salary ($${(emp.annualSalary||0).toLocaleString()}) will be kept on file but stop affecting daily cost calcs. You'll need to enter an hourly rate next.`
       : `Switch ${emp.name} to SALARY pay?\n\nTheir hourly rate (${emp.hourlyRate?'$'+emp.hourlyRate+'/hr':'unset'}) will be kept on file but stop affecting cost calcs. Salaried daily cost = annual salary ÷ 365, regardless of which days they're scheduled. No OT.\n\nYou'll need to enter an annual salary next.`;
-    if (!confirm(msg)) return;
+    const okSwitch = await this.mmsConfirm({
+      title: 'Switch pay type',
+      message: msg,
+      confirmLabel: `Switch to ${newType}`,
+    });
+    if (!okSwitch) return;
     emp.payType = newType;
     this.persistData();
     Audit.log('EMP_PAY_TYPE_SWITCHED',
@@ -14328,10 +14436,15 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const b = this.S.buildings.find(x => x.id === (buildingId || this.S.user?.buildingId || 'b1'));
     if (!b) return;
     const url = (window.location.origin || 'https://www.managemystaffing.com') + '/kiosk/' + encodeURIComponent(b.id);
-    if (confirm(`Tablet kiosk URL for ${b.name}:\n\n${url}\n\nOpen this URL on a tablet at the nurse station and leave it running. Employees clock in by entering their 4-digit PIN.\n\nClick OK to copy to clipboard, Cancel to dismiss.`)) {
-      try { await navigator.clipboard.writeText(url); this.showToast('Kiosk URL copied to clipboard'); }
-      catch(e) { this.showToast('Copy failed — URL is in the dialog above','warn'); }
-    }
+    const ok = await this.mmsConfirm({
+      title: `Kiosk URL — ${b.name}`,
+      message: `${url}\n\nOpen this URL on a tablet at the nurse station and leave it running. Employees clock in by entering their 4-digit PIN.`,
+      confirmLabel: 'Copy to clipboard',
+      cancelLabel: 'Close',
+    });
+    if (!ok) return;
+    try { await navigator.clipboard.writeText(url); this.showToast('Kiosk URL copied to clipboard'); }
+    catch(e) { this.showToast('Copy failed — URL was: ' + url, 'warn'); }
   },
 
   // ── Cost helpers (used by PPD calculator) ───────────────────────────────
@@ -17265,7 +17378,13 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           '',
           'Cancel = create a separate new record (only if it\'s genuinely a different person sharing the name).',
         ].filter(Boolean).join('\n');
-        if (confirm(msg)) {
+        const okReact = await this.mmsConfirm({
+          title: 'Reactivate prior employee?',
+          message: msg,
+          confirmLabel: 'Reactivate',
+          cancelLabel: 'New separate record',
+        });
+        if (okReact) {
           // Reactivate, refreshing only the fields that came from the form.
           matched.inactive = false;
           matched.name = name; matched.email = email; matched.phone = phone;
@@ -17478,7 +17597,13 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       confirmMsg += `Local SMS number ${b.smsFromPhone} will be RELEASED back to Azure.\n\n`;
     }
     confirmMsg += `This is reversible — you can reactivate later (a new SMS number will be assigned).`;
-    if (!confirm(confirmMsg)) return;
+    const okDeactivate = await this.mmsConfirm({
+      title: `Deactivate ${b.name}`,
+      message: confirmMsg,
+      confirmLabel: 'Deactivate',
+      danger: true,
+    });
+    if (!okDeactivate) return;
 
     // Release the Azure number first. If the release fails, abort so we
     // don't end up with a dangling number that's still being billed.
@@ -18040,6 +18165,82 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       document.body.appendChild(div);
       document.addEventListener('keydown', onKey);
       setTimeout(() => { inp.focus(); inp.select(); }, 30);
+    });
+  },
+
+  // Multi-field form modal. Replaces chained native prompts (e.g. addHRShift's
+  // 6 sequential prompts) with a single styled modal that takes all values
+  // at once. Resolves to {[field.key]: value} or null on cancel.
+  // fields: [{ key, label, type ('text'|'textarea'|'select'|'date'|'number'),
+  //           defaultValue?, placeholder?, options? (for select),
+  //           required?, validate?, helper?, inputmode? }]
+  mmsForm(opts) {
+    opts = opts || {};
+    const fields = Array.isArray(opts.fields) ? opts.fields : [];
+    return new Promise(resolve => {
+      const div = document.createElement('div');
+      div.className = 'modal-overlay open';
+      const fieldHtml = fields.map((f, i) => {
+        const id = `mms-form-${i}`;
+        const helper = f.helper ? `<div style="font-size:11px;color:var(--g500);margin-top:4px">${sanitize(f.helper)}</div>` : '';
+        const errSlot = `<div data-mms-form-err="${id}" style="color:var(--red);font-size:12px;margin-top:4px;display:none"></div>`;
+        const labelHtml = `<label for="${id}" style="display:block;font-size:12px;font-weight:700;color:var(--g700);margin-bottom:5px">${sanitize(f.label||f.key)}${f.required?' <span style="color:var(--red)">*</span>':''}</label>`;
+        const def = f.defaultValue == null ? '' : String(f.defaultValue);
+        let input;
+        if (f.type === 'textarea') {
+          input = `<textarea id="${id}" data-mms-form-input data-key="${sanitize(f.key)}" rows="${f.rows||3}" placeholder="${sanitize(f.placeholder||'')}" style="width:100%;padding:9px 12px;border:1.5px solid var(--g200);border-radius:8px;font:inherit;font-size:13px;outline:none;resize:vertical">${sanitize(def)}</textarea>`;
+        } else if (f.type === 'select') {
+          const opts2 = (f.options||[]).map(o => {
+            const v = typeof o === 'string' ? o : o.value;
+            const l = typeof o === 'string' ? o : (o.label || o.value);
+            return `<option value="${sanitize(v)}" ${v===def?'selected':''}>${sanitize(l)}</option>`;
+          }).join('');
+          input = `<select id="${id}" data-mms-form-input data-key="${sanitize(f.key)}" style="width:100%;padding:9px 12px;border:1.5px solid var(--g200);border-radius:8px;font:inherit;font-size:13px;outline:none;background:#fff">${opts2}</select>`;
+        } else {
+          const t = f.type === 'date' || f.type === 'number' || f.type === 'password' ? f.type : 'text';
+          input = `<input id="${id}" data-mms-form-input data-key="${sanitize(f.key)}" type="${t}" value="${sanitize(def)}" placeholder="${sanitize(f.placeholder||'')}" inputmode="${sanitize(f.inputmode||'')}" style="width:100%;padding:9px 12px;border:1.5px solid var(--g200);border-radius:8px;font-size:13px;outline:none">`;
+        }
+        return `<div style="margin-bottom:14px">${labelHtml}${input}${helper}${errSlot}</div>`;
+      }).join('');
+      div.innerHTML = `<div class="modal" style="max-width:520px;max-height:85vh;display:flex;flex-direction:column">
+        <div class="modal-header"><span class="modal-title">${sanitize(opts.title || 'Form')}</span></div>
+        <div class="modal-body" style="padding:18px;overflow-y:auto">
+          ${opts.message ? `<div style="font-size:13px;color:var(--g700);margin-bottom:14px">${sanitize(opts.message)}</div>` : ''}
+          ${fieldHtml}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" data-act="cancel">Cancel</button>
+          <button class="btn btn-primary" data-act="ok">${sanitize(opts.submitLabel || 'Save')}</button>
+        </div>
+      </div>`;
+      const cleanup = (val) => { div.remove(); document.removeEventListener('keydown', onKey); resolve(val); };
+      const onKey = (e) => { if (e.key === 'Escape') cleanup(null); };
+      const submit = () => {
+        const values = {};
+        let firstErr = null;
+        // Clear prior errors
+        div.querySelectorAll('[data-mms-form-err]').forEach(el => { el.style.display = 'none'; el.textContent = ''; });
+        for (const f of fields) {
+          const inp = div.querySelector(`[data-key="${f.key}"]`);
+          const v = inp?.value;
+          values[f.key] = v;
+          let err = null;
+          if (f.required && !(v && String(v).trim())) err = 'Required';
+          if (!err && typeof f.validate === 'function') err = f.validate(v, values);
+          if (err) {
+            const errEl = div.querySelector(`[data-mms-form-err="mms-form-${fields.indexOf(f)}"]`);
+            if (errEl) { errEl.textContent = err; errEl.style.display = 'block'; }
+            if (!firstErr) firstErr = inp;
+          }
+        }
+        if (firstErr) { firstErr.focus(); return; }
+        cleanup(values);
+      };
+      div.querySelector('[data-act=cancel]').addEventListener('click', () => cleanup(null));
+      div.querySelector('[data-act=ok]').addEventListener('click', submit);
+      document.body.appendChild(div);
+      document.addEventListener('keydown', onKey);
+      setTimeout(() => div.querySelector('[data-mms-form-input]')?.focus(), 30);
     });
   },
 
