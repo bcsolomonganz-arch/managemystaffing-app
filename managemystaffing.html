@@ -16948,7 +16948,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     });
   },
 
-  applyPattern() {
+  async applyPattern() {
     const empId = document.getElementById('pat-emp')?.value;
     const shiftType = document.getElementById('pat-shift')?.value;
     const startStr = document.getElementById('pat-start')?.value;
@@ -16966,8 +16966,39 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const end = new Date(start);
     end.setMonth(end.getMonth() + this.S.patDuration);
 
-    // Remove existing pattern-generated shifts for this employee in this range
-    this.S.shifts = this.S.shifts.filter(s => !(s.employeeId === empId && s.patternGenerated && new Date(s.date+'T12:00:00') >= start && new Date(s.date+'T12:00:00') < end));
+    // Collect IDs of existing pattern-generated shifts to remove
+    const oldPatternIds = this.S.shifts
+      .filter(s => s.employeeId === empId && s.patternGenerated &&
+                   new Date(s.date+'T12:00:00') >= start && new Date(s.date+'T12:00:00') < end)
+      .map(s => s.id);
+
+    // Delete old pattern shifts via server endpoint (bypasses anti-shrink guard)
+    if (IS_SERVER_MODE && _authToken && oldPatternIds.length > 0) {
+      try {
+        const r = await fetch('/api/shifts/delete-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: oldPatternIds }),
+        });
+        if (!r.ok) {
+          const b = await r.json().catch(() => ({}));
+          this.showToast(b.error || 'Failed to clear old pattern shifts', 'warn');
+          return;
+        }
+        // Re-fetch canonical state after deletion
+        try {
+          const dResp = await fetch('/api/data');
+          if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
+        } catch { /* fall through */ }
+      } catch (e) {
+        this.showToast(`Failed to clear old pattern — ${e.message}`, 'warn');
+        return;
+      }
+    } else {
+      // Offline fallback: remove locally
+      const idSet = new Set(oldPatternIds);
+      this.S.shifts = this.S.shifts.filter(s => !idSet.has(s.id));
+    }
 
     let generated = 0;
     let dayOffset = 0;
