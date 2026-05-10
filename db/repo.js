@@ -289,6 +289,11 @@ async function ensureSchema() {
       FOR EACH ROW EXECUTE FUNCTION log_pattern_change()
   `);
 
+  // ── Index on schedule_patterns(building_id) ─────────────────────────────
+  // RLS tenant filter and roster queries both filter by building_id.
+  // Without this, those queries full-scan the table.
+  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_patterns_building ON schedule_patterns(building_id) WHERE active = TRUE`);
+
   // ── High water mark per building ────────────────────────────────────────
   // Tracks the maximum employee/account/building row counts ever seen per
   // building. saveAll consults this and refuses to drop below the HWM.
@@ -870,6 +875,14 @@ async function saveAll(data) {
     // a collection we weren't given. Default-typing matters: for a key whose
     // expected shape is an object, an array sneaking in (or vice versa)
     // would corrupt the SPA's reads later, so coerce to the expected type.
+    //
+    // Lock rows first (SELECT ... FOR UPDATE) so a concurrent saveAll on
+    // a different request can't read-then-overwrite the same key in a
+    // last-write-wins race. The lock is held until COMMIT inside withTx.
+    const keysToWrite = Object.entries(APP_STATE_KEYS).filter(([k]) => data[k] !== undefined).map(([k]) => k);
+    if (keysToWrite.length > 0) {
+      await c.query(`SELECT key FROM app_state WHERE key = ANY($1) FOR UPDATE`, [keysToWrite]);
+    }
     for (const [k, def] of Object.entries(APP_STATE_KEYS)) {
       if (data[k] === undefined) continue;
       const expectArray = Array.isArray(def);

@@ -1219,20 +1219,23 @@ function isAccountLocked(acct) {
   return false;
 }
 
-function recordFailedLogin(acct) {
+async function recordFailedLogin(acct) {
   acct.failedAttempts = (acct.failedAttempts || 0) + 1;
   if (acct.failedAttempts >= MAX_FAILED_ATTEMPTS) {
     acct.lockedUntil = Date.now() + LOCKOUT_MS;
     auditLog('ACCOUNT_LOCKED', acct, { until: new Date(acct.lockedUntil).toISOString() });
   }
-  markDirty();
+  // Must be durable before we respond — a crash during the markDirty 200ms
+  // debounce window would reset the lockout counter, weakening brute-force
+  // protection. Same pattern as password-reset and TOTP mutations.
+  await persistAccountNow(acct);
 }
 
-function clearFailedAttempts(acct) {
+async function clearFailedAttempts(acct) {
   if (acct.failedAttempts || acct.lockedUntil) {
     acct.failedAttempts = 0;
     acct.lockedUntil = null;
-    markDirty();
+    await persistAccountNow(acct);
   }
 }
 
@@ -6366,12 +6369,12 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   }
 
   if (!authenticated) {
-    recordFailedLogin(acct);
+    await recordFailedLogin(acct);
     auditLog('LOGIN_FAILED', acct, { reason: 'wrong_password', failedAttempts: acct.failedAttempts });
     return res.status(401).json({ error: 'Invalid email or password' });
   }
 
-  clearFailedAttempts(acct);
+  await clearFailedAttempts(acct);
 
   // TOTP gating: required for privileged roles (admin/SA) only.
   // Employees don't access PHI, so HIPAA §164.312 doesn't require 2FA for them.
@@ -6863,7 +6866,23 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
 
   dataCache = data;
   _bumpDataVersion();
-  markDirty();
+
+  // ── Flush to durable storage BEFORE responding ──────────────────────────
+  // Pre-fix: markDirty() scheduled a 200ms debounced persist — the client
+  // got { ok: true } immediately but a crash in that 200ms window lost the
+  // entire batch. Now we await persistCache() synchronously so the 200 OK
+  // means "your data is on disk / in Postgres." markDirty() is still called
+  // afterward to keep the background debounce loop primed for any follow-up
+  // mutations that arrive before the next explicit POST.
+  dataDirty = true;          // ensure persistCache() actually writes
+  clearTimeout(saveTimeout); // cancel any pending debounced flush
+  try {
+    await persistCache();
+  } catch (e) {
+    logger.error('data_update_persist_failed', { err: e.message });
+    return res.status(500).json({ error: 'Data accepted but failed to persist. Please retry.' });
+  }
+
   // Audit BEFORE / AFTER counts so we can forensically tell whether a save
   // shrank a collection. Without the delta we have no record of who/what
   // wiped data — exactly the gap that bit Tanya's Kirkland adds on 2026-04-30.
@@ -8114,7 +8133,10 @@ async function shutdown(signal) {
   } catch (e) {
     logger.error('shutdown_flush_failed', { err: e.message });
   }
-  setTimeout(() => process.exit(0), 1000).unref();
+  // Give in-flight DB transactions time to commit. The previous 1-second
+  // timeout was insufficient — a large saveAll() can take several seconds,
+  // and Azure App Service sends SIGTERM up to 30s before hard-kill.
+  setTimeout(() => process.exit(0), 10000).unref();
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT',  () => shutdown('SIGINT'));
