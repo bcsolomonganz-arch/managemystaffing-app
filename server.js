@@ -6738,6 +6738,9 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   const inScopeEmployee   = e => callerBIds.has(e.buildingId);
   const inScopeShift      = s => callerBIds.has(s.buildingId);
   const inScopePattern    = p => {
+    // Open patterns (no empId) are scoped by buildingId directly.
+    // Assign patterns are scoped by the employee's building.
+    if (!p.empId) return p.buildingId ? callerBIds.has(p.buildingId) : false;
     const emp = (data.employees || []).find(e => e.id === p.empId);
     return emp ? callerBIds.has(emp.buildingId) : false;
   };
