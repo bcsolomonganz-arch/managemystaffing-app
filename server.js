@@ -473,6 +473,19 @@ function markDirty() {
   _bumpDataVersion();
 }
 
+// ── flushNow ──────────────────────────────────────────────────────────────────
+// Synchronous flush for per-shift mutation endpoints. These used to call
+// markDirty() (200ms debounce), meaning the client got { ok: true } while
+// data was still in memory. A container crash in that window lost the write.
+// flushNow() writes to Postgres immediately — the caller awaits it and can
+// return 500 on failure. Still bumps _dataVersion for ETag concurrency.
+async function flushNow() {
+  _bumpDataVersion();
+  dataDirty = true;
+  clearTimeout(saveTimeout);
+  await persistCache();       // throws on failure — caller catches
+}
+
 // Tracks consecutive file-mode persist failures. If we hit too many in a
 // row, we know writes are silently failing (e.g., DATA_FILE points to a
 // path whose parent dir doesn't exist) and we surface it loudly. Without
@@ -4411,7 +4424,9 @@ app.post('/api/shifts/:id/claim', requireAuth, async (req, res) => {
     empName: me.name || me.email,
     requestedAt: new Date().toISOString(),
   };
-  markDirty();
+  try { await flushNow(); } catch (e) {
+    return res.status(500).json({ error: 'Failed to persist shift claim. Please retry.' });
+  }
   auditLog('SHIFT_CLAIM_REQUESTED', me, {
     shiftId, date: shift.date, type: shift.type, group: shift.group,
   });
@@ -4455,7 +4470,9 @@ app.post('/api/shifts/:id/claim/approve', requireAuth, requireAdmin, async (req,
   shift.status = 'scheduled';
   shift.employeeId = empId;
   delete shift.claimRequest;
-  markDirty();
+  try { await flushNow(); } catch (e) {
+    return res.status(500).json({ error: 'Failed to persist claim approval. Please retry.' });
+  }
   auditLog('SHIFT_CLAIM_APPROVED', me, { shiftId: shift.id, empId, empName, date: shift.date, type: shift.type, group: shift.group });
   // Notify the employee whose claim was approved.
   sendPushTo(empId, {
@@ -4483,7 +4500,9 @@ app.post('/api/shifts/:id/claim/reject', requireAuth, requireAdmin, async (req, 
 
   const { empId, empName } = shift.claimRequest;
   delete shift.claimRequest;
-  markDirty();
+  try { await flushNow(); } catch (e) {
+    return res.status(500).json({ error: 'Failed to persist claim rejection. Please retry.' });
+  }
   auditLog('SHIFT_CLAIM_REJECTED', me, { shiftId: shift.id, empId, empName, date: shift.date, type: shift.type, group: shift.group });
   sendPushTo(empId, {
     title: 'Shift claim not approved',
@@ -4537,7 +4556,9 @@ app.post('/api/shifts', requireAuth, requireAdmin, async (req, res) => {
   };
   if (!Array.isArray(data.shifts)) data.shifts = [];
   data.shifts.push(shift);
-  markDirty();
+  try { await flushNow(); } catch (e) {
+    return res.status(500).json({ error: 'Failed to persist new shift. Please retry.' });
+  }
   auditLog('SHIFT_CREATED', me, { shiftId: shift.id, date, type, group, employeeId: employeeId || null, buildingId: bId });
   if (employeeId) {
     sendPushTo(employeeId, {
@@ -4572,7 +4593,9 @@ app.post('/api/shifts/:id/assign', requireAuth, requireAdmin, async (req, res) =
   shift.employeeId = empId;
   shift.status = 'scheduled';
   delete shift.claimRequest;
-  markDirty();
+  try { await flushNow(); } catch (e) {
+    return res.status(500).json({ error: 'Failed to persist shift assignment. Please retry.' });
+  }
   auditLog('SHIFT_ASSIGNED', req.user, { shiftId: shift.id, empId, date: shift.date, type: shift.type, group: shift.group });
   // Notify the assigned employee
   sendPushTo(empId, {
@@ -4595,7 +4618,9 @@ app.post('/api/shifts/:id/unassign', requireAuth, requireAdmin, async (req, res)
   shift.status = 'open';
   shift._removedDate = shift.date;
   delete shift.claimRequest;
-  markDirty();
+  try { await flushNow(); } catch (e) {
+    return res.status(500).json({ error: 'Failed to persist shift unassignment. Please retry.' });
+  }
   auditLog('SHIFT_UNASSIGNED', req.user, { shiftId: shift.id, prevEmpId: wasEmpId, date: shift.date, type: shift.type, group: shift.group });
   if (wasEmpId) {
     sendPushTo(wasEmpId, {
@@ -4638,7 +4663,9 @@ app.post('/api/shifts/:id/end-rotation', requireAuth, requireAdmin, async (req, 
       }
     }
   }
-  markDirty();
+  try { await flushNow(); } catch (e) {
+    return res.status(500).json({ error: 'Failed to persist rotation end. Please retry.' });
+  }
   auditLog('SHIFT_ROTATION_ENDED', req.user, { fromShiftId: seed.id, empId: employeeId, type, group, count });
   res.json({ ok: true, count });
 });
@@ -4687,7 +4714,9 @@ app.delete('/api/shifts/:id', requireAuth, requireAdmin, async (req, res) => {
     }
   }
 
-  markDirty();
+  try { await flushNow(); } catch (e) {
+    return res.status(500).json({ error: 'Failed to persist shift deletion. Please retry.' });
+  }
   auditLog('SHIFT_DELETED', req.user, {
     shiftId: shift.id, date: shift.date, type: shift.type, group: shift.group,
     buildingId: shift.buildingId, hadEmployee: !!shift.employeeId,
@@ -4768,7 +4797,9 @@ app.post('/api/shifts/delete-batch', requireAuth, requireAdmin, async (req, res)
       url: '/app',
     }).catch(() => {});
   }
-  markDirty();
+  try { await flushNow(); } catch (e) {
+    return res.status(500).json({ error: 'Failed to persist batch deletion. Please retry.' });
+  }
   auditLog('SHIFTS_DELETED_BATCH', req.user, {
     requestedCount: ids.length,
     matchedCount:   targets.length,
@@ -4816,7 +4847,9 @@ app.post('/api/shifts/trade', requireAuth, async (req, res) => {
   };
   data.shiftTrades.push(trade);
   if (data.shiftTrades.length > 1000) data.shiftTrades = data.shiftTrades.slice(-1000);
-  markDirty();
+  try { await flushNow(); } catch (e) {
+    return res.status(500).json({ error: 'Failed to persist trade request. Please retry.' });
+  }
   auditLog('SHIFT_TRADE_REQUESTED', me, { tradeId: trade.id, fromShiftId, toShiftId });
   res.json({ ok: true, trade });
 });
@@ -4838,7 +4871,9 @@ app.post('/api/shifts/trade/:id/decide', requireAuth, requireAdmin, async (req, 
   trade.note = (note || '').slice(0, 500);
   if (decision === 'reject') {
     trade.status = 'rejected';
-    markDirty();
+    try { await flushNow(); } catch (e) {
+      return res.status(500).json({ error: 'Failed to persist trade rejection. Please retry.' });
+    }
     auditLog('SHIFT_TRADE_REJECTED', req.user, { tradeId: trade.id });
     // Notify both employees that the trade was rejected
     [trade.fromEmpId, trade.toEmpId].filter(Boolean).forEach(uid => {
@@ -4860,7 +4895,9 @@ app.post('/api/shifts/trade/:id/decide', requireAuth, requireAdmin, async (req, 
   fromShift.employeeId = toShift.employeeId;
   toShift.employeeId   = tmp;
   trade.status = 'approved';
-  markDirty();
+  try { await flushNow(); } catch (e) {
+    return res.status(500).json({ error: 'Failed to persist trade approval. Please retry.' });
+  }
   auditLog('SHIFT_TRADE_APPROVED', req.user, { tradeId: trade.id, fromShiftId: trade.fromShiftId, toShiftId: trade.toShiftId });
   // Notify both employees that the swap is now in effect.
   [trade.fromEmpId, trade.toEmpId].filter(Boolean).forEach(uid => {
@@ -4888,7 +4925,9 @@ app.delete('/api/shifts/trade/:id', requireAuth, async (req, res) => {
   trade.status = 'cancelled';
   trade.decidedAt = new Date().toISOString();
   trade.decidedBy = me.email;
-  markDirty();
+  try { await flushNow(); } catch (e) {
+    return res.status(500).json({ error: 'Failed to persist trade cancellation. Please retry.' });
+  }
   auditLog('SHIFT_TRADE_CANCELLED', me, { tradeId: trade.id });
   res.json({ ok: true });
 });
