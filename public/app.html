@@ -2168,8 +2168,15 @@ function filterNewPicker() {
   });
 }
 
+// Must match server (lib/punch.js): 'dm:' + sorted-id + ':' + sorted-id.
+// A previous local version used '::' with no prefix, which produced a
+// different threadId than the server stamped onto the saved message.
+// Result: brand-new threads opened from the picker rendered "No messages
+// yet" forever (filter on m.threadId === activeThreadId never matched),
+// and /api/dm/read could not mark them read.
 function dmThreadId(a, b) {
-  return [a,b].sort().join('::');
+  const [x, y] = [String(a), String(b)].sort();
+  return 'dm:' + x + ':' + y;
 }
 
 // Group composer (bottom sheet)
