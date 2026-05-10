@@ -7110,6 +7110,120 @@ app.post('/api/invite', requireAuth, requireAdmin, async (req, res) => {
   res.json({ ok: true, accountId: newAccount.id, inviteLink: link });
 });
 
+// ── POST /api/invite/onboard ─────────────────────────────────────────────────
+// HR onboarding-specific invite. Creates employee account + hrEmployee record,
+// sends onboarding email with password-set link.
+// Body: { name, email, group, buildingId, inviteType }
+app.post('/api/invite/onboard', requireAuth, requireAdmin, async (req, res) => {
+  const { name, email, group, buildingId, inviteType } = req.body || {};
+  if (!name || !email) return res.status(400).json({ error: 'name and email are required' });
+  const emailNorm = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNorm)) return res.status(400).json({ error: 'Invalid email address' });
+
+  const callerBId      = req.user.buildingId;
+  const targetBuilding = buildingId || callerBId;
+  if (req.user.role === 'admin' && targetBuilding !== callerBId) {
+    return res.status(403).json({ error: 'Admins can only invite users to their own building' });
+  }
+
+  const data = await loadData();
+  if ((data.accounts || []).find(a => a.email.toLowerCase() === emailNorm)) {
+    return res.status(409).json({ error: 'An account with this email already exists' });
+  }
+
+  const inviteToken = crypto.randomBytes(24).toString('hex');
+  const nowIso      = new Date().toISOString();
+  const hrEmployeeId = 'hre_' + Date.now() + '_' + crypto.randomBytes(2).toString('hex');
+
+  // Create the account (role = employee; password set via invite link)
+  const newAccount = {
+    id:           'acc_' + Date.now(),
+    name:         name.trim(),
+    email:        emailNorm,
+    role:         'employee',
+    buildingId:   targetBuilding || null,
+    ph:           null,
+    schedulerOnly: false,
+    inviteToken,
+    inviteExpiry: Date.now() + 7 * 24 * 60 * 60 * 1000,
+    invitedBy:    req.user.email,
+    invitedAt:    nowIso,
+    hrEmployeeId,
+    inviteType:   inviteType || 'full',
+  };
+  data.accounts = data.accounts || [];
+  data.accounts.push(newAccount);
+  await persistAccountNow(newAccount);
+
+  // Create matching hrEmployee record
+  const building = (data.buildings || []).find(b => b.id === targetBuilding);
+  const state    = building?.state || 'TX';
+  const initials = name.trim().split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+  const hrEmployee = {
+    id:              hrEmployeeId,
+    initials,
+    name:            name.trim(),
+    email:           emailNorm,
+    role:            group || 'CNA',
+    facilityId:      targetBuilding,
+    status:          'invited',
+    progress:        'Invite sent',
+    slxId:           null,
+    hourlyRate:      null,
+    onboardingState: state,
+    invitedAt:       nowIso,
+    inviteType:      inviteType || 'full',
+  };
+  data.hrEmployees = data.hrEmployees || [];
+  data.hrEmployees.push(hrEmployee);
+  markDirty();
+
+  const link    = `${APP_URL}/?invite=${inviteToken}`;
+  const bName   = building?.name || 'your facility';
+  const escName = escapeHtml(name.trim());
+  const escB    = escapeHtml(bName);
+  const safePlainName = String(name.trim()).replace(/[\r\n]/g, ' ');
+  const safePlainB    = String(bName).replace(/[\r\n]/g, ' ');
+
+  if (ACS_CONNECTION_STRING) {
+    try {
+      const { EmailClient } = require('@azure/communication-email');
+      const ec     = new EmailClient(ACS_CONNECTION_STRING);
+      const poller = await ec.beginSend({
+        senderAddress: ACS_FROM_EMAIL,
+        recipients: { to: [{ address: emailNorm, displayName: name.trim() }] },
+        content: {
+          subject: `Complete your onboarding — ${safePlainB}`,
+          plainText: `Hi ${safePlainName},\n\nWelcome to ${safePlainB}! You've been invited to complete your onboarding.\n\nClick the link below to set your password and start your paperwork:\n${link}\n\nOnce you sign in you'll be guided through your application, tax forms, and any required documents. You can save your progress and return at any time.\n\nThis invitation expires in 7 days.\n\n— ManageMyStaffing`,
+          html: `<div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#f9fafb">
+  <div style="background:#fff;border-radius:12px;padding:32px;border:1px solid #e5e7eb">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px">
+      <div style="width:36px;height:36px;background:#6B9E7A;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:16px">M</div>
+      <span style="font-size:17px;font-weight:700;color:#111827">ManageMyStaffing</span>
+    </div>
+    <h2 style="font-size:20px;font-weight:700;color:#111827;margin:0 0 8px">Welcome aboard!</h2>
+    <p style="color:#6b7280;font-size:14px;margin:0 0 12px">Hi ${escName}, you've been invited to join <strong>${escB}</strong>.</p>
+    <p style="color:#6b7280;font-size:14px;margin:0 0 20px">Click below to set your password and begin your onboarding paperwork — application, tax forms, and any required documents. You can save your progress and return at any time.</p>
+    <a href="${link}" style="display:inline-block;background:#6B9E7A;color:#fff;font-weight:700;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px">Set Your Password &amp; Start Onboarding →</a>
+    <p style="color:#9ca3af;font-size:12px;margin:20px 0 0">This invitation expires in 7 days. If you didn't expect this, safely ignore this email.</p>
+  </div>
+</div>`,
+        },
+      });
+      await Promise.race([
+        poller.pollUntilDone(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 30000)),
+      ]);
+    } catch (e) {
+      console.error('[mms] Onboarding invite email error:', e.message);
+      return res.json({ ok: true, accountId: newAccount.id, hrEmployeeId, emailWarning: e.message, inviteLink: link });
+    }
+  }
+
+  auditLog('ONBOARD_INVITE_SENT', req.user, { to: emailNorm, role: group, buildingId: targetBuilding, inviteType });
+  res.json({ ok: true, accountId: newAccount.id, hrEmployeeId, inviteLink: link });
+});
+
 // ── POST /api/invite/resend ───────────────────────────────────────────────────
 // Body: { accountId } — regenerates invite token, clears password, emails link.
 // Whatever password the user sets on first login becomes permanent.

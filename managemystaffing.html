@@ -1004,15 +1004,11 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
         <div>
           <label class="form-label">Role</label>
-          <select class="form-input" id="hr-invite-role">
-            ${HR_ROLES.map(r=>`<option>${r}</option>`).join('')}
-          </select>
+          <select class="form-input" id="hr-invite-role"></select>
         </div>
         <div>
           <label class="form-label">Facility</label>
-          <select class="form-input" id="hr-invite-facility" onchange="App.updateInvitePackageLabel()">
-            ${HR_FACILITIES.map(f=>`<option value="${f.id}">${f.name} (${f.state})</option>`).join('')}
-          </select>
+          <select class="form-input" id="hr-invite-facility" onchange="App.updateInvitePackageLabel()"></select>
         </div>
       </div>
       <div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--blue-d);margin-bottom:4px" id="hr-invite-pkg-label">
@@ -4409,7 +4405,7 @@ const App = {
         ${this.hrBadge(e.status)}
       </div>`).join('');
     const qaItems = [
-      {label:'Send Invite', sub:'Invite a new hire', ic:'<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 6l7 4 7-4"/></svg>', fn:"App.openModal('modal-hr-invite')"},
+      {label:'Send Invite', sub:'Invite a new hire', ic:'<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 6l7 4 7-4"/></svg>', fn:"App.openHRInviteModal()"},
       {label:'Review Docs', sub:'Pending document review', ic:'<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="1" width="12" height="14" rx="1.5"/><path d="M5 5h6M5 8h6M5 11h4"/></svg>', fn:"App.navigateHR('docreview')"},
       {label:'Shift Board', sub:'Open shifts & staffing', ic:'<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.5V8l2.5 2"/></svg>', fn:"App.navigateHR('shiftboard')"},
     ];
@@ -4463,7 +4459,7 @@ const App = {
       return '<span style="color:var(--g300)">—</span>';
     };
     const rows = filtered.map(e=>{
-      const fac = HR_FACILITIES.find(x=>x.id===e.facilityId);
+      const fac = (this.S.buildings||[]).find(x=>x.id===e.facilityId);
       return `<tr style="border-bottom:1px solid var(--g100);cursor:pointer;transition:background .12s"
         onmouseover="this.style.background='var(--g50)'" onmouseout="this.style.background=''"
         onclick="App.openHREmployeeDetail('${e.id}')">
@@ -4489,7 +4485,7 @@ const App = {
       ${this.hrHipaaBar()}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
         <div><div class="hr-page-title">Employees</div><div class="hr-page-sub">Invite, track, manage</div></div>
-        <button class="btn btn-primary btn-sm" onclick="App.openModal('modal-hr-invite')">
+        <button class="btn btn-primary btn-sm" onclick="App.openHRInviteModal()">
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 6l7 4 7-4"/></svg>
           Send Invite
         </button>
@@ -6615,40 +6611,99 @@ const App = {
 
   // Apply the removal chosen in openOpenSlotRemoveModal.
   // mode: 'one' | 'future' | 'weekday'
-  confirmOpenSlotRemove(shiftId, mode) {
+  // Uses server DELETE endpoints to bypass the anti-shrink guard on POST /api/data.
+  // Also decrements the staffing requirement and deactivates schedule patterns
+  // so virtual OPEN placeholders disappear and shifts don't regenerate.
+  async confirmOpenSlotRemove(shiftId, mode) {
     const seed = this.S.shifts.find(s => s.id === shiftId);
     if (!seed) { this.showToast('Shift not found', 'warn'); return; }
     const dow = new Date(seed.date + 'T12:00:00').getDay();
     const undoLabel = mode === 'one' ? `Removed 1 shift (${seed.date})`
                     : mode === 'future' ? `Removed all future ${seed.type} ${seed.group} shifts`
                     : `Removed ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dow]} ${seed.type} ${seed.group} rotation`;
-    this._pushUndo(undoLabel);
-    const before = this.S.shifts.length;
-    let kept;
+    this._pushUndo(undoLabel, ['shifts']);
+
+    // Collect IDs to delete based on mode
+    let idsToDelete = [];
     if (mode === 'one') {
-      kept = this.S.shifts.filter(s => s.id !== shiftId);
+      idsToDelete = [shiftId];
     } else if (mode === 'future') {
-      kept = this.S.shifts.filter(s => !(
-        s.status === 'open' &&
-        s.buildingId === seed.buildingId &&
-        s.group === seed.group &&
-        s.type === seed.type &&
-        s.date >= TODAY
-      ));
+      idsToDelete = this.S.shifts
+        .filter(s => s.status === 'open' && s.buildingId === seed.buildingId &&
+                     s.group === seed.group && s.type === seed.type && s.date >= TODAY)
+        .map(s => s.id);
     } else if (mode === 'weekday') {
-      kept = this.S.shifts.filter(s => {
+      idsToDelete = this.S.shifts.filter(s => {
         if (s.status !== 'open' || s.buildingId !== seed.buildingId ||
-            s.group !== seed.group || s.type !== seed.type || s.date < TODAY) return true;
-        return new Date(s.date + 'T12:00:00').getDay() !== dow;
-      });
+            s.group !== seed.group || s.type !== seed.type || s.date < TODAY) return false;
+        return new Date(s.date + 'T12:00:00').getDay() === dow;
+      }).map(s => s.id);
     } else {
-      this.showToast('Unknown remove mode','warn'); return;
+      this.showToast('Unknown remove mode', 'warn'); return;
     }
-    const removed = before - kept.length;
-    this.S.shifts = kept;
-    Audit.log('OPEN_SHIFT_REMOVED', `${mode}: removed ${removed} open ${seed.group} · ${seed.type} shift${removed===1?'':'s'}`, this.S.user?.id, 'medium');
-    this.persistData();
+
     document.getElementById('modal-open-slot-remove')?.remove();
+
+    if (IS_SERVER_MODE && _authToken) {
+      try {
+        // Use server DELETE endpoints (bypass anti-shrink guard)
+        if (mode === 'one') {
+          const r = await fetch(`/api/shifts/${encodeURIComponent(shiftId)}`, { method: 'DELETE' });
+          if (!r.ok) { const b = await r.json().catch(()=>({})); this.showToast(b.error || 'Delete failed', 'warn'); return; }
+        } else if (idsToDelete.length > 0) {
+          const r = await fetch('/api/shifts/delete-batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: idsToDelete }),
+          });
+          if (!r.ok) { const b = await r.json().catch(()=>({})); this.showToast(b.error || 'Batch delete failed', 'warn'); return; }
+        }
+        // Re-fetch canonical state from server
+        try {
+          const dResp = await fetch('/api/data');
+          if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
+        } catch { /* fall through to local cleanup */ }
+      } catch (e) {
+        this.showToast(`Delete failed — ${e.message}`, 'warn');
+        return;
+      }
+    } else {
+      // Offline fallback: remove locally
+      const idSet = new Set(idsToDelete);
+      this.S.shifts = this.S.shifts.filter(s => !idSet.has(s.id));
+    }
+
+    const removed = idsToDelete.length;
+    const bId = seed.buildingId;
+    const g   = seed.group;
+
+    // Decrement staffing requirement so virtual OPEN placeholders decrease
+    if (mode === 'future') {
+      // Wipe the requirement for this shift type entirely
+      const slots = this.S.staffingSlots = this.S.staffingSlots || {};
+      if (slots[bId]?.[g]?.[seed.type]) {
+        slots[bId][g][seed.type] = 0;
+      }
+    } else if (mode === 'one') {
+      const slots = this.S.staffingSlots = this.S.staffingSlots || {};
+      if (slots[bId]?.[g]?.[seed.type] > 0) {
+        slots[bId][g][seed.type] = Math.max(0, slots[bId][g][seed.type] - 1);
+      }
+    }
+
+    // Deactivate matching open schedule patterns so shifts don't regenerate
+    if (mode === 'future' && Array.isArray(this.S.schedulePatterns)) {
+      for (const p of this.S.schedulePatterns) {
+        if (p.group === g && p.shiftType === seed.type && p.buildingId === bId &&
+            (p.kind === 'open' || (!p.kind && !p.empId))) {
+          p.active = false;
+          p.endDate = TODAY;
+        }
+      }
+    }
+
+    Audit.log('OPEN_SHIFT_REMOVED', `${mode}: removed ${removed} open ${g} · ${seed.type} shift${removed===1?'':'s'}`, this.S.user?.id, 'medium');
+    this.persistData();
     this.renderMain();
     this.showToast(`${removed} open shift${removed===1?'':'s'} removed`);
   },
@@ -6821,9 +6876,29 @@ const App = {
         const reqChanged = reqAfter !== reqBefore;
         if (reqChanged) {
           slots[bId][g][shiftType] = reqAfter;
-          // Persist the slotReq change separately — this is purely a local
-          // state edit that won't conflict with the server-side delete just
-          // performed (different collections).
+        }
+
+        // ── Deactivate matching open schedule patterns ──────────────────────
+        // The server's delete-batch already tagged removedDates for the
+        // specific dates we just deleted, but the pattern itself stays
+        // active. On the next month navigation _extendRotationsThrough()
+        // would create NEW shifts for dates beyond the removed set. End-
+        // date the pattern at TODAY so no new shifts are generated.
+        let patsDeactivated = 0;
+        if (Array.isArray(this.S.schedulePatterns)) {
+          for (const p of this.S.schedulePatterns) {
+            if (p.group !== g || p.shiftType !== shiftType || p.buildingId !== bId) continue;
+            if (p.active === false) continue;
+            const kind = p.kind || (p.empId ? 'assign' : 'open');
+            if (kind !== 'open') continue;
+            p.active = false;
+            p.endDate = TODAY;
+            patsDeactivated++;
+          }
+        }
+
+        // Persist requirement + pattern changes together
+        if (reqChanged || patsDeactivated > 0) {
           this.persistData();
         }
 
@@ -7614,30 +7689,57 @@ const App = {
     });
     if (!ok) return;
 
-    let removed = 0;
-    for (const s of this.S.shifts) {
-      if (s.employeeId === empId && s.date >= date && s.type === shiftType && s.group === g && s.status === 'scheduled') {
-        s.employeeId = null;
-        s.status = 'open';
-        s._endedRotation = date;
-        removed++;
+    this.closeModal('modal-remove-shift');
+
+    if (IS_SERVER_MODE && _authToken) {
+      // Use the server endpoint which properly handles pattern deactivation
+      // and data persistence without hitting the anti-shrink guard.
+      try {
+        const r = await fetch(`/api/shifts/${encodeURIComponent(shiftId)}/end-rotation`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (!r.ok) {
+          const b = await r.json().catch(() => ({}));
+          this.showToast(b.error || 'Failed to end rotation', 'warn');
+          return;
+        }
+        const result = await r.json().catch(() => ({}));
+        // Re-fetch canonical state to sync
+        try {
+          const dResp = await fetch('/api/data');
+          if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
+        } catch { /* local state is stale but functional */ }
+        this.renderMain();
+        const count = result.count || 0;
+        this.showToast(`${emp.name} removed from ${count} future ${shiftType} shift${count===1?'':'s'}`, count ? 'success' : 'warn');
+      } catch (e) {
+        this.showToast(`Failed to end rotation — ${e.message}`, 'warn');
       }
-    }
-    // Also disable any matching schedule pattern so future generation stops
-    if (Array.isArray(this.S.schedulePatterns)) {
-      for (const p of this.S.schedulePatterns) {
-        if (p.empId === empId && (!p.shiftType || p.shiftType === shiftType) && (!p.group || p.group === g)) {
-          p.endDate = date;
-          p.active = false;
+    } else {
+      // Offline fallback: client-side mutation
+      let removed = 0;
+      for (const s of this.S.shifts) {
+        if (s.employeeId === empId && s.date >= date && s.type === shiftType && s.group === g && s.status === 'scheduled') {
+          s.employeeId = null;
+          s.status = 'open';
+          s._endedRotation = date;
+          removed++;
         }
       }
+      if (Array.isArray(this.S.schedulePatterns)) {
+        for (const p of this.S.schedulePatterns) {
+          if (p.empId === empId && (!p.shiftType || p.shiftType === shiftType) && (!p.group || p.group === g)) {
+            p.endDate = date;
+            p.active = false;
+          }
+        }
+      }
+      this.logAudit('SHIFT_ROTATION_ENDED', `${emp.name} removed from all future ${shiftType} ${g} shifts on/after ${date} (${removed} shifts opened)`);
+      this.persistData();
+      this.renderMain();
+      this.showToast(`${emp.name} removed from ${removed} future ${shiftType} shift${removed===1?'':'s'}`, removed ? 'success' : 'warn');
     }
-
-    this.logAudit('SHIFT_ROTATION_ENDED', `${emp.name} removed from all future ${shiftType} ${g} shifts on/after ${date} (${removed} shifts opened)`);
-    this.persistData();
-    this.closeModal('modal-remove-shift');
-    this.renderMain();
-    this.showToast(`${emp.name} removed from ${removed} future ${shiftType} shift${removed===1?'':'s'}`, removed?'success':'warn');
   },
 
   // Bottom-left "Remove from schedule" button on the Assign Employee modal
@@ -7700,6 +7802,18 @@ const App = {
         else this.S.shifts = this.S.shifts.filter(s => s.id !== shiftId);
       } catch {
         this.S.shifts = this.S.shifts.filter(s => s.id !== shiftId);
+      }
+      // If the deleted shift was open and a staffing requirement exists,
+      // decrement by 1 so the virtual OPEN placeholder also disappears.
+      if (shift.status === 'open') {
+        const sBId = shift.buildingId;
+        const sG   = shift.group;
+        const sT   = shift.type;
+        const slots = this.S.staffingSlots = this.S.staffingSlots || {};
+        if (slots[sBId]?.[sG]?.[sT] > 0) {
+          slots[sBId][sG][sT] = Math.max(0, slots[sBId][sG][sT] - 1);
+          this.persistData();
+        }
       }
       this.closeModal('modal-remove-shift');
       this.closeModal('modal-assign-shift');
@@ -11945,7 +12059,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   openHREmployeeDetail(empId) {
     const emp = this.S.hrEmployees.find(e => e.id === empId);
     if (!emp) return;
-    const fac  = HR_FACILITIES.find(f => f.id === emp.facilityId);
+    const fac  = (this.S.buildings||[]).find(b => b.id === emp.facilityId);
     const stKey = emp.onboardingState || fac?.state || 'TX';
     const pkg  = this._getActiveOBPkg(stKey) || Object.values((this.S.hrOnboarding || {})).reduce((acc,co) => acc || co[stKey], null);
     const docs = emp.docs || {};
@@ -12026,7 +12140,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
 
   viewHRDoc(empId, stepId) {
     const emp  = this.S.hrEmployees.find(e => e.id === empId);
-    const fac  = HR_FACILITIES.find(f => f.id === emp?.facilityId);
+    const fac  = (this.S.buildings||[]).find(b => b.id === emp?.facilityId);
     const stKey = emp?.onboardingState || fac?.state || 'TX';
     const pkgForView = this._getActiveOBPkg(stKey) || Object.values((this.S.hrOnboarding || {})).reduce((acc,co) => acc || co[stKey], null);
     const step = pkgForView?.steps.find(s => s.id === stepId);
@@ -12126,12 +12240,42 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.persistData(); this.renderHRMain(); this.showToast(`${state} onboarding package created`);
   },
 
+  openHRInviteModal() {
+    // Populate Role dropdown from HR_ROLES
+    const roleSel = document.getElementById('hr-invite-role');
+    if (roleSel) {
+      roleSel.innerHTML = HR_ROLES.map(r => `<option value="${r}">${r}</option>`).join('');
+    }
+    // Populate Facility dropdown from real buildings
+    const facSel = document.getElementById('hr-invite-facility');
+    const buildings = this.S.buildings || [];
+    if (facSel) {
+      facSel.innerHTML = buildings.map(b => `<option value="${b.id}">${sanitize(b.name)} (${sanitize(b.state || '')})</option>`).join('');
+      // Pre-select the admin's current building
+      const currentBId = this.S.activeBuildingId || this.S.user?.buildingId;
+      if (currentBId && buildings.find(b => b.id === currentBId)) {
+        facSel.value = currentBId;
+      }
+    }
+    // Clear previous input values
+    const nameEl = document.getElementById('hr-invite-name');
+    const emailEl = document.getElementById('hr-invite-email');
+    if (nameEl) nameEl.value = '';
+    if (emailEl) emailEl.value = '';
+    // Reset invite type to full
+    const fullRadio = document.querySelector('input[name="hr-invite-type"][value="full"]');
+    if (fullRadio) fullRadio.checked = true;
+    // Update package label for selected facility
+    this.updateInvitePackageLabel();
+    this.openModal('modal-hr-invite');
+  },
+
   updateInvitePackageLabel() {
     const facId = document.getElementById('hr-invite-facility')?.value;
-    const fac = HR_FACILITIES.find(f=>f.id===facId);
+    const bldg = (this.S.buildings || []).find(b => b.id === facId);
     const label = document.getElementById('hr-invite-pkg-label');
-    if (label && fac) {
-      const pkg = fac.state === 'OK' ? 'Oklahoma (Background Check + State W-4)' : 'Texas (DPS CCH Verification)';
+    if (label && bldg) {
+      const pkg = bldg.state === 'OK' ? 'Oklahoma (Background Check + State W-4)' : 'Texas (DPS CCH Verification)';
       label.textContent = `Full Package: Application + ${pkg}`;
     }
   },
@@ -12140,67 +12284,51 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const name = document.getElementById('hr-invite-name')?.value?.trim();
     const email = document.getElementById('hr-invite-email')?.value?.trim().toLowerCase();
     const role = document.getElementById('hr-invite-role')?.value;
-    const facId = document.getElementById('hr-invite-facility')?.value;
-    const inviteType = document.querySelector('input[name="hr-invite-type"]:checked')?.value || 'application';
+    const buildingId = document.getElementById('hr-invite-facility')?.value;
+    const inviteType = document.querySelector('input[name="hr-invite-type"]:checked')?.value || 'full';
     if (!name || !email) { this.showToast('Enter name and email','warn'); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { this.showToast('Invalid email address','warn'); return; }
 
-    const fac = HR_FACILITIES.find(f=>f.id===facId);
-    const initials = name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
-    const id = 'hre' + Date.now();
-    // Auto-assign state from building's state field, fall back to HR_FACILITIES state
-    const invBuilding = (this.S.buildings||[]).find(b => b.id === (this.S.user?.buildingId || this.S.activeBuildingId));
-    const state = invBuilding?.state || fac?.state || 'TX';
-
-    // Default password = their email address (they should change on first login)
-    const defaultPw = email;
-    const ph = hashPw(email, defaultPw);
-
-    // Create hrEmployee record
-    this.S.hrEmployees.push({
-      id, initials, name, email, role, facilityId: facId,
-      status: 'invited', progress: 'Invite sent',
-      slxId: null, hourlyRate: null,
-      onboardingState: state,
-      invitedAt: new Date().toISOString(),
-      inviteType,
-    });
-
-    // Create a corresponding account so they can log in
-    // role = 'hrcandidate', buildingId = building for this facility
-    const bldg = this.S.buildings.find(b => b.name?.includes(fac?.name?.split(' ')[0]) || true) || this.S.buildings[0];
-    const bId = this.S.user?.buildingId || bldg?.id || null;
-    const existingAcct = this.S.accounts.find(a => a.email === email);
-    if (!existingAcct) {
-      this.S.accounts.push({ id: 'achr'+Date.now(), name, email, role: 'hrcandidate', buildingId: bId, hrEmployeeId: id, ph });
-    }
-
-    this.persistData();
     this.closeModal('modal-hr-invite');
-    document.getElementById('hr-invite-name').value = '';
-    document.getElementById('hr-invite-email').value = '';
 
-    // Try server invite if available
     if (IS_SERVER_MODE && _authToken) {
       try {
-        const r = await fetch('/api/invite', {
+        const r = await fetch('/api/invite/onboard', {
           method: 'POST',
           headers: {'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},
-          body: JSON.stringify({ name, email, role: 'hrcandidate', buildingId: bId, hrEmployeeId: id,
-            customMessage: `You have been invited to complete your onboarding at ${fac?.name||'your facility'}. Your default password is your email address — please change it after your first login.` }),
+          body: JSON.stringify({ name, email, group: role, buildingId, inviteType }),
         });
-        if (r.ok) {
-          this.showToast(`Onboarding invite sent to ${name} at ${email}`);
-        } else {
-          this.showToast(`Account created — email invite may not have sent. Share login link manually.`, 'warn');
+        const result = await r.json();
+        if (!r.ok) {
+          this.showToast(result.error || 'Failed to send invite', 'warn');
+          return;
         }
+        this.showToast(result.emailWarning
+          ? `Invite created for ${name} — email may not have sent. Share link manually.`
+          : `Onboarding invite sent to ${name} at ${email}`);
+        // Refetch server data to sync hrEmployee + account
         const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${_authToken}`}});
         if (dResp.ok) this.applyServerData(await dResp.json());
       } catch(e) {
-        this.showToast(`Account created for ${name} — password: their email address`, 'warn');
+        this.showToast(`Failed to send invite — ${e.message}`, 'warn');
       }
     } else {
-      this.showToast(`Invite sent to ${name} — their password is their email address`);
+      // Offline / local-only fallback: create hrEmployee record client-side
+      const initials = name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+      const bldg = (this.S.buildings || []).find(b => b.id === buildingId);
+      const state = bldg?.state || 'TX';
+      const id = 'hre' + Date.now();
+      this.S.hrEmployees = this.S.hrEmployees || [];
+      this.S.hrEmployees.push({
+        id, initials, name, email, role, facilityId: buildingId,
+        status: 'invited', progress: 'Invite sent',
+        slxId: null, hourlyRate: null,
+        onboardingState: state,
+        invitedAt: new Date().toISOString(),
+        inviteType,
+      });
+      this.persistData();
+      this.showToast(`Invite recorded for ${name} (offline mode — no email sent)`, 'warn');
     }
 
     if (this.S.hrPage === 'dashboard' || this.S.hrPage === 'employees') this.renderHRMain();
@@ -17027,6 +17155,9 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const targetStr = target.toISOString().slice(0,10);
     let extended = 0;
     for (const pat of pats) {
+      // Skip deactivated or ended patterns
+      if (pat.active === false) continue;
+      if (pat.endDate && pat.endDate <= TODAY) continue;
       // Skip legacy patterns without 14-day picker info
       if (!pat.selectedDays || !pat.pickerStart) continue;
       const kind = pat.kind || (pat.empId ? 'assign' : 'open');
