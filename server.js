@@ -1368,7 +1368,11 @@ function getDataForUser(user, fullData) {
     employees:        (scrubbed.employees        || []).filter(e => bIds.has(e.buildingId)),
     shifts:           (scrubbed.shifts           || []).filter(s => bIds.has(s.buildingId)),
     schedulePatterns: (scrubbed.schedulePatterns || []).filter(p =>
-      (scrubbed.employees || []).some(e => e.id === p.empId && bIds.has(e.buildingId))),
+      // Open patterns (no empId) are scoped by buildingId directly.
+      // Assign patterns are scoped by the employee's building.
+      p.empId
+        ? (scrubbed.employees || []).some(e => e.id === p.empId && bIds.has(e.buildingId))
+        : (p.buildingId && bIds.has(p.buildingId))),
     accounts:         (scrubbed.accounts || []).filter(a =>
       a.id === user.id || (a.buildingId && bIds.has(a.buildingId)) || (a.buildingIds||[]).some(id => bIds.has(id))),
     alertLog:         (scrubbed.alertLog || []).filter(e => !e.buildingId || bIds.has(e.buildingId)),
