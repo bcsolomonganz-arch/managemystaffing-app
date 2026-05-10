@@ -7224,6 +7224,45 @@ app.post('/api/invite/onboard', requireAuth, requireAdmin, async (req, res) => {
   res.json({ ok: true, accountId: newAccount.id, hrEmployeeId, inviteLink: link });
 });
 
+// ── DELETE /api/accounts/:id ──────────────────────────────────────────────────
+// Removes an admin account. Bypasses the anti-shrink tripwire on /api/data POST.
+// Authz: superadmin always; building admin only for accounts in their building(s).
+// Self-deletion is blocked to prevent locking yourself out.
+app.delete('/api/accounts/:id', requireAuth, requireAdmin, async (req, res) => {
+  const targetId = req.params.id;
+  if (targetId === req.user.id) {
+    return res.status(400).json({ error: 'Cannot remove your own account' });
+  }
+  const data = await loadData();
+  const idx = (data.accounts || []).findIndex(a => a.id === targetId);
+  if (idx < 0) return res.status(404).json({ error: 'Account not found' });
+  const acct = data.accounts[idx];
+
+  // Scope check: building admins can only remove accounts within their buildings
+  if (req.user.role !== 'superadmin') {
+    const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds || [])].filter(Boolean));
+    if (!callerBIds.has(acct.buildingId)) {
+      return res.status(403).json({ error: 'Out of scope — account belongs to a different building' });
+    }
+  }
+
+  // Prevent removing superadmins via this endpoint
+  if (acct.role === 'superadmin') {
+    return res.status(403).json({ error: 'Cannot remove superadmin accounts via this endpoint' });
+  }
+
+  data.accounts.splice(idx, 1);
+
+  try { await flushNow(); } catch (e) {
+    return res.status(500).json({ error: 'Failed to persist account removal. Please retry.' });
+  }
+  auditLog('ACCOUNT_REMOVED', req.user, {
+    removedId: acct.id, email: acct.email, role: acct.role,
+    buildingId: acct.buildingId,
+  });
+  res.json({ ok: true });
+});
+
 // ── POST /api/invite/resend ───────────────────────────────────────────────────
 // Body: { accountId } — regenerates invite token, clears password, emails link.
 // Whatever password the user sets on first login becomes permanent.

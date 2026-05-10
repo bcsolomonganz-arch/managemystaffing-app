@@ -17079,9 +17079,23 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     document.body.appendChild(div);
   },
 
-  removeAdmin(id) {
-    this.S.accounts = this.S.accounts.filter(a=>a.id!==id);
-    this.persistData();
+  async removeAdmin(id) {
+    if (this.S.serverMode) {
+      try {
+        const r = await fetch('/api/accounts/' + encodeURIComponent(id), {
+          method: 'DELETE', headers: { 'Authorization': 'Bearer ' + this.S.token }
+        });
+        const j = await r.json();
+        if (!r.ok) { this.showToast(j.error || 'Failed to remove admin', 'error'); return; }
+        // Re-fetch to sync local state
+        const d = await fetch('/api/data', { headers: { 'Authorization': 'Bearer ' + this.S.token } });
+        if (d.ok) { const fresh = await d.json(); Object.assign(this.S, fresh); }
+      } catch (e) { this.showToast('Network error removing admin', 'error'); return; }
+    } else {
+      // Offline fallback: direct mutation is fine when not using server
+      this.S.accounts = this.S.accounts.filter(a => a.id !== id);
+      this.persistData();
+    }
     document.getElementById('modal-manage-admins')?.remove();
     this.showToast('Admin removed');
     this.openManageAdmins();
