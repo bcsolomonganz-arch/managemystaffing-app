@@ -4073,11 +4073,14 @@ app.post('/api/dm', requireAuth, async (req, res) => {
   if (data.directMessages.length > 5000) data.directMessages = data.directMessages.slice(-5000);
   markDirty();
   auditLog('DM_SENT', me, { toId, threadId: msg.threadId, len: text.length });
-  // Fire-and-forget push to recipient. Body is the message preview — kept
-  // generic enough that a lock-screen notification doesn't leak PHI.
+  // Fire-and-forget push to recipient.
+  // HIPAA: lock-screen notifications are visible to anyone holding the
+  // device, so the body MUST be generic — never the message content,
+  // even truncated. The recipient sees the actual text only after they
+  // unlock, open the app, and authenticate.
   sendPushTo(toId, {
-    title: me.name || me.email || 'New message',
-    body: text.length > 140 ? text.slice(0, 137) + '…' : text,
+    title: 'New message',
+    body: 'From ' + (me.name || me.email || 'someone'),
     tag: 'dm:' + msg.threadId,
     url: '/app',
   }).catch(() => {});
