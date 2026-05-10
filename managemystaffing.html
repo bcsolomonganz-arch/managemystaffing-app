@@ -210,6 +210,15 @@ input[type="time"]{font-family:'DM Sans',sans-serif}
 .filter-tab.active.scheduled{background:#fff;color:var(--blue-d);border:1.5px solid var(--blue-m);box-shadow:var(--shadow)}
 .filter-tab.active.open{background:var(--blue-l);color:var(--blue-d);border:1.5px solid var(--blue-m);box-shadow:var(--shadow)}
 .group-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:20px;font-size:13px;font-weight:600}
+/* Calendar group selector: horizontal strip of all 11 display groups
+   above the Month/Day/Week toolbar so admins can switch groups without
+   touching the left sidebar. Active group is tinted with G_COLORS[group];
+   inactive chips share neutral styling. Wraps on narrow screens. */
+.group-tabs-row{display:flex;gap:6px;flex-wrap:wrap;padding:0 0 12px;margin-bottom:14px;border-bottom:1px solid var(--g100)}
+.group-tab-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border:1.5px solid var(--g200);background:#fff;color:var(--g600);border-radius:18px;font-size:12px;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap;line-height:1}
+.group-tab-chip:hover{border-color:var(--g300);background:var(--g50);color:var(--g800)}
+.group-tab-chip.active{font-weight:700}
+.group-tab-chip svg{flex-shrink:0}
 
 /* CALENDAR */
 .cal-grid{background:#fff;border-radius:var(--radius-lg);border:1px solid var(--g200);overflow:hidden;box-shadow:var(--shadow)}
@@ -6622,7 +6631,7 @@ const App = {
     const undoLabel = mode === 'one' ? `Removed 1 shift (${seed.date})`
                     : mode === 'future' ? `Removed all future ${seed.type} ${seed.group} shifts`
                     : `Removed ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dow]} ${seed.type} ${seed.group} rotation`;
-    this._pushUndo(undoLabel, ['shifts']);
+    this._pushUndo(undoLabel, ['shifts', 'schedulePatterns']);
 
     // Collect IDs to delete based on mode
     let idsToDelete = [];
@@ -6772,7 +6781,7 @@ const App = {
     }
 
     const includeAssigned = !!st.includeAssigned;
-    this._pushUndo(`Removed ${shiftType} ${g} shifts (${slotsPerDay}/day${includeAssigned?' incl assigned':''})`);
+    this._pushUndo(`Removed ${shiftType} ${g} shifts (${slotsPerDay}/day${includeAssigned?' incl assigned':''})`, ['shifts', 'schedulePatterns']);
 
     // Pass 1: bucket candidate rows by date. By default we only consider
     // OPEN slots so an admin can't accidentally unschedule staff. When
@@ -15480,6 +15489,19 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     }
     const bId = this.S.activeBuildingId || u.buildingId || 'b1';
     const groupPill = g ? `<div class="group-pill" style="background:${G_COLORS[g]}11;border:1.5px solid ${G_COLORS[g]}33;color:${G_COLORS[g]}">${G_ICONS[g]} ${g}</div>` : '';
+    // Horizontal strip of all 11 display groups so admins can switch the
+    // active calendar without going through the left sidebar. Active chip
+    // is tinted with G_COLORS[group]; the rest share neutral styling and
+    // brighten on hover. Hidden for employees (their view is locked to
+    // their own group).
+    const groupTabs = (u.role !== 'employee') ? `<div class="group-tabs-row">
+      ${DISPLAY_GROUPS.map(grp => {
+        const active = grp === g;
+        const c = G_COLORS[grp];
+        const style = active ? `background:${c}1a;border-color:${c}66;color:${c}` : '';
+        return `<button class="group-tab-chip${active?' active':''}" onclick="App.selectGroup('${sanitize(grp)}')" style="${style}">${G_ICONS[grp]}<span>${sanitize(groupLabel(grp))}</span></button>`;
+      }).join('')}
+    </div>` : '';
     const hasSlots = g && Object.keys(((this.S.staffingSlots||{})[bId]||{})[g]||{}).some(k=>((this.S.staffingSlots||{})[bId]||{})[g][k]>0);
     const addShiftsBtn = `<button class="btn btn-primary btn-sm" onclick="App.openAddShiftsModal()" style="display:flex;align-items:center;gap:6px;font-weight:600">
       <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/></svg>
@@ -15592,7 +15614,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     else if (this.S.calView === 'day') calHtml = this.renderDayView();
     else calHtml = this.renderShiftView();
 
-    document.getElementById('main').innerHTML = `${stats}
+    document.getElementById('main').innerHTML = `${stats}${groupTabs}
       <div class="cal-toolbar">${viewTabs}${groupPill}${g?addShiftsBtn:''}${addAdminBtn}${g?removeShiftsBtn:''}${undoBtn}${filterTabs}</div>${calHtml}`;
   },
 
