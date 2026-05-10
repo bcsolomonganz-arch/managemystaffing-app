@@ -2093,10 +2093,32 @@ async function sendThreadMessage() {
 function renderNewMessagePicker() {
   const me = State.user;
   const bId = effectiveBuildingId();
-  const people = [
-    ...(State.data?.employees || []).filter(e => !e.inactive && e.buildingId === bId && e.id !== me.id),
-    ...(State.data?.accounts  || []).filter(a => a.buildingId === bId && a.id !== me.id),
+  const accounts  = State.data?.accounts  || [];
+  const employees = State.data?.employees || [];
+  // Building-scoped roster of people you can DM:
+  //   - active employees in the active building
+  //   - admin accounts assigned to the active building
+  // Self is excluded from this set so it can be appended last as
+  // "Notes to self" with a distinct label (matches Slack/Teams).
+  const buildingPeople = [
+    ...employees.filter(e => !e.inactive && e.buildingId === bId && e.id !== me.id),
+    ...accounts .filter(a => a.buildingId === bId && a.id !== me.id),
   ];
+  const seenIds = new Set(buildingPeople.map(p => p.id));
+  // Cross-building reach: super admins have global scope, so always show
+  // them in the picker even when their buildingId is null or points
+  // somewhere else. Without this you couldn't start a fresh DM with
+  // another super admin from the PWA — only respond to one they sent.
+  const otherSuperAdmins = accounts.filter(a =>
+    a.role === 'superadmin' && a.id !== me.id && !seenIds.has(a.id));
+  otherSuperAdmins.forEach(a => seenIds.add(a.id));
+  // Notes-to-self: server already accepts a self-DM (no fromId===toId
+  // guard), so surface it in the UI with a distinct label rather than
+  // hiding it. Useful as a personal scratchpad that survives device
+  // switches because everything routes through the encrypted server.
+  const selfAcct = accounts.find(a => a.id === me.id);
+  const selfRow = selfAcct ? [{ ...selfAcct, name: 'Notes to self', _isSelf: true }] : [];
+  const people = [...buildingPeople, ...otherSuperAdmins, ...selfRow];
   const groups = (State.data?.textGroups || []).filter(g => !g.inactive);
   const main = $('#main');
   main.innerHTML = `

@@ -1350,12 +1350,20 @@ function getDataForUser(user, fullData) {
   // Always scrub secrets from accounts before returning
   const scrubbed = { ...fullData, accounts: _scrubSecrets(fullData.accounts || []) };
 
+  // HIPAA minimum-necessary: a DM body is only ever shipped to a client
+  // when that client is a participant in the thread. Even superadmins
+  // do NOT bulk-receive other people's DMs — message-level oversight is
+  // the audit log's job (DM_SENT events carry metadata only, never body).
+  // Apply this filter to every role's response below.
+  const dmsForMe = (m) => m.fromId === user.id || m.toId === user.id;
+
   // Employees get a heavily restricted view
   if (user.role === 'employee') return _employeeView(user, scrubbed);
 
   // Superadmin sees everything (with secrets scrubbed) + HR if allowed
   if (user.role === 'superadmin') {
-    return _canAccessHR(user) ? scrubbed : _stripHR(scrubbed);
+    const out = _canAccessHR(user) ? scrubbed : _stripHR(scrubbed);
+    return { ...out, directMessages: (out.directMessages || []).filter(dmsForMe) };
   }
 
   // Building admin: their building(s) + HR strip unless HR-allowed
@@ -1376,10 +1384,7 @@ function getDataForUser(user, fullData) {
     accounts:         (scrubbed.accounts || []).filter(a =>
       a.id === user.id || (a.buildingId && bIds.has(a.buildingId)) || (a.buildingIds||[]).some(id => bIds.has(id))),
     alertLog:         (scrubbed.alertLog || []).filter(e => !e.buildingId || bIds.has(e.buildingId)),
-    // Admin sees DMs in their building scope OR ones they personally sent/received
-    directMessages:   (scrubbed.directMessages || []).filter(m =>
-      m.fromId === user.id || m.toId === user.id ||
-      (m.buildingId && bIds.has(m.buildingId))),
+    directMessages:   (scrubbed.directMessages || []).filter(dmsForMe),
     prospects:        (scrubbed.prospects || []).filter(p => !p.buildingId || bIds.has(p.buildingId)),
   };
   return _canAccessHR(user) ? filtered : _stripHR(filtered);
@@ -4026,6 +4031,21 @@ app.delete('/api/sa/seed-demo-facility', requireAuth, requireSuperAdmin, async (
 //   - Each message: { id, threadId, fromId, toId, body, sentAt, readAt }
 //   - Thread id is a deterministic string sort of the pair so either side
 //     can compute it: dm:<sortedId1>:<sortedId2>
+//
+// HIPAA notes:
+//   - DMs are an intra-system encrypted channel (TLS in transit, encrypted
+//     at rest in Postgres / encrypted-JSON file). PHI is PERMITTED here —
+//     this is the legitimate channel for clinical communication. We do
+//     NOT run scanMessageForPHI() on DM bodies the way SMS/Alert do,
+//     because SMS rides cellular networks unencrypted while DMs never
+//     leave the system. Lock-screen push previews are stripped of body
+//     content (see sendPushTo call below) so an unattended device can't
+//     leak PHI either.
+//   - getDataForUser scopes directMessages to the requesting user
+//     (fromId === me OR toId === me) for every role including superadmin
+//     — minimum-necessary applies even to platform staff. Audit oversight
+//     of message activity goes through the DM_SENT audit log entries
+//     (metadata only: sender, recipient, threadId, body length).
 
 const _dmThreadId = _punchLib.dmThreadId;
 
@@ -4227,13 +4247,22 @@ ensureVapidKeys().catch(() => {});
 app.post('/api/dm/read', requireAuth, async (req, res) => {
   const { threadId, upTo } = req.body || {};
   if (!threadId) return res.status(400).json({ error: 'threadId required' });
-  const data = await loadData();
   const me = req.user;
   const myId = me.id;
+  // Defense-in-depth: only a participant in the thread should be able to
+  // probe it. The per-message m.toId === myId guard below already prevents
+  // marking other people's messages, but rejecting up front avoids leaking
+  // the existence of arbitrary threads via the marked-count side channel.
+  // ThreadId format from lib/punch.js is 'dm:<sortedIdA>:<sortedIdB>'.
+  const tid = String(threadId);
+  if (!tid.startsWith('dm:') || !tid.split(':').slice(1).includes(String(myId))) {
+    return res.status(403).json({ error: 'Not a participant' });
+  }
+  const data = await loadData();
   const cutoff = upTo ? new Date(upTo).getTime() : Date.now();
   let marked = 0;
   for (const m of (data.directMessages || [])) {
-    if (m.threadId !== threadId) continue;
+    if (m.threadId !== tid)      continue;
     if (m.toId !== myId)         continue;
     if (m.readAt)                continue;
     if (new Date(m.sentAt).getTime() > cutoff) continue;
