@@ -14806,7 +14806,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   // don't accrue OT under FLSA exemption. OT is computed per ISO week per
   // employee (anything > 40 hrs/wk), and apportioned to the requested range
   // pro-rata when the week straddles the range boundary.
-  _otHoursOver(buildingId, fromISO, toISO) {
+  _otHoursOver(buildingId, fromISO, toISO, groupFilter) {
     const salariedSet = new Set();
     const eligible    = new Set();
     for (const e of (this.S.employees || [])) {
@@ -14819,17 +14819,24 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       if (!s.employeeId || s.status !== 'scheduled') continue;
       if (salariedSet.has(s.employeeId)) continue;
       if (!eligible.has(s.employeeId)) continue;
+      // When a group filter is active, only count shifts in that group.
+      // weekHrs still reflects the employee's FULL week (all groups) so the
+      // >40 hr threshold is correct, but inRangeHrs only accumulates the
+      // filtered group's contribution — the stat card then shows OT
+      // attributable to the group the admin is viewing.
+      const inGroup = !groupFilter || s.group === groupFilter;
       const wk = this._weekRangeISO(s.date);
       const key = s.employeeId + '|' + wk.start;
       const b = buckets.get(key) || { weekHrs: 0, inRangeHrs: 0 };
       const hrs = this._shiftHours(s);
       b.weekHrs += hrs;
-      if (s.date >= fromISO && s.date <= toISO) b.inRangeHrs += hrs;
+      if (inGroup && s.date >= fromISO && s.date <= toISO) b.inRangeHrs += hrs;
       buckets.set(key, b);
     }
     let otHours = 0;
     for (const b of buckets.values()) {
       if (b.weekHrs <= 40) continue;
+      if (b.inRangeHrs <= 0) continue;
       const otHrsTotal     = b.weekHrs - 40;
       const otHrsAttribute = b.weekHrs > 0 ? otHrsTotal * (b.inRangeHrs / b.weekHrs) : 0;
       otHours += otHrsAttribute;
@@ -15527,7 +15534,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       otSubLabel   = `${MONTHS[this.S.viewMonth]} ${this.S.viewYear}`;
     }
     const otHoursRaw = (typeof this._otHoursOver === 'function')
-      ? this._otHoursOver(bId, otRangeFrom, otRangeTo)
+      ? this._otHoursOver(bId, otRangeFrom, otRangeTo, g)
       : 0;
     const otHours = Math.round(otHoursRaw * 10) / 10;            // 1 decimal place
     const otColor = otHours > 0 ? '#D97706' : 'var(--g600)';     // amber when present
