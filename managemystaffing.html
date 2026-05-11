@@ -18842,33 +18842,43 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (Array.isArray(data.employees))        this.S.employees        = data.employees;
     if (Array.isArray(data.shifts))           this.S.shifts           = data.shifts;
     if (Array.isArray(data.schedulePatterns)) {
-      // Preserve client-side removedDates that haven't been persisted yet.
-      // When applyServerData runs after a DELETE + refetch, the server's copy
-      // won't have the removedDates the client just added. Merge them so
-      // _extendRotationsThrough() won't regenerate deleted shifts.
+      // Preserve client-side pattern metadata that the server may have lost.
+      // The pattern JSONB column stores selectedDays, pickerStart, kind,
+      // cycleLen, slots, removedDates, etc. If those fields are missing from
+      // the server's response (empty JSONB), merge them from the client's
+      // in-memory copy so the next persistData() writes them back to Postgres.
+      // Without this, a single empty-JSONB round-trip creates a permanent
+      // metadata death spiral: server returns {}, client saves {}, repeat.
+      const PATTERN_META_KEYS = ['kind','selectedDays','pickerStart','cycleStartDate',
+        'cycleLen','slots','horizonDays','lastExtendedTo','appliedAt','createdBy','removedDates'];
       const oldPats = this.S.schedulePatterns || [];
       if (oldPats.length) {
-        const oldMap = new Map();
+        const oldById = new Map();
+        const oldByKey = new Map();
         for (const op of oldPats) {
-          if (op.removedDates && op.removedDates.length) {
-            // Key by group+shiftType+buildingId+kind for matching
-            const key = `${op.group}|${op.shiftType}|${op.buildingId}|${op.kind||''}|${op.empId||''}`;
-            const existing = oldMap.get(key);
-            if (!existing || op.removedDates.length > existing.removedDates.length) {
-              oldMap.set(key, op);
-            }
-          }
+          if (op.id) oldById.set(op.id, op);
+          const key = `${op.group}|${op.shiftType}|${op.buildingId}|${op.kind||''}|${op.empId||''}`;
+          const existing = oldByKey.get(key);
+          if (!existing) oldByKey.set(key, op);
         }
-        if (oldMap.size > 0) {
-          for (const np of data.schedulePatterns) {
-            const key = `${np.group}|${np.shiftType}|${np.buildingId}|${np.kind||''}|${np.empId||''}`;
-            const oldPat = oldMap.get(key);
-            if (oldPat && oldPat.removedDates) {
-              if (!np.removedDates) np.removedDates = [];
-              for (const d of oldPat.removedDates) {
-                if (!np.removedDates.includes(d)) np.removedDates.push(d);
+        for (const np of data.schedulePatterns) {
+          // Match by ID first, then by composite key
+          const old = (np.id && oldById.get(np.id)) ||
+            oldByKey.get(`${np.group}|${np.shiftType}|${np.buildingId}|${np.kind||''}|${np.empId||''}`);
+          if (!old) continue;
+          for (const mk of PATTERN_META_KEYS) {
+            // Merge removedDates arrays (union)
+            if (mk === 'removedDates') {
+              if (Array.isArray(old.removedDates) && old.removedDates.length) {
+                if (!np.removedDates) np.removedDates = [];
+                for (const d of old.removedDates) {
+                  if (!np.removedDates.includes(d)) np.removedDates.push(d);
+                }
               }
+              continue;
             }
+            // Preserve client metadata when server version is missing it
+            if (np[mk] == null && old[mk] != null) np[mk] = old[mk];
           }
         }
       }

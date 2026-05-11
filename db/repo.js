@@ -667,6 +667,9 @@ async function saveScopedData(data) {
           bId = empRow?.building_id || null;
         }
         const meta = _strip(p, ['id','buildingId','empId','shiftType','group','startDate','endDate','active']);
+        if (Object.keys(meta).length === 0 && p.id) {
+          console.warn('[repo] pattern_empty_jsonb:', p.id, '— metadata fields lost, pattern will be non-functional');
+        }
         await c.query(`INSERT INTO schedule_patterns (id, building_id, emp_id, shift_type, "group", pattern, start_date, end_date, active)
           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
           ON CONFLICT (id) DO UPDATE SET
@@ -940,6 +943,9 @@ async function saveAll(data) {
         // `pattern` JSONB column. Strip out the fields that have dedicated
         // columns to avoid storing them twice.
         const meta = _strip(p, ['id','buildingId','empId','shiftType','group','startDate','endDate','active']);
+        if (Object.keys(meta).length === 0 && p.id) {
+          console.warn('[repo] pattern_empty_jsonb:', p.id, '— metadata fields lost, pattern will be non-functional');
+        }
         await c.query(`INSERT INTO schedule_patterns (id, building_id, emp_id, shift_type, "group", pattern, start_date, end_date, active)
           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
           ON CONFLICT (id) DO UPDATE SET
