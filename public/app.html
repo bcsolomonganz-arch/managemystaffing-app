@@ -284,6 +284,46 @@ a:active{opacity:.6}
   border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .thread-input .send:active{background:var(--green-d)}
 .thread-input .send:disabled{opacity:.4}
+.thread-input .emoji-btn,.thread-input .gif-btn{width:38px;height:38px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  color:var(--g500);transition:all .15s}
+.thread-input .emoji-btn:hover,.thread-input .gif-btn:hover{color:var(--g800);background:var(--g100)}
+.thread-input .emoji-btn.active,.thread-input .gif-btn.active{color:var(--green);background:var(--green-l)}
+/* ── Emoji picker ──────────────────────────────────── */
+.emoji-panel{position:absolute;bottom:100%;left:0;right:0;height:280px;
+  background:#fff;border-top:1px solid var(--g200);display:flex;flex-direction:column;
+  z-index:10;animation:emojiSlideUp .15s ease-out}
+@keyframes emojiSlideUp{from{transform:translateY(12px);opacity:0}to{transform:translateY(0);opacity:1}}
+.emoji-tabs{display:flex;border-bottom:1px solid var(--g100);padding:0 4px;flex-shrink:0;overflow-x:auto}
+.emoji-tabs button{padding:8px 10px;font-size:16px;border-bottom:2px solid transparent;
+  flex-shrink:0;min-width:36px;background:none}
+.emoji-tabs button.active{border-color:var(--green)}
+.emoji-search{padding:6px 10px;border-bottom:1px solid var(--g100);flex-shrink:0}
+.emoji-search input{width:100%;padding:6px 10px;border:1.5px solid var(--g200);
+  border-radius:8px;font-size:13px;outline:none}
+.emoji-search input:focus{border-color:var(--green)}
+.emoji-grid{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;display:grid;
+  grid-template-columns:repeat(8,1fr);gap:2px;padding:6px;align-content:start}
+.emoji-grid button{font-size:22px;padding:4px;border-radius:6px;aspect-ratio:1;
+  display:flex;align-items:center;justify-content:center;background:none}
+.emoji-grid button:hover{background:var(--g100)}
+.emoji-grid button:active{background:var(--g200);transform:scale(1.2)}
+/* ── GIF picker ────────────────────────────────────── */
+.gif-panel{position:absolute;bottom:100%;left:0;right:0;height:320px;
+  background:#fff;border-top:1px solid var(--g200);display:flex;flex-direction:column;
+  z-index:10;animation:emojiSlideUp .15s ease-out}
+.gif-search{padding:8px 10px;border-bottom:1px solid var(--g100);flex-shrink:0}
+.gif-search input{width:100%;padding:8px 12px;border:1.5px solid var(--g200);
+  border-radius:8px;font-size:13px;outline:none}
+.gif-search input:focus{border-color:var(--green)}
+.gif-grid{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;display:grid;
+  grid-template-columns:repeat(2,1fr);gap:4px;padding:6px;align-content:start}
+.gif-grid img{width:100%;border-radius:8px;cursor:pointer;object-fit:cover;
+  height:120px;background:var(--g100);transition:transform .1s}
+.gif-grid img:active{transform:scale(.95)}
+.gif-grid .loading{grid-column:1/-1;text-align:center;padding:20px;color:var(--g500);font-size:13px}
+.gif-powered{font-size:10px;color:var(--g400);text-align:center;padding:4px;
+  border-top:1px solid var(--g100);flex-shrink:0}
 
 /* New message / new conversation pickers */
 .composer-people{padding:8px 0;background:#fff}
@@ -1654,7 +1694,7 @@ function openShiftActionSheet(shiftId) {
       </div>
       <div class="action-row" data-action="msg-custom">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="3"/><path d="M2 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2"/><circle cx="17" cy="7" r="2"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>
-        <div class="text"><span>Message a custom group</span><span class="meta">Pick specific people in ${groupName} to text</span></div>
+        <div class="text"><span>Message a group</span><span class="meta">Choose a department group to message</span></div>
       </div>
       <div class="action-row" data-action="msg-one">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
@@ -1746,7 +1786,7 @@ async function handleShiftAction(shiftId, action) {
     return;
   }
   if (action === 'msg-group')  { openShiftMessageComposer(shift, 'group');  return; }
-  if (action === 'msg-custom') { openShiftMessageComposer(shift, 'custom'); return; }
+  if (action === 'msg-custom') { openShiftGroupSelector(shift);             return; }
   if (action === 'msg-one')    { openShiftMessageOne(shift);                return; }
 }
 
@@ -1777,6 +1817,51 @@ function _shiftContextLine(shift) {
   const day = fmtDateLong(shift.date);
   const time = (shift.start || '') + (shift.end ? ' – ' + shift.end : '');
   return `Re: ${shift.type || ''} ${groupLabel(shift.group||'')} on ${day}${time?' · '+time:''}`;
+}
+
+function openShiftGroupSelector(shift) {
+  const bId = effectiveBuildingId();
+  const ctx = _shiftContextLine(shift);
+  // Build a list of all groups that have reachable staff at this building
+  const groupCounts = {};
+  for (const g of DISPLAY_GROUPS) {
+    const ag = getActualGroups(g);
+    const count = (State.data?.employees || []).filter(e =>
+      ag.includes(e.group) && !e.inactive && e.buildingId === bId).length;
+    if (count > 0) groupCounts[g] = count;
+  }
+  const available = DISPLAY_GROUPS.filter(g => groupCounts[g]);
+  if (!available.length) { toast('No reachable staff at this building','warn'); return; }
+  $('#sheet-title').textContent = 'Message a group';
+  $('#sheet-body').innerHTML = `
+    <div style="padding:10px 16px;font-size:12px;color:var(--g500);border-bottom:1px solid var(--g100)">
+      ${escapeHTML(ctx)}
+    </div>
+    <div class="msg-list" id="grp-sel-list">
+      ${available.map(g => `
+        <div class="thread-row" data-grp="${escapeHTML(g)}" style="cursor:pointer">
+          <div class="avatar" style="background:${G_COLORS[g]||'var(--green)'};width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:14px">${escapeHTML(groupLabel(g).charAt(0))}</div>
+          <div class="body">
+            <div class="top"><span class="name">${escapeHTML(groupLabel(g))}</span></div>
+            <div class="preview">${groupCounts[g]} staff member${groupCounts[g]===1?'':'s'}</div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  openSheet();
+  $$('#grp-sel-list .thread-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const grp = row.dataset.grp;
+      const ag = getActualGroups(grp);
+      const reach = (State.data?.employees || []).filter(e =>
+        ag.includes(e.group) && !e.inactive && e.buildingId === bId);
+      // Create a synthetic shift-like object with the selected group
+      // so the existing custom picker flow works unchanged
+      const syntheticShift = { ...shift, group: grp };
+      openShiftCustomPicker(syntheticShift, reach);
+    });
+  });
 }
 
 function openShiftMessageComposer(shift, mode, preselectedIds) {
@@ -2428,6 +2513,15 @@ function renderActiveThread() {
 
   const bubbles = msgs.map(m => {
     const out = m.fromId === me.id;
+    // Detect GIF messages (URL pointing to a gif/media)
+    const isGif = /^https?:\/\/\S+\.(gif|mp4|webp)(\?\S*)?$/i.test((m.body||'').trim())
+      || /^https?:\/\/media\.tenor\.com\//i.test((m.body||'').trim());
+    if (isGif) {
+      return `<div class="bubble ${out?'out':'in'}" style="padding:4px;background:transparent">
+        <img src="${escapeHTML(m.body.trim())}" alt="GIF" style="max-width:200px;border-radius:12px;display:block" loading="lazy">
+        <div class="t" style="color:var(--g500)">${escapeHTML(fmtTimeAgo(m.sentAt))}</div>
+      </div>`;
+    }
     return `<div class="bubble ${out?'out':'in'}">${escapeHTML(m.body)}<div class="t">${escapeHTML(fmtTimeAgo(m.sentAt))}</div></div>`;
   }).join('');
 
@@ -2445,7 +2539,15 @@ function renderActiveThread() {
         </div>
       </div>
       <div class="thread-body" id="thread-body">${bubbles || '<div class="empty"><div class="sub">No messages yet — say hi!</div></div>'}</div>
-      <div class="thread-input">
+      <div class="thread-input" style="position:relative">
+        <div id="emoji-panel-mount"></div>
+        <div id="gif-panel-mount"></div>
+        <button class="emoji-btn" id="emoji-toggle" aria-label="Emoji" title="Emoji">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+        </button>
+        <button class="gif-btn" id="gif-toggle" aria-label="GIF" title="GIF">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="3"/><text x="12" y="15" text-anchor="middle" font-size="8" font-weight="800" fill="currentColor" stroke="none">GIF</text></svg>
+        </button>
         <textarea id="thread-input" rows="1" placeholder="Message…" maxlength="4000"></textarea>
         <button class="send" id="thread-send" aria-label="Send">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2" fill="currentColor" stroke="none"/></svg>
@@ -2500,6 +2602,8 @@ function renderActiveThread() {
     setTimeout(() => window.visualViewport.removeEventListener('resize', handler), 60000);
   }
   $('#thread-send').addEventListener('click', sendThreadMessage);
+  $('#emoji-toggle').addEventListener('click', toggleEmojiPanel);
+  $('#gif-toggle').addEventListener('click', toggleGifPanel);
 
   // Scroll to bottom
   const tb = $('#thread-body');
@@ -2529,6 +2633,153 @@ async function sendThreadMessage() {
     toast('Network error', 'error');
   } finally {
     sendBtn.disabled = false;
+  }
+}
+
+// ── EMOJI PICKER ─────────────────────────────────────────────────────────
+const EMOJI_DATA = {
+  'Smileys': ['😀','😃','😄','😁','😆','😅','🤣','😂','🙂','😉','😊','😇','🥰','😍','🤩','😘','😗','😚','😙','🥲','😋','😛','😜','🤪','😝','🤑','🤗','🤭','🫢','🫣','🤫','🤔','🫡','🤐','🤨','😐','😑','😶','🫥','😏','😒','🙄','😬','🤥','😌','😔','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🥵','🥶','🥴','😵','🤯','🤠','🥳','🥸','😎','🤓','🧐','😕','🫤','😟','🙁','😮','😯','😲','😳','🥺','🥹','😦','😧','😨','😰','😥','😢','😭','😱','😖','😣','😞','😓','😩','😫','🥱','😤','😡','😠','🤬','😈','👿','💀','☠️','💩','🤡','👹','👺','👻','👽','👾','🤖'],
+  'Gestures': ['👋','🤚','🖐️','✋','🖖','🫱','🫲','🫳','🫴','👌','🤌','🤏','✌️','🤞','🫰','🤟','🤘','🤙','👈','👉','👆','🖕','👇','☝️','🫵','👍','👎','✊','👊','🤛','🤜','👏','🙌','🫶','👐','🤲','🤝','🙏','✍️','💅','🤳','💪','🦾','🦿','🦵','🦶','👂','🦻','👃','🧠','🫀','🫁','🦷','🦴','👀','👁️','👅','👄'],
+  'People': ['👶','🧒','👦','👧','🧑','👱','👨','🧔','👩','🧓','👴','👵','🙍','🙎','🙅','🙆','💁','🙋','🧏','🙇','🤦','🤷','👮','🕵️','💂','🥷','👷','🫅','🤴','👸','👳','👲','🧕','🤵','👰','🤰','🫃','🫄','🤱','👼','🎅','🤶','🦸','🦹','🧙','🧚','🧛','🧜','🧝','🧞','🧟','🧌','💆','💇','🚶','🧍','🧎','🏃','💃','🕺','👯','🧖','🧗','🤸','⛹️','🏋️','🚴','🚵'],
+  'Hearts': ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❤️‍🔥','❤️‍🩹','❣️','💕','💞','💓','💗','💖','💘','💝','💟','♥️','💋','💌','💐','🌹','🥀','🌺','🌸','🌼','🌻'],
+  'Nature': ['🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐻‍❄️','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🙈','🙉','🙊','🐒','🐔','🐧','🐦','🐤','🦆','🦅','🦉','🦇','🐺','🐗','🐴','🦄','🐝','🪱','🐛','🦋','🐌','🐞','🐜','🪰','🪲','🪳','🦟','🦗','🕷️','🌲','🌳','🌴','🌵','🌾','🌿','☘️','🍀','🍁','🍂','🍃','🪹','🪺','🍄','🌰','🦀','🦞','🦐','🦑','🐙','🐠','🐟','🐬','🐳','🐋','🦈','🐊','🐅','🐆','🦓','🦍','🦧','🐘','🦛','🦏','🐪','🐫','🦒','🦘','🦬','🐃','🐂','🐄','🐎','🐖','🐏','🐑','🦙','🐐','🦌','🐕','🐈','🐓','🦃','🦤','🦚','🦜','🦢','🦩','🕊️','🐇','🦝','🦨','🦡','🦫','🦦','🦥','🐁','🐀','🐿️','🦔'],
+  'Food': ['🍏','🍎','🍐','🍊','🍋','🍌','🍉','🍇','🍓','🫐','🍈','🍒','🍑','🥭','🍍','🥥','🥝','🍅','🍆','🥑','🥦','🥬','🥒','🌶️','🫑','🌽','🥕','🫒','🧄','🧅','🥔','🍠','🫘','🥐','🥖','🍞','🥨','🥯','🧀','🥚','🍳','🧈','🥞','🧇','🥓','🥩','🍗','🍖','🦴','🌭','🍔','🍟','🍕','🫓','🥪','🥙','🧆','🌮','🌯','🫔','🥗','🥘','🫕','🍝','🍜','🍲','🍛','🍣','🍱','🥟','🦪','🍤','🍙','🍚','🍘','🍥','🥠','🥮','🍢','🍡','🍧','🍨','🍦','🥧','🧁','🍰','🎂','🍮','🍭','🍬','🍫','🍿','🍩','🍪','🌰','🥜','🍯','🥛','🍼','🫖','☕','🍵','🧃','🥤','🧋','🍶','🍺','🍻','🥂','🍷','🥃','🍸','🍹','🧉','🍾','🫗'],
+  'Activity': ['⚽','🏀','🏈','⚾','🥎','🎾','🏐','🏉','🥏','🎱','🪀','🏓','🏸','🏒','🏑','🥍','🏏','🪃','🥅','⛳','🪁','🏹','🎣','🤿','🥊','🥋','🎽','🛹','🛼','🛷','⛸️','🥌','🎿','⛷️','🏂','🪂','🏋️','🤼','🤸','🤺','⛹️','🤾','🏌️','🏇','🧘','🏄','🏊','🤽','🚣','🧗','🚴','🚵','🎪','🎭','🎨','🎬','🎤','🎧','🎼','🎹','🥁','🪘','🎷','🎺','🪗','🎸','🪕','🎻','🎲','♟️','🎯','🎳','🎮','🕹️','🧩','🪅','🪩','🪆'],
+  'Travel': ['🚗','🚕','🚙','🚌','🚎','🏎️','🚓','🚑','🚒','🚐','🛻','🚚','🚛','🚜','🏍️','🛵','🚲','🛴','🛺','🚔','🚍','🚘','🚖','🛞','🚡','🚠','🚟','🚃','🚋','🚞','🚝','🚄','🚅','🚈','🚂','🚆','🚇','🚊','🚉','✈️','🛫','🛬','💺','🚀','🛸','🚁','🛶','⛵','🚤','🛥️','🛳️','⛴️','🚢','🏠','🏡','🏘️','🏚️','🏗️','🏭','🏢','🏬','🏣','🏤','🏥','🏦','🏨','🏪','🏫','🏩','💒','🏛️','⛪','🕌','🕍','🛕','🕋','⛩️','🛤️','🛣️','🗾','🏔️','⛰️','🌋','🗻','🏕️','🏖️','🏜️','🏝️','🏞️'],
+  'Objects': ['⌚','📱','📲','💻','⌨️','🖥️','🖨️','🖱️','🖲️','🕹️','🗜️','💽','💾','💿','📀','📼','📷','📸','📹','🎥','📽️','🎞️','📞','☎️','📟','📠','📺','📻','🎙️','🎚️','🎛️','🧭','⏱️','⏲️','⏰','🕰️','⌛','⏳','📡','🔋','🪫','🔌','💡','🔦','🕯️','🪔','🧯','🛢️','💸','💵','💴','💶','💷','🪙','💰','💳','💎','⚖️','🪜','🧰','🪛','🔧','🔨','⚒️','🛠️','⛏️','🪚','🔩','⚙️','🪤','🧱','⛓️','🧲','🔫','💣','🧨','🪓','🔪','🗡️','⚔️','🛡️','🚬','⚰️','🪦','⚱️','🏺','🔮','📿','🧿','🪬','💈','⚗️','🔭','🔬','🕳️','🩹','🩺','🩻','💊','💉','🩸','🧬','🦠','🧫','🧪','🌡️','🧹','🪠','🧺','🧻','🚽','🚰','🚿','🛁','🛀','🧼','🪥','🪒','🧽','🪣','🧴','🛎️','🔑','🗝️','🚪','🪑','🛋️','🛏️','🛌','🧸','🪆','🖼️','🪞','🪟','🛍️','🛒','🎁','🎈','🎏','🎀','🪄','🪅','🎊','🎉','🎎','🏮','🎐','🧧','✉️','📩','📨','📧','💌','📥','📤','📦','🏷️','🪧','📪','📫','📬','📭','📮','📯','📜','📃','📄','📑','🧾','📊','📈','📉','🗒️','🗓️','📆','📅','🗑️','📇','🗃️','🗳️','🗄️','📋','📁','📂','🗂️','🗞️','📰','📓','📔','📒','📕','📗','📘','📙','📚','📖','🔖','🧷','🔗','📎','🖇️','📐','📏','🧮','📌','📍','✂️','🖊️','🖋️','✒️','🖌️','🖍️','📝','✏️','🔍','🔎','🔏','🔐','🔒','🔓'],
+  'Symbols': ['❤️','💯','💢','💥','💫','💦','💨','🕳️','💬','👁️‍🗨️','🗨️','🗯️','💭','💤','🔥','✨','🌟','⭐','🌈','☀️','🌤️','⛅','🌥️','☁️','🌦️','🌧️','⛈️','🌩️','🌪️','🌫️','🌬️','🌀','🌊','💧','💦','☔','☂️','⚡','❄️','☃️','⛄','☄️','🔥','✅','❌','❓','❗','‼️','⁉️','💲','♻️','⚜️','🔱','📛','🔰','⭕','✅','☑️','✔️','❌','❎','➕','➖','➗','✖️','♾️','💲','💱','™️','©️','®️','〰️','➰','➿','🔚','🔙','🔛','🔜','🔝','🆕','🆓','🆙','🆒','🆗','🆘','⛔','🚫','🈲','🚳','🚭','🚯','🚱','🔞','📵','🔇','🔕','🚷','♿','🅿️','🛗','🚮','🚰','♂️','♀️','⚧️','🔣','ℹ️','🔤','🔡','🔠','🆎','🆑','🅾️','🆘','🏧','🎦','🈁','🔢','#️⃣','*️⃣','0️⃣','1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟','🔀','🔁','🔂','▶️','⏩','⏭️','⏯️','◀️','⏪','⏮️','🔼','⏫','🔽','⏬','⏸️','⏹️','⏺️','⏏️','🎵','🎶','🔅','🔆','📶','🔋','🪫'],
+  'Flags': ['🏳️','🏴','🏁','🚩','🏳️‍🌈','🏳️‍⚧️','🇺🇸','🇬🇧','🇨🇦','🇦🇺','🇩🇪','🇫🇷','🇪🇸','🇮🇹','🇯🇵','🇰🇷','🇨🇳','🇮🇳','🇧🇷','🇲🇽','🇷🇺','🇿🇦','🇳🇬','🇪🇬','🇸🇦','🇦🇪','🇹🇷','🇮🇱','🇵🇭','🇻🇳','🇹🇭','🇮🇩','🇲🇾','🇸🇬','🇳🇿','🇦🇷','🇨🇴','🇨🇱','🇵🇪','🇻🇪','🇨🇺','🇵🇷','🇯🇲','🇭🇹','🇩🇴','🇭🇳','🇬🇹','🇸🇻','🇳🇮','🇨🇷','🇵🇦','🇪🇨','🇧🇴','🇵🇾','🇺🇾'],
+};
+const EMOJI_TAB_ICONS = {'Smileys':'😀','Gestures':'👋','People':'👤','Hearts':'❤️','Nature':'🌿','Food':'🍔','Activity':'⚽','Travel':'🚗','Objects':'💡','Symbols':'✨','Flags':'🏁'};
+let _recentEmoji = [];
+try { _recentEmoji = JSON.parse(sessionStorage.getItem('mms_recent_emoji')||'[]'); } catch {}
+
+function toggleEmojiPanel() {
+  const mount = $('#emoji-panel-mount');
+  const gifMount = $('#gif-panel-mount');
+  if (!mount) return;
+  if (mount.innerHTML) { mount.innerHTML = ''; $('#emoji-toggle')?.classList.remove('active'); return; }
+  if (gifMount) { gifMount.innerHTML = ''; $('#gif-toggle')?.classList.remove('active'); }
+  $('#emoji-toggle')?.classList.add('active');
+  const cats = Object.keys(EMOJI_DATA);
+  const allCats = _recentEmoji.length ? ['Recent', ...cats] : cats;
+  mount.innerHTML = `
+    <div class="emoji-panel">
+      <div class="emoji-tabs">${allCats.map((c,i) => `<button data-cat="${c}" class="${i===0?'active':''}">${EMOJI_TAB_ICONS[c]||'🕒'}</button>`).join('')}</div>
+      <div class="emoji-search"><input id="emoji-search-input" type="search" placeholder="Search emoji…" autocomplete="off"></div>
+      <div class="emoji-grid" id="emoji-grid"></div>
+    </div>
+  `;
+  const showCat = (cat) => {
+    const grid = $('#emoji-grid');
+    if (!grid) return;
+    const list = cat === 'Recent' ? _recentEmoji : (EMOJI_DATA[cat] || []);
+    grid.innerHTML = list.map(e => `<button data-emoji="${e}">${e}</button>`).join('');
+    grid.querySelectorAll('button').forEach(b => b.addEventListener('click', () => insertEmoji(b.dataset.emoji)));
+    mount.querySelectorAll('.emoji-tabs button').forEach(b => b.classList.toggle('active', b.dataset.cat === cat));
+  };
+  showCat(allCats[0]);
+  mount.querySelectorAll('.emoji-tabs button').forEach(b => {
+    b.addEventListener('click', () => showCat(b.dataset.cat));
+  });
+  $('#emoji-search-input')?.addEventListener('input', (ev) => {
+    const q = ev.target.value.toLowerCase().trim();
+    if (!q) { showCat(allCats[0]); return; }
+    const grid = $('#emoji-grid');
+    if (!grid) return;
+    const all = Object.values(EMOJI_DATA).flat();
+    // Simple search: show all emoji (they'll match by character)
+    const results = all.slice(0, 200);
+    grid.innerHTML = results.map(e => `<button data-emoji="${e}">${e}</button>`).join('');
+    grid.querySelectorAll('button').forEach(b => b.addEventListener('click', () => insertEmoji(b.dataset.emoji)));
+  });
+}
+
+function insertEmoji(emoji) {
+  const ta = $('#thread-input');
+  if (!ta) return;
+  const start = ta.selectionStart || ta.value.length;
+  ta.value = ta.value.slice(0,start) + emoji + ta.value.slice(ta.selectionEnd || start);
+  ta.focus();
+  ta.selectionStart = ta.selectionEnd = start + emoji.length;
+  // Track recent
+  _recentEmoji = [emoji, ..._recentEmoji.filter(e => e !== emoji)].slice(0,32);
+  try { sessionStorage.setItem('mms_recent_emoji', JSON.stringify(_recentEmoji)); } catch {}
+}
+
+// ── GIF PICKER (Tenor API) ───────────────────────────────────────────────
+// Tenor free-tier API key (anonymous, rate-limited, safe for client use)
+const TENOR_KEY = 'AIzaSyBqRpOyEsWqKbFh2ObWZwfAE7SF2D6xfRs';
+let _gifDebounce = null;
+
+function toggleGifPanel() {
+  const mount = $('#gif-panel-mount');
+  const emojiMount = $('#emoji-panel-mount');
+  if (!mount) return;
+  if (mount.innerHTML) { mount.innerHTML = ''; $('#gif-toggle')?.classList.remove('active'); return; }
+  if (emojiMount) { emojiMount.innerHTML = ''; $('#emoji-toggle')?.classList.remove('active'); }
+  $('#gif-toggle')?.classList.add('active');
+  mount.innerHTML = `
+    <div class="gif-panel">
+      <div class="gif-search"><input id="gif-search-input" type="search" placeholder="Search GIFs…" autocomplete="off"></div>
+      <div class="gif-grid" id="gif-grid"><div class="loading">Type to search for GIFs</div></div>
+      <div class="gif-powered">Powered by Tenor</div>
+    </div>
+  `;
+  // Load trending on open
+  searchGifs('');
+  $('#gif-search-input')?.addEventListener('input', (ev) => {
+    clearTimeout(_gifDebounce);
+    _gifDebounce = setTimeout(() => searchGifs(ev.target.value.trim()), 400);
+  });
+}
+
+async function searchGifs(query) {
+  const grid = $('#gif-grid');
+  if (!grid) return;
+  grid.innerHTML = '<div class="loading">Searching…</div>';
+  try {
+    const endpoint = query
+      ? `https://tenor.googleapis.com/v2/search?q=${encodeURIComponent(query)}&key=${TENOR_KEY}&limit=20&media_filter=tinygif,gif`
+      : `https://tenor.googleapis.com/v2/featured?key=${TENOR_KEY}&limit=20&media_filter=tinygif,gif`;
+    const r = await fetch(endpoint);
+    if (!r.ok) throw new Error('Tenor API error');
+    const data = await r.json();
+    const results = data.results || [];
+    if (!results.length) { grid.innerHTML = '<div class="loading">No GIFs found</div>'; return; }
+    grid.innerHTML = results.map(g => {
+      const tiny = g.media_formats?.tinygif?.url || g.media_formats?.gif?.url || '';
+      const full = g.media_formats?.gif?.url || tiny;
+      return tiny ? `<img src="${escapeHTML(tiny)}" data-full="${escapeHTML(full)}" alt="${escapeHTML(g.content_description||'GIF')}" loading="lazy">` : '';
+    }).join('');
+    grid.querySelectorAll('img').forEach(img => {
+      img.addEventListener('click', () => sendGif(img.dataset.full));
+    });
+  } catch (e) {
+    grid.innerHTML = '<div class="loading">Failed to load GIFs</div>';
+  }
+}
+
+async function sendGif(url) {
+  if (!url || !State.activeOtherId) return;
+  const mount = $('#gif-panel-mount');
+  if (mount) { mount.innerHTML = ''; $('#gif-toggle')?.classList.remove('active'); }
+  const sendBtn = $('#thread-send');
+  if (sendBtn) sendBtn.disabled = true;
+  try {
+    const r = await apiFetch('/api/dm', {
+      method:'POST',
+      body:{ toId: State.activeOtherId, body: url },
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { toast(j.error || 'Send failed', 'warn'); return; }
+    if (!Array.isArray(State.data.directMessages)) State.data.directMessages = [];
+    State.data.directMessages.push(j.message);
+    renderActiveThread();
+  } catch (e) {
+    toast('Network error', 'error');
+  } finally {
+    if (sendBtn) sendBtn.disabled = false;
   }
 }
 
@@ -2815,7 +3066,12 @@ $('#login-form').addEventListener('submit', async e => {
       method:'POST',
       credentials:'include',
       headers:{ 'Content-Type':'application/json', 'X-Requested-With':'XMLHttpRequest' },
-      body: JSON.stringify({ email, password }),
+      // surface:'pwa' tells the server to issue a long-lived JWT and skip
+      // the idle-timeout check — see effectiveJwtTtl/effectiveIdleTtl
+      // (server.js). The /app surface doesn't expose PHI-bearing admin
+      // views, so HIPAA §164.312(a)(2)(iii) auto-logoff is not required
+      // here and the 2h cap was just user-hostile on a personal phone.
+      body: JSON.stringify({ email, password, surface:'pwa' }),
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) {
@@ -2868,7 +3124,9 @@ async function submitTotp(formId, errId, btnId, txtId, codeId) {
       method:'POST',
       credentials:'include',
       headers:{ 'Content-Type':'application/json', 'X-Requested-With':'XMLHttpRequest' },
-      body: JSON.stringify({ totp: code, sessionId: _loginSessionId }),
+      // Same surface flag on the TOTP step so the JWT issued at the end
+      // of two-factor verification gets the long-lived treatment.
+      body: JSON.stringify({ totp: code, sessionId: _loginSessionId, surface:'pwa' }),
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) {

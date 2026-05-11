@@ -107,6 +107,31 @@ function isPrivilegedRole(role) {
 function jwtTtlFor(role)        { return isPrivilegedRole(role) ? JWT_TTL_SECONDS : EMPLOYEE_JWT_TTL_SECONDS; }
 function idleTtlFor(role)       { return isPrivilegedRole(role) ? IDLE_TIMEOUT_SECONDS : EMPLOYEE_IDLE_TIMEOUT_SECONDS; }
 
+// PWA-surface override: the companion app (public/app.html) only exposes
+// the user's own schedule, open shifts in their group, and in-app
+// messaging — no roster, HR, audit log, or other PHI-bearing admin
+// views. Auto-logoff is therefore not HIPAA-required on the /app
+// surface, and the friction of a 2h timeout on a personal phone is a
+// poor trade. When a login request comes in with body.surface==='pwa'
+// (set by the PWA login form), the JWT carries that tag and these
+// helpers return the 1y (effectively forever) values for every role.
+// Desktop sessions stay on the 2h cap because the desktop site does
+// touch PHI (roster, audit log, mass-swap, payroll, etc.).
+//
+// Caveat: in-app DMs are a permitted channel for clinical comms (see
+// the /api/dm comment block), so an unattended phone with the PWA
+// open could expose past DM bodies. Mobile OS lock screens are the
+// mitigation; HIPAA §164.310(d) covers physical-device safeguards
+// separately from §164.312(a)(2)(iii) auto-logoff.
+function effectiveJwtTtl(role, surface) {
+  if (surface === 'pwa') return EMPLOYEE_JWT_TTL_SECONDS;
+  return jwtTtlFor(role);
+}
+function effectiveIdleTtl(role, surface) {
+  if (surface === 'pwa') return EMPLOYEE_IDLE_TIMEOUT_SECONDS;
+  return idleTtlFor(role);
+}
+
 // ── STRUCTURED LOGGING ────────────────────────────────────────────────────────
 function log(level, msg, meta = {}) {
   const entry = { ts: new Date().toISOString(), level, msg, ...meta };
@@ -1186,10 +1211,13 @@ async function requireAuth(req, res, next) {
   try {
     if (await revokedTokens.has(token)) return res.status(401).json({ error: 'Token revoked' });
     const decoded = jwt.verify(token, JWT_SECRET);
-    // Idle timeout: 15 min for admin/SA (HIPAA); effectively disabled for employees.
+    // Idle timeout: 2h for admin/SA on the desktop site (HIPAA §164.312
+    // (a)(2)(iii)). Effectively disabled for employees and for any
+    // session tagged surface='pwa' at issue time. See effectiveIdleTtl
+    // for the rationale.
     const sid = decoded.sid;
     const last = await lastActivity.get(sid);
-    const idleMs = idleTtlFor(decoded.role) * 1000;
+    const idleMs = effectiveIdleTtl(decoded.role, decoded.surface) * 1000;
     if (last && (Date.now() - last) > idleMs) {
       await revokedTokens.add(token);
       await lastActivity.delete(sid);
@@ -6589,17 +6617,22 @@ app.post('/api/auth/totp/enroll', async (req, res) => {
   // Issue cookie/session, then return user info + the plaintext codes (shown once)
   const sid = crypto.randomBytes(16).toString('hex');
   const isDemo = acct.id === SEED_DEMO.id || acct.id === SEED_DEMO_NURSE.id;
+  // Carry the PWA surface flag through the TOTP-enrollment path too so a
+  // user who completes first-time enrollment on the /app surface gets
+  // the long-lived session immediately.
+  const surface = (req.body?.surface === 'pwa') ? 'pwa' : undefined;
   const payload = {
     id: acct.id, name: acct.name, email: acct.email, role: acct.role,
     buildingId: acct.buildingId || null, buildingIds: acct.buildingIds || [],
-    group: acct.group || undefined, demo: isDemo || undefined, sid,
+    group: acct.group || undefined, demo: isDemo || undefined, surface, sid,
   };
-  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_TTL_SECONDS });
+  const ttl = effectiveJwtTtl(acct.role, surface);
+  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: ttl });
   lastActivity.set(sid, Date.now());
-  setAuthCookie(res, token);
+  setAuthCookie(res, token, ttl);
   // Trust this device for 30 days — first enrollment counts as a verified device.
   setDeviceTrustCookie(res, acct);
-  auditLog('LOGIN_SUCCESS', acct, { sid, via: 'totp_enrollment' });
+  auditLog('LOGIN_SUCCESS', acct, { sid, via: 'totp_enrollment', surface: surface || 'web' });
   return res.json({ user: payload, authVia: 'cookie', recoveryCodes: codes });
 });
 
@@ -6644,6 +6677,11 @@ app.post('/api/auth/totp/reset', requireAuth, requireSuperAdmin, async (req, res
 async function _issueToken(req, res, acct, data) {
   const sid = crypto.randomBytes(16).toString('hex');
   const isDemo = acct.id === SEED_DEMO.id || acct.id === SEED_DEMO_NURSE.id;
+  // PWA logins send body.surface === 'pwa' so the JWT carries the tag and
+  // every requireAuth check thereafter knows to skip the idle timeout.
+  // Whitelisted to the single string we expect to avoid arbitrary client
+  // values polluting the payload.
+  const surface = (req.body?.surface === 'pwa') ? 'pwa' : undefined;
   const payload = {
     id:         acct.id,
     name:       acct.name,
@@ -6654,13 +6692,14 @@ async function _issueToken(req, res, acct, data) {
     group:      acct.group || undefined,
     schedulerOnly: acct.role === 'admin' && !!acct.schedulerOnly ? true : undefined,
     demo:       isDemo || undefined,
+    surface,
     sid,
   };
-  const ttl = jwtTtlFor(acct.role);
+  const ttl = effectiveJwtTtl(acct.role, surface);
   const token = jwt.sign(payload, JWT_SECRET, { expiresIn: ttl });
   await lastActivity.set(sid, Date.now());
-  setAuthCookie(res, token, ttl);           // ← XSS-safe httpOnly cookie, role-aware TTL
-  auditLog('LOGIN_SUCCESS', acct, { sid });
+  setAuthCookie(res, token, ttl);           // ← XSS-safe httpOnly cookie, surface-aware TTL
+  auditLog('LOGIN_SUCCESS', acct, { sid, surface: surface || 'web' });
   return res.json({ user: payload, authVia: 'cookie' });
 }
 
