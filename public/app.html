@@ -187,6 +187,29 @@ a:active{opacity:.6}
 .cal-cell .pip.pending{background:var(--blue-d)}
 .cal-cell .open-count{font-size:9px;color:var(--orange);font-weight:800;margin-top:auto}
 
+/* Employee calendar — shift entries shown directly in each cell with
+   abbreviated times (e.g. "7a-3p"). Mine = green tint, Open = orange.
+   Same .cal-grid / .cal-cell structure as the admin calendar so the
+   two surfaces feel consistent; this just adds the inline shift chips
+   and a slightly taller min-height so the chips don't crowd the day
+   number. */
+.cal-cell.emp{min-height:78px;align-items:stretch}
+.cal-cell.emp .top-row{display:flex;align-items:center;justify-content:space-between;line-height:1}
+.cal-cell.emp .more{font-size:9px;color:var(--g500);font-weight:700;margin-top:1px;text-align:center}
+.emp-shift{display:block;font-size:10px;font-weight:700;padding:2px 4px;border-radius:4px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.25;margin-top:2px}
+.emp-shift.mine{background:#DCFCE7;color:#166534}
+.emp-shift.open{background:#FEF3C7;color:#92400E;cursor:pointer}
+.emp-shift.pending{background:#DBEAFE;color:#1E40AF}
+.emp-cal-section{padding:0 0 6px}
+.emp-cal-section .head{display:flex;align-items:center;gap:8px;padding:14px 16px 10px}
+.emp-cal-section .head .ttl{font-size:13px;font-weight:800;color:var(--g900);text-transform:uppercase;letter-spacing:.04em}
+.emp-cal-section .head .meta{font-size:11px;color:var(--g500);font-weight:600;margin-left:auto}
+.emp-cal-nav{display:flex;align-items:center;gap:4px;padding:0 16px 8px}
+.emp-cal-nav .month{flex:1;text-align:center;font-size:14px;font-weight:800;color:var(--g900)}
+.emp-cal-nav button{padding:6px 10px;border-radius:7px;color:var(--g700);font-weight:700;font-size:13px;background:var(--g100)}
+.emp-cal-nav button:active{background:var(--g200)}
+
 /* Day detail panel */
 .day-panel{padding:12px 14px;border-top:1px solid var(--g200);background:#fff}
 .day-panel .day-ttl{font-size:14px;font-weight:800;color:var(--g900);margin-bottom:8px}
@@ -844,21 +867,41 @@ function renderEmployeeView() {
   const today = TODAY();
   const shifts = State.data?.shifts || [];
 
-  const myUpcoming = shifts.filter(s =>
-    s.employeeId === u.id && s.status === 'scheduled' && s.date >= today
-  ).sort((a,b) => a.date.localeCompare(b.date) || (a.start||'').localeCompare(b.start||''));
+  // Initialize the employee-view month state on first render. Reuses the
+  // same MONTHS list as the admin view but lives in its own State keys
+  // (empViewYear / empViewMonth) so toggling between roles in tests
+  // doesn't cross-contaminate cursors.
+  if (State.empViewYear == null || State.empViewMonth == null) {
+    const t = new Date();
+    State.empViewYear  = t.getFullYear();
+    State.empViewMonth = t.getMonth();
+  }
+
+  const myShifts = shifts.filter(s =>
+    s.employeeId === u.id && s.status === 'scheduled');
 
   const myGroup = u.group;
+  // Open shifts: today or future only — claiming a past open shift is
+  // meaningless. My scheduled shifts intentionally include past dates so
+  // the employee can scroll back and see what they've actually worked.
   const openShifts = shifts.filter(s =>
     s.status === 'open' && s.group === myGroup && s.date >= today &&
-    (!s.buildingId || s.buildingId === effectiveBuildingId())
-  ).sort((a,b) => a.date.localeCompare(b.date) || (a.start||'').localeCompare(b.start||''));
+    (!s.buildingId || s.buildingId === effectiveBuildingId()));
 
-  // Hours scheduled this week — a quick orientation banner
+  // "This week" hours banner — kept as the at-a-glance orientation strip
+  // above the calendars. Uses ALL my scheduled shifts, not just future
+  // ones, so a Monday-morning glance still reflects what was just worked.
   const ws = startOfWeek(today);
   const we = addDays(ws, 6);
-  const thisWeek = shifts.filter(s => s.employeeId === u.id && s.status === 'scheduled' && s.date >= ws && s.date <= we);
+  const thisWeek = myShifts.filter(s => s.date >= ws && s.date <= we);
   const hours = thisWeek.reduce((sum, s) => sum + shiftHours(s), 0);
+
+  // Counts shown in the section headers reflect the currently-visible
+  // month, not the entire dataset, so the header matches what the user
+  // sees in the grid.
+  const monthPrefix = `${State.empViewYear}-${String(State.empViewMonth+1).padStart(2,'0')}-`;
+  const myInMonth   = myShifts.filter(s => s.date.startsWith(monthPrefix)).length;
+  const openInMonth = openShifts.filter(s => s.date.startsWith(monthPrefix)).length;
 
   const main = $('#main');
   main.innerHTML = `
@@ -871,34 +914,183 @@ function renderEmployeeView() {
       </div>
     </div>
 
-    <div class="section">
-      <div class="section-head">
-        <span class="section-title">My upcoming shifts</span>
-        <span class="section-meta">${myUpcoming.length} scheduled</span>
-      </div>
-      ${myUpcoming.length
-        ? myUpcoming.slice(0, 60).map(renderShiftCard).join('')
-        : emptyBlock('calendar', 'No upcoming shifts', "You'll see your scheduled shifts here.")}
+    <div class="emp-cal-nav">
+      <button id="emp-prev" aria-label="Previous month">‹</button>
+      <div class="month">${escapeHTML(MONTHS[State.empViewMonth] + ' ' + State.empViewYear)}</div>
+      <button id="emp-next" aria-label="Next month">›</button>
+      <button id="emp-today" class="btn-ghost" style="font-size:12px">Today</button>
     </div>
 
-    <div class="section" style="border-top:8px solid var(--g100);background:var(--g50)">
-      <div class="section-head">
-        <span class="section-title">Open shifts in ${escapeHTML(groupLabel(myGroup||'your role'))}</span>
-        <span class="section-meta">${openShifts.length} available</span>
+    <div class="emp-cal-section">
+      <div class="head">
+        <span class="ttl">My schedule</span>
+        <span class="meta">${myInMonth} this month</span>
       </div>
-      ${openShifts.length
-        ? openShifts.slice(0, 80).map(s => renderShiftCard(s, { open:true, claimable:true })).join('')
-        : emptyBlock('inbox', 'No open shifts right now', 'Check back soon — open shifts in your role show up here.')}
+      ${renderEmpMonthCal(myShifts, { variant:'mine', today })}
+    </div>
+
+    <div class="emp-cal-section" style="border-top:8px solid var(--g100);background:var(--g50);padding-bottom:16px">
+      <div class="head">
+        <span class="ttl">Open shifts · ${escapeHTML(groupLabel(myGroup||'your role'))}</span>
+        <span class="meta">${openInMonth} this month</span>
+      </div>
+      ${renderEmpMonthCal(openShifts, { variant:'open', today })}
+      <div id="emp-day-panel"></div>
     </div>
   `;
 
-  // Wire claim buttons
-  $$('[data-claim-id]', main).forEach(btn => {
+  // Month nav
+  $('#emp-prev')?.addEventListener('click', () => navEmpMonth(-1));
+  $('#emp-next')?.addEventListener('click', () => navEmpMonth(1));
+  $('#emp-today')?.addEventListener('click', () => {
+    const t = new Date();
+    State.empViewYear  = t.getFullYear();
+    State.empViewMonth = t.getMonth();
+    State.empSelectedDate = TODAY();
+    render();
+  });
+
+  // Cell taps → open per-day panel listing the shifts (mine + claimable
+  // opens) for that day, using the existing shift-card UI so claim
+  // buttons and times stay consistent with the rest of the app.
+  $$('.cal-cell.emp[data-date]').forEach(el => {
+    el.addEventListener('click', () => renderEmpDayPanel(el.dataset.date));
+  });
+
+  // Open-shift chips inside cells — tap to claim directly without
+  // having to expand the day panel first.
+  $$('[data-claim-id]').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
       claimShift(btn.dataset.claimId);
     });
   });
+
+  // Re-render the day panel if one was previously open and it's still
+  // in the visible month — keeps state stable across re-renders.
+  if (State.empSelectedDate && State.empSelectedDate.startsWith(monthPrefix)) {
+    renderEmpDayPanel(State.empSelectedDate);
+  }
+}
+
+// "7:00 AM" → "7a", "11:30 PM" → "11:30p". Compact for tight cells.
+function fmtTimeAbbr(t) {
+  if (!t) return '';
+  const m = String(t).trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$/i);
+  if (!m) return String(t);
+  const h = parseInt(m[1], 10);
+  const min = m[2] || '00';
+  const ap = (m[3] || '').toUpperCase();
+  const suffix = ap === 'AM' ? 'a' : ap === 'PM' ? 'p' : '';
+  return min === '00' ? `${h}${suffix}` : `${h}:${min}${suffix}`;
+}
+
+function renderEmpMonthCal(shifts, opts) {
+  const y = State.empViewYear;
+  const m = State.empViewMonth;
+  const today = opts.today;
+  const variant = opts.variant; // 'mine' | 'open'
+  const u = State.user;
+  const firstDow = new Date(y, m, 1).getDay();
+  const daysInMonth = new Date(y, m+1, 0).getDate();
+  const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+  // Index shifts by ISO date string for O(1) per-cell lookup.
+  const byDate = new Map();
+  for (const s of shifts) {
+    if (!byDate.has(s.date)) byDate.set(s.date, []);
+    byDate.get(s.date).push(s);
+  }
+
+  let html = '<div class="cal-grid">';
+  html += DOW.map(d => `<div class="cal-dow">${d}</div>`).join('');
+  for (let i = 0; i < firstDow; i++) html += '<div class="cal-cell muted"></div>';
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const iso = `${y}-${String(m+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const isToday = iso === today;
+    const dayShifts = (byDate.get(iso) || []).slice().sort((a,b) =>
+      (a.start || '').localeCompare(b.start || ''));
+
+    // Cap entries shown directly in the cell so it doesn't blow up
+    // vertically on busy "Open shifts in CNA" days. The full list is
+    // available via the per-day panel below the calendar.
+    const MAX_PER_CELL = 2;
+    const visible = dayShifts.slice(0, MAX_PER_CELL);
+    const hidden = dayShifts.length - visible.length;
+
+    let chips = '';
+    for (const s of visible) {
+      // Pending-claim chips win over plain "open" so the employee can
+      // see at a glance which open shifts they're already waiting on.
+      const isMineClaim = variant === 'open' && s.claimRequest && s.claimRequest.empId === u?.id;
+      const cls = isMineClaim ? 'pending' : variant;
+      const time = (s.start && s.end)
+        ? `${fmtTimeAbbr(s.start)}-${fmtTimeAbbr(s.end)}`
+        : (s.type ? s.type.charAt(0).toUpperCase() : '');
+      const label = isMineClaim ? `${time} ⏳` : time;
+      chips += `<span class="emp-shift ${cls}" title="${escapeHTML((s.type||'') + ' ' + (s.start||'') + ' – ' + (s.end||''))}">${escapeHTML(label)}</span>`;
+    }
+    if (hidden > 0) chips += `<div class="more">+${hidden} more</div>`;
+
+    html += `<div class="cal-cell emp${isToday ? ' today' : ''}" data-date="${iso}">
+      <div class="top-row"><span class="num">${day}</span></div>
+      ${chips}
+    </div>`;
+  }
+
+  const total = firstDow + daysInMonth;
+  const pad = (7 - (total % 7)) % 7;
+  for (let i = 0; i < pad; i++) html += '<div class="cal-cell muted"></div>';
+  html += '</div>';
+  return html;
+}
+
+function navEmpMonth(delta) {
+  let y = State.empViewYear, m = State.empViewMonth + delta;
+  if (m < 0)  { m = 11; y--; }
+  if (m > 11) { m = 0;  y++; }
+  State.empViewYear  = y;
+  State.empViewMonth = m;
+  State.empSelectedDate = null;
+  render();
+}
+
+function renderEmpDayPanel(iso) {
+  State.empSelectedDate = iso;
+  const u = State.user;
+  const shifts = State.data?.shifts || [];
+  const mine = shifts.filter(s =>
+    s.date === iso && s.employeeId === u.id && s.status === 'scheduled'
+  ).sort((a,b) => (a.start||'').localeCompare(b.start||''));
+  const opens = shifts.filter(s =>
+    s.date === iso && s.status === 'open' && s.group === u.group &&
+    (!s.buildingId || s.buildingId === effectiveBuildingId())
+  ).sort((a,b) => (a.start||'').localeCompare(b.start||''));
+
+  const panel = $('#emp-day-panel');
+  if (!panel) return;
+  if (!mine.length && !opens.length) {
+    panel.innerHTML = `<div class="day-panel"><div class="day-ttl">${escapeHTML(fmtDateLong(iso))}</div><div style="font-size:12px;color:var(--g500)">No shifts on this day.</div></div>`;
+    return;
+  }
+  panel.innerHTML = `
+    <div class="day-panel">
+      <div class="day-ttl">${escapeHTML(fmtDateLong(iso))}</div>
+      ${mine.length ? `<div style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.05em;margin:6px 0 4px">My shifts</div>` : ''}
+      ${mine.map(renderShiftCard).join('')}
+      ${opens.length ? `<div style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.05em;margin:10px 0 4px">Open · claimable</div>` : ''}
+      ${opens.map(s => renderShiftCard(s, { open:true, claimable:true })).join('')}
+    </div>
+  `;
+  // Wire claim buttons inside the panel
+  $$('[data-claim-id]', panel).forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      claimShift(btn.dataset.claimId);
+    });
+  });
+  setTimeout(() => panel.scrollIntoView({ behavior:'smooth', block:'nearest' }), 30);
 }
 
 function renderShiftCard(s, opts) {
