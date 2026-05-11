@@ -47,8 +47,9 @@ const fs         = require('fs').promises;
 const fsSync     = require('fs');
 const path       = require('path');
 const os         = require('os');
-const helmet     = require('helmet');
-const cors       = require('cors');
+const helmet      = require('helmet');
+const compression = require('compression');
+const cors        = require('cors');
 const cookieParser = require('cookie-parser');
 const rateLimit  = require('express-rate-limit');
 const bcrypt     = require('bcrypt');
@@ -456,6 +457,18 @@ let dataDirty   = false;
 let saveTimeout = null;
 let _useDB      = false;
 
+// Write mutex for file-based persistence — prevents concurrent writes from
+// corrupting the data file. Node's event loop is single-threaded for JS, but
+// async operations (encrypt, fs.writeFile) yield control, so two overlapping
+// flushNow() calls could race on the file. This serializes writes.
+let _persistLock = Promise.resolve();
+function withPersistLock(fn) {
+  const prev = _persistLock;
+  let release;
+  _persistLock = new Promise(r => { release = r; });
+  return prev.then(fn).finally(release);
+}
+
 function markDirty() {
   dataDirty = true;
   if (saveTimeout) clearTimeout(saveTimeout);
@@ -496,6 +509,8 @@ let _lastSuccessfulPersistAt = null;
 
 async function persistCache() {
   if (!dataDirty) return;
+  return withPersistLock(async () => {
+  if (!dataDirty) return;       // re-check after acquiring lock
   dataDirty = false;
   clearTimeout(saveTimeout);
   try {
@@ -542,6 +557,7 @@ async function persistCache() {
     // because dataDirty was already set to false at the top of persistCache.
     dataDirty = true;
   }
+  }); // end withPersistLock
 }
 
 // ── BACKUPS / SNAPSHOTS ──────────────────────────────────────────────────────
@@ -994,7 +1010,15 @@ async function _shipAuditEntryToCloud(entryJson) {
 async function _initAuditCloud() {
   const connStr = process.env.AUDIT_STORAGE_CONNECTION_STRING;
   if (!connStr) {
-    logger.info('audit_cloud_disabled', { reason: 'AUDIT_STORAGE_CONNECTION_STRING not set' });
+    if (IS_PROD) {
+      logger.warn('AUDIT_CLOUD_NOT_CONFIGURED_IN_PRODUCTION', {
+        reason: 'AUDIT_STORAGE_CONNECTION_STRING not set',
+        risk: 'Audit logs are file-based only — not HIPAA-compliant for durability (§164.312(b))',
+        fix: 'Set AUDIT_STORAGE_CONNECTION_STRING to an Azure Blob Storage connection string with immutability policy'
+      });
+    } else {
+      logger.info('audit_cloud_disabled', { reason: 'AUDIT_STORAGE_CONNECTION_STRING not set' });
+    }
     return;
   }
   try {
@@ -1296,10 +1320,13 @@ function escapeCsv(s) {
 }
 
 // ── HIPAA DATA MINIMIZATION (§164.502) ───────────────────────────────────────
-// HR module is gated to one specific account while in development.
-const HR_ALLOWED_EMAIL = 'solomong@managemystaffing.com';
+// HR module access is role-based: superadmins and users with the 'hr' role or
+// the hrAccess flag. Previously gated to a single hardcoded email.
 function _canAccessHR(user) {
-  return (user?.email || '').toLowerCase() === HR_ALLOWED_EMAIL || user?.role === 'superadmin';
+  if (!user) return false;
+  if (user.role === 'superadmin') return true;
+  if (user.role === 'hr' || user.hrAccess === true) return true;
+  return false;
 }
 
 // Strip HR-related collections from any data response unless caller is allowed.
@@ -1401,6 +1428,9 @@ const app = express();
 app.set('trust proxy', 1);     // Behind App Service / Front Door
 app.disable('x-powered-by');
 
+// Gzip/Brotli compression — reduces the 1.2MB HTML to ~150KB on the wire
+app.use(compression({ threshold: 1024 }));
+
 // Request ID for log correlation
 app.use((req, res, next) => {
   req.id = crypto.randomBytes(8).toString('hex');
@@ -1408,16 +1438,26 @@ app.use((req, res, next) => {
   next();
 });
 
+// Generate a per-request CSP nonce for inline scripts.
+// The SPA serves inline <script> blocks; nonces let us avoid 'unsafe-inline'.
+// NOTE: 'unsafe-inline' is kept as a fallback for scriptSrcAttr (onclick handlers)
+// and styleSrc (inline style= attributes used extensively throughout the SPA).
+// Fully removing those requires migrating all onclick handlers to addEventListener
+// and all inline styles to CSS classes — tracked as a future refactor.
+app.use((req, res, next) => {
+  res.locals.cspNonce = crypto.randomBytes(16).toString('base64');
+  next();
+});
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc:    ["'self'"],
-      scriptSrc:     ["'self'", "'unsafe-inline'"],     // inline scripts in single-file SPA
-      scriptSrcAttr: ["'unsafe-inline'"],               // onclick handlers throughout SPA
-      styleSrc:      ["'self'", "'unsafe-inline'"],
+      scriptSrc:     ["'self'", (req, res) => `'nonce-${res.locals.cspNonce}'`],
+      scriptSrcAttr: ["'unsafe-inline'"],               // onclick handlers — future: migrate to addEventListener
+      styleSrc:      ["'self'", "'unsafe-inline'"],      // inline style= attributes throughout SPA
       imgSrc:        ["'self'", 'data:'],
       connectSrc:    ["'self'"],
-      frameAncestors: ["'none'"],                       // prevent clickjacking
+      frameAncestors: ["'none'"],
       objectSrc:     ["'none'"],
       baseUri:       ["'self'"],
       formAction:    ["'self'"],
@@ -1699,9 +1739,27 @@ app.get('/api/healthz/deep', (req, res) => {
 // Force browsers to revalidate so users always get the latest UI after deploy.
 // `must-revalidate` + `no-cache` together tell the browser to send a conditional
 // GET on every load. App Service still serves it fast (single file).
-app.get('/', (_req, res) => {
+// Cache the HTML file in memory for nonce injection (avoids re-reading on every request)
+let _cachedHtml = null;
+let _cachedHtmlMtime = null;
+app.get('/', async (req, res) => {
   res.setHeader('Cache-Control', 'no-cache, must-revalidate');
-  res.sendFile(HTML_FILE);
+  try {
+    const stat = await fs.stat(HTML_FILE);
+    const mtime = stat.mtimeMs;
+    if (!_cachedHtml || mtime !== _cachedHtmlMtime) {
+      _cachedHtml = await fs.readFile(HTML_FILE, 'utf8');
+      _cachedHtmlMtime = mtime;
+    }
+    // Inject CSP nonce into all <script> tags
+    const nonce = res.locals.cspNonce;
+    const html = _cachedHtml.replace(/<script(?=[>\s])/gi, `<script nonce="${nonce}"`);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (e) {
+    logger.error('html_serve_failed', { err: e.message });
+    res.sendFile(HTML_FILE);
+  }
 });
 
 // ── COMPANION APP (employee shift claim + admin schedule/messages) ────────
@@ -3824,7 +3882,7 @@ app.post('/api/timeclock/kiosk-token', requireAuth, requireAdmin, async (req, re
   const kioskId = 'k_' + crypto.randomBytes(8).toString('hex');
   const token = jwt.sign({
     kind: 'kiosk', buildingId, kioskId, issuedBy: req.user.email,
-  }, TIMECLOCK_KIOSK_SECRET, { expiresIn: '365d' });
+  }, TIMECLOCK_KIOSK_SECRET, { expiresIn: '24h' });
   auditLog('KIOSK_TOKEN_ISSUED', req.user, { buildingId, kioskId });
   res.json({ ok: true, kioskToken: token, kioskId });
 });
@@ -6213,7 +6271,7 @@ app.get('/kiosk/:buildingId', async (req, res) => {
   const kioskId = 'k_' + crypto.randomBytes(8).toString('hex');
   const kioskToken = jwt.sign({
     kind: 'kiosk', buildingId, kioskId, autoIssued: true,
-  }, TIMECLOCK_KIOSK_SECRET, { expiresIn: '365d' });
+  }, TIMECLOCK_KIOSK_SECRET, { expiresIn: '24h' });
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
   res.send(_kioskHtml(b, kioskToken));
@@ -6618,6 +6676,25 @@ app.post('/api/auth/logout', requireAuth, async (req, res) => {
   clearAuthCookie(res);
   auditLog('LOGOUT', req.user);
   res.json({ ok: true });
+});
+
+// ── POST /api/auth/verify-password ────────────────────────────────────────────
+// Lightweight password re-verification for lock-screen unlock.
+// Requires an existing auth cookie (user must be logged in).
+app.post('/api/auth/verify-password', requireAuth, authLimiter, async (req, res) => {
+  const { password } = req.body || {};
+  if (!password) return res.status(400).json({ error: 'password is required' });
+  let data;
+  try { data = await loadData(); } catch (e) { return res.status(500).json({ error: 'Server error' }); }
+  const acct = (data.accounts || []).find(a => a.id === req.user.id);
+  if (!acct || !acct.ph) return res.status(401).json({ error: 'Verification failed' });
+  const ok = await bcrypt.compare(password, acct.ph);
+  if (!ok) {
+    auditLog('UNLOCK_VERIFY_FAILED', acct);
+    return res.status(401).json({ error: 'Incorrect password' });
+  }
+  auditLog('UNLOCK_VERIFY_OK', acct);
+  return res.json({ ok: true });
 });
 
 // ── GET /api/data ─────────────────────────────────────────────────────────────
@@ -8315,6 +8392,19 @@ let _server;
   if (IS_PROD && DATA_FILE.toLowerCase().includes('onedrive')) {
     logger.error('PHI_DATA_FILE_ON_ONEDRIVE_NOT_PERMITTED_IN_PRODUCTION');
     process.exit(1);
+  }
+
+  // Warn if .env file is in a cloud-synced directory (OneDrive, Dropbox, etc.)
+  const envPath = require('path').resolve(__dirname, '.env');
+  if (/onedrive|dropbox|google\s*drive|icloud/i.test(envPath)) {
+    logger.warn('env_in_cloud_sync', {
+      path: envPath,
+      recommendation: 'Move .env to a non-synced directory or use a key vault (Azure Key Vault, AWS KMS)'
+    });
+    if (IS_PROD) {
+      logger.error('ENCRYPTION_KEY_IN_CLOUD_SYNC_NOT_PERMITTED_IN_PRODUCTION');
+      process.exit(1);
+    }
   }
 
   _server = app.listen(PORT, () => {
