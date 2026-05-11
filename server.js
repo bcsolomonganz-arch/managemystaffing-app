@@ -5345,6 +5345,19 @@ app.delete('/api/shifts/:id', requireAuth, requireAdmin, async (req, res) => {
   }
 
   try { await flushNow(); } catch (e) {
+    // Restore shift to in-memory array so it isn't lost on next request
+    // while Postgres still has it. Prevents "deleted in memory but not on
+    // disk" desync that causes shifts to vanish then reappear on restart.
+    data.shifts.splice(idx, 0, shift);
+    // Also undo removedDates additions
+    if (Array.isArray(data.schedulePatterns)) {
+      for (const p of data.schedulePatterns) {
+        if (Array.isArray(p.removedDates)) {
+          const ri = p.removedDates.indexOf(shift.date);
+          if (ri >= 0) p.removedDates.splice(ri, 1);
+        }
+      }
+    }
     return res.status(500).json({ error: 'Failed to persist shift deletion. Please retry.' });
   }
   auditLog('SHIFT_DELETED', req.user, {
@@ -7439,7 +7452,8 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   // the FIRST occurrence (which is the server-side canonical one from
   // mergeScoped, since out-of-scope items are appended after in-scope).
   {
-    const seen = new Set();
+    const openCount = new Map();
+    const assignedSeen = new Set();
     const deduped = [];
     const seenIds = new Set();
     for (const s of data.shifts) {
@@ -7447,14 +7461,18 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
       if (seenIds.has(s.id)) continue;
       seenIds.add(s.id);
       // Secondary dedup by composite key — prevents same slot being filled twice
-      // Only dedup open shifts (assigned shifts for different employees are valid)
-      if (!s.employeeId) {
+      if (s.employeeId) {
+        // Assigned shifts: same employee + same date/group/type/building = duplicate
+        const aKey = `${s.date}|${s.group}|${s.type}|${s.buildingId}|${s.employeeId}`;
+        if (assignedSeen.has(aKey)) continue;
+        assignedSeen.add(aKey);
+      } else {
+        // Open shifts: cap at staffingSlots limit (or 10 as hard cap)
         const key = `${s.date}|${s.group}|${s.type}|${s.buildingId}|open`;
-        const count = (seen.get(key) || 0) + 1;
-        seen.set(key, count);
-        // Allow up to the staffingSlots limit (or 10 as hard cap)
+        const count = (openCount.get(key) || 0) + 1;
+        openCount.set(key, count);
         const maxSlots = data.staffingSlots?.[s.buildingId]?.[s.group]?.[s.type] || 10;
-        if (count > maxSlots) continue; // skip duplicate open shift
+        if (count > maxSlots) continue;
       }
       deduped.push(s);
     }
@@ -7562,6 +7580,60 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
     if (Array.isArray(payload.shiftTemplates)) data.shiftTemplates = payload.shiftTemplates;
     if (payload.billingData  && typeof payload.billingData  === 'object' && !Array.isArray(payload.billingData))  data.billingData  = payload.billingData;
     if (payload.hrOnboarding && typeof payload.hrOnboarding === 'object' && !Array.isArray(payload.hrOnboarding)) data.hrOnboarding = payload.hrOnboarding;
+  } else if (payload.hrOnboarding && typeof payload.hrOnboarding === 'object' && !Array.isArray(payload.hrOnboarding)) {
+    // ── Non-SA hrOnboarding writes ──────────────────────────────────────────
+    // Regional admins can update state templates (TX, OK, …) AND building
+    // overrides for buildings in their portfolio. Building admins can only
+    // update overrides for their assigned building. NO role can change
+    // hrOnboarding[coId].locks — locking is SA-only (above).
+    //
+    // The client always sends the entire hrOnboarding blob, so we merge
+    // per-coId / per-key, preserving anything the caller can't touch.
+    data.hrOnboarding = data.hrOnboarding || {};
+    const isRegional = req.user.role === 'regionaladmin';
+    for (const coId of Object.keys(payload.hrOnboarding)) {
+      const incomingCo = payload.hrOnboarding[coId];
+      if (!incomingCo || typeof incomingCo !== 'object' || Array.isArray(incomingCo)) continue;
+      const existingCo = (data.hrOnboarding[coId] && typeof data.hrOnboarding[coId] === 'object') ? data.hrOnboarding[coId] : {};
+      const mergedCo = { ...existingCo };
+
+      // State templates (TX, OK, etc.) — regional admins only.
+      // Skip the meta-keys 'overrides' and 'locks'; everything else is treated
+      // as a state template.
+      if (isRegional) {
+        for (const key of Object.keys(incomingCo)) {
+          if (key === 'overrides' || key === 'locks') continue;
+          if (incomingCo[key] && typeof incomingCo[key] === 'object') {
+            mergedCo[key] = incomingCo[key];
+          }
+        }
+      }
+
+      // Per-building overrides — building admins (own building) and regional
+      // admins (any building in their portfolio).
+      if (incomingCo.overrides && typeof incomingCo.overrides === 'object' && !Array.isArray(incomingCo.overrides)) {
+        mergedCo.overrides = { ...(existingCo.overrides || {}) };
+        // Upsert overrides for buildings in caller's scope
+        for (const bId of Object.keys(incomingCo.overrides)) {
+          if (callerBIds.has(bId)) {
+            mergedCo.overrides[bId] = incomingCo.overrides[bId];
+          }
+        }
+        // Allow REMOVING overrides for buildings in caller's scope (revert).
+        // An override is "removed" if it existed before but is absent from
+        // the incoming payload. Out-of-scope overrides are always preserved.
+        for (const bId of Object.keys(existingCo.overrides || {})) {
+          if (!(bId in incomingCo.overrides) && callerBIds.has(bId)) {
+            delete mergedCo.overrides[bId];
+          }
+        }
+      }
+
+      // Locks are SA-only: always preserve existing locks for non-SA callers.
+      if (existingCo.locks) mergedCo.locks = existingCo.locks;
+
+      data.hrOnboarding[coId] = mergedCo;
+    }
   }
 
   // Per-building config maps: { [buildingId]: { ... } }

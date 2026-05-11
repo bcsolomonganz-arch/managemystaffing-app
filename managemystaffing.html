@@ -7345,10 +7345,10 @@ const App = {
     const { group: g, buildingId: bId, shiftType, date } = st;
     const shiftDef = this.resolveShiftDef(g, shiftType) || {};
     // Assign only the single shift that was clicked
-    if (this.S.shifts.find(s => s.date===date && s.group===g && s.type===shiftType && s.buildingId===bId && s.employeeId===emp.id)) {
+    if (this.S.shifts.find(s => s.date===date && matchesGroup(s, g) && s.type===shiftType && s.buildingId===bId && s.employeeId===emp.id)) {
       this.showToast('Employee already scheduled for this shift', 'warn'); return;
     }
-    const openSlot = this.S.shifts.find(s => s.date===date && s.group===g && s.type===shiftType && s.buildingId===bId && s.status==='open' && !s.employeeId);
+    const openSlot = this.S.shifts.find(s => s.date===date && matchesGroup(s, g) && s.type===shiftType && s.buildingId===bId && s.status==='open' && !s.employeeId);
     if (openSlot) {
       openSlot.status = 'scheduled'; openSlot.employeeId = emp.id;
     } else {
@@ -8258,21 +8258,81 @@ const App = {
 
   renderHROnboarding() {
     const coId = this._getActiveOBCoId();
-    const coTemplates = (this.S.hrOnboarding || {})[coId] || {};
+    const coTemplatesRaw = (this.S.hrOnboarding || {})[coId] || {};
+    // Filter out 'overrides' and 'locks' meta-keys so state tabs only show real states
+    const coTemplates = Object.fromEntries(
+      Object.entries(coTemplatesRaw).filter(([k]) => k !== 'overrides' && k !== 'locks')
+    );
     const coName = (this.S.companies || []).find(c => c.id === coId)?.name || 'This Company';
     const role = this.S.user?.role;
-    const isRegionalOrSuper = role === 'superadmin' || role === 'regionaladmin';
+    const isSuper = role === 'superadmin';
+    const isRegional = role === 'regionaladmin';
+    const isRegionalOrSuper = isSuper || isRegional;
+    const isBuildingAdmin = role === 'admin' || role === 'hradmin';
     const exp = this.S.hrExpandedStep;   // {state, idx} or null
 
-    // Auto-select state based on role
-    let st;
-    if (!isRegionalOrSuper) {
-      // Regular admin: auto-detect from their building's state field
+    // ── BUILDING ADMIN: single-building effective-flow view ─────────────────
+    // Building admins (single-building scope) see only their building's flow.
+    // No state tabs. Editability is governed by hrOnboarding[coId].locks[bId].
+    // When canEdit (override exists + unlocked), we route through the main
+    // render path with scope = 'override:<bId>' so all the existing editor
+    // controls (expand, save, add file, etc.) work transparently. When
+    // !canEdit, we show a simpler read-only step list with a banner.
+    let buildingAdminBanner = '';
+    let buildingAdminReadOnly = false;
+    let buildingAdminBuildingId = null;
+    if (isBuildingAdmin) {
       const bId = this.S.activeBuildingId || this.S.user?.buildingId;
+      if (!bId) {
+        return `${this.hrHipaaBar()}<div style="padding:40px;text-align:center;color:var(--g600)">No building assigned. Contact your administrator.</div>`;
+      }
+      buildingAdminBuildingId = bId;
+      const flow = this._getEffectiveBuildingFlow(bId);
+      if (!flow) {
+        return `${this.hrHipaaBar()}<div style="padding:40px;text-align:center;color:var(--g600)">No onboarding flow configured for this building.</div>`;
+      }
       const bld = (this.S.buildings || []).find(b => b.id === bId);
-      st = bld?.state || Object.keys(coTemplates)[0] || 'TX';
+      const canEdit = !flow.locked;
+      const sourceIsOverride = flow.source === 'override';
+      buildingAdminReadOnly = !canEdit || !sourceIsOverride;
+
+      if (flow.locked) {
+        buildingAdminBanner = `<div style="background:#FEF3C7;border:1.5px solid #FDE68A;border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;color:#92400E">
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="7" width="10" height="7" rx="1"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>
+          <div style="flex:1;font-size:13px"><strong>View only.</strong> Your Super Admin has not authorized changes to this building's onboarding flow. Reach out to them if it needs to be modified.</div>
+        </div>`;
+      } else if (sourceIsOverride) {
+        buildingAdminBanner = `<div style="background:#EFF6FF;border:1.5px solid #BFDBFE;border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;color:#1E40AF">
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 8a5 5 0 1 0 5-5"/><path d="M3 3v5h5"/></svg>
+          <div style="flex:1;font-size:13px"><strong>Custom flow for ${sanitize(bld?.name || '')}.</strong> Based on ${sanitize(flow.basedOn||'state')} state template. Changes here only affect this building.</div>
+          <button class="btn btn-ghost btn-sm" style="font-size:12px;color:var(--g700)" onclick="App.revertBuildingOverride('${coId}','${bId}')">Revert to state default</button>
+        </div>`;
+      } else {
+        buildingAdminBanner = `<div style="background:var(--g50);border:1.5px solid var(--g200);border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px">
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="var(--blue-d)" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><path d="M8 5v3M8 11h0"/></svg>
+          <div style="flex:1;font-size:13px;color:var(--g700)">This building uses the shared <strong>${sanitize(flow.state)}</strong> state template. To make changes that only affect ${sanitize(bld?.name || '')}, create a custom flow.</div>
+          <button class="btn btn-primary btn-sm" style="font-size:12px" onclick="App.customizeFlowForBuilding('${bId}')">Customize for this building</button>
+        </div>`;
+      }
+      // Compute the scope to render WITHOUT mutating shared state. For
+      // read-only paths (locked or on-state-default) use the state code so
+      // we never accidentally seed an override from rendering. For editable
+      // override, use 'override:bId'.
+      var _buildingAdminScope = canEdit && sourceIsOverride ? ('override:' + bId) : flow.state;
+    }
+
+    // Pick the scope to render:
+    //  • building admin → computed above (state code or 'override:<bId>')
+    //  • regional/super → S.hrOnboardingState if it's a real state code, else first state
+    let st;
+    if (isBuildingAdmin) {
+      st = _buildingAdminScope;
     } else {
-      st = this.S.hrOnboardingState || Object.keys(coTemplates)[0] || 'TX';
+      const stashed = this.S.hrOnboardingState;
+      const stashedIsValidState = typeof stashed === 'string'
+        && !stashed.startsWith('override:')
+        && Object.prototype.hasOwnProperty.call(coTemplates, stashed);
+      st = stashedIsValidState ? stashed : (Object.keys(coTemplates)[0] || 'TX');
     }
 
     const stateLabel = k => k === 'TX' ? 'Texas (TX)' : k === 'OK' ? 'Oklahoma (OK)' : k;
@@ -8281,8 +8341,21 @@ const App = {
       Save
     </button>`;
 
-    // Empty state: company has no onboarding templates yet
+    // Empty state: company has no onboarding templates yet. Building admins
+    // can't create state templates — they see a "contact your admin" message
+    // instead of the seed-template buttons.
     if (Object.keys(coTemplates).length === 0) {
+      if (isBuildingAdmin) {
+        return `
+          ${this.hrHipaaBar()}
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+            <div><div class="hr-page-title">Onboarding Flow</div><div class="hr-page-sub">${sanitize(coName)}</div></div>
+          </div>
+          <div class="hr-section" style="padding:48px;text-align:center">
+            <div style="font-size:16px;font-weight:700;color:var(--g800);margin-bottom:8px">No onboarding flow configured yet</div>
+            <div style="font-size:13px;color:var(--g500);max-width:380px;margin:0 auto">${sanitize(coName)} doesn't have any onboarding steps set up. Contact your Regional or Super Admin to create the state template.</div>
+          </div>`;
+      }
       return `
         ${this.hrHipaaBar()}
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
@@ -8307,7 +8380,16 @@ const App = {
       return `<button class="btn btn-${k===st?'primary':'secondary'} btn-sm" onclick="App.S.hrOnboardingState='${k}';App.S.hrExpandedStep=null;App.renderHRMain()">${stateLabel(k)} — ${p.steps.length} steps</button>`;
     }).join('') : '';
 
-    const pkg = coTemplates[st] || null;
+    // Resolve the package to render. For building admins, st may be 'override:<bId>'.
+    // For everyone else, st is a state code.
+    let pkg;
+    if (typeof st === 'string' && st.startsWith('override:')) {
+      const bIdOverride = st.slice('override:'.length);
+      pkg = (this.S.hrOnboarding[coId]?.overrides || {})[bIdOverride] || null;
+      if (pkg) this._ensureSmsConsentStep(pkg);
+    } else {
+      pkg = coTemplates[st] || null;
+    }
     if (!pkg) return `${this.hrHipaaBar()}<div style="padding:40px;text-align:center;color:var(--g600)">No onboarding package found for ${stateLabel(st)}. Contact your regional admin.</div>`;
 
     const steps = pkg.steps.map((s, i) => {
@@ -8406,11 +8488,11 @@ const App = {
           </div>
         </div>` : '';
 
+      const stepClickable = !buildingAdminReadOnly;
       return `
         <div style="border-bottom:1px solid var(--g100);${isExp?'background:#FAFBFF;':''}">
-          <div style="display:flex;align-items:flex-start;gap:12px;padding:14px 18px;cursor:pointer;transition:background .12s"
-            onmouseover="this.style.background='${isExp?'':'var(--g50)'}'" onmouseout="this.style.background=''"
-            onclick="App.toggleHRStep('${st}',${i})">
+          <div style="display:flex;align-items:flex-start;gap:12px;padding:14px 18px;${stepClickable?'cursor:pointer;':''}transition:background .12s"
+            ${stepClickable ? `onmouseover="this.style.background='${isExp?'':'var(--g50)'}'" onmouseout="this.style.background=''" onclick="App.toggleHRStep('${st}',${i})"` : ''}>
             <div style="width:22px;height:22px;border-radius:50%;background:${isExp?typeColor:'var(--blue)'};color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;margin-top:1px">${i+1}</div>
             <div style="flex:1;min-width:0">
               <div style="font-weight:600;font-size:13px;color:var(--g900);display:flex;align-items:center;gap:6px">
@@ -8434,23 +8516,128 @@ const App = {
     const addStateBtn = unusedStates.map(k =>
       `<button class="btn btn-ghost btn-sm" onclick="App.addHRStateTemplate('${coId}','${k}')">+ Add ${k==='TX'?'Texas':'Oklahoma'}</button>`
     ).join('');
-    const stateSubtitle = isRegionalOrSuper ? 'click step to edit' : `${stateLabel(st)} package · click step to edit`;
+    const stateSubtitle = 'click step to edit';
+
+    // Bulk push (regional + super): push the CURRENT state template to a set of buildings as overrides
+    const pushBtn = isRegionalOrSuper
+      ? `<button class="btn btn-secondary btn-sm" onclick="App.openBulkPushModal('${st}')" style="display:flex;align-items:center;gap:5px" title="Push this flow to one or more buildings as a building-specific override">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1v10"/><path d="M3 6l5-5 5 5"/><path d="M2 15h12"/></svg>
+          Push to buildings
+        </button>`
+      : '';
+
+    // Super admin only: per-building lock toggle panel + override list with revert
+    const lockPanel = isSuper ? this._renderOBLockPanel(coId) : '';
+    // Regional admin: can see/revert overrides for buildings in their portfolio
+    const overridesPanel = (isRegional && !isSuper) ? this._renderOBOverridesPanel(coId) : '';
+
+    // Building admins: hide state tabs, hide push button, hide state-template
+    // subtitle label, and hide controls when read-only.
+    const showStateTabs = !isBuildingAdmin && tabs;
+    const showAddStep = !isBuildingAdmin || !buildingAdminReadOnly;
+    const showSaveBtn = !isBuildingAdmin || !buildingAdminReadOnly;
+    const showPushBtn = !isBuildingAdmin;
+    const subtitle = isBuildingAdmin
+      ? ((this.S.buildings || []).find(b => b.id === buildingAdminBuildingId)?.name || '')
+      : stateSubtitle;
+    const sectionHeader = isBuildingAdmin
+      ? `<div style="font-size:12px;font-weight:700;color:var(--g600)">${sanitize(pkg.name)}</div>
+         <div style="font-size:11px;color:var(--g600);margin-top:2px">${buildingAdminReadOnly ? 'Read-only view of this building\'s onboarding flow' : 'Click any step to open and edit its details, attachments, or content'}</div>`
+      : `<div style="font-size:12px;font-weight:700;color:var(--g600)">${sanitize(pkg.name)} <span style="font-weight:500;color:var(--g500)">· state default — applies to all buildings without a custom override</span></div>
+         <div style="font-size:11px;color:var(--g600);margin-top:2px">Click any step to open and edit its details, attachments, or content. Changes here propagate live to every building on the ${sanitize(stateLabel(typeof st === 'string' && !st.startsWith('override:') ? st : 'this'))} state default.</div>`;
 
     return `
       ${this.hrHipaaBar()}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
-        <div><div class="hr-page-title">Onboarding Flow</div><div class="hr-page-sub">${sanitize(coName)} · ${stateSubtitle}</div></div>
-        <div style="display:flex;gap:8px">${addStateBtn}${saveBtn}<button class="btn btn-primary btn-sm" onclick="App.addHRStep('${st}')">+ Add Step</button></div>
+        <div><div class="hr-page-title">Onboarding Flow</div><div class="hr-page-sub">${sanitize(coName)} · ${sanitize(subtitle)}</div></div>
+        <div style="display:flex;gap:8px">${addStateBtn}${showPushBtn?pushBtn:''}${showSaveBtn?saveBtn:''}${showAddStep?`<button class="btn btn-primary btn-sm" onclick="App.addHRStep('${st}')">+ Add Step</button>`:''}</div>
       </div>
-      ${tabs ? `<div style="display:flex;gap:8px;margin-bottom:16px">${tabs}</div>` : ''}
+      ${buildingAdminBanner}
+      ${showStateTabs ? `<div style="display:flex;gap:8px;margin-bottom:16px">${tabs}</div>` : ''}
       <div class="hr-section">
         <div style="padding:14px 18px;border-bottom:1px solid var(--g100);background:var(--g50)">
-          <div style="font-size:12px;font-weight:700;color:var(--g600)">${sanitize(pkg.name)}</div>
-          <div style="font-size:11px;color:var(--g600);margin-top:2px">Click any step to open and edit its details, attachments, or content</div>
+          ${sectionHeader}
         </div>
         ${steps}
-      </div>`;
+      </div>
+      ${overridesPanel}
+      ${lockPanel}`;
   },
+
+  // ── Super-admin only: per-building override table with lock toggle ──────
+  // Shows every building in this company. For each: which flow they're on
+  // (state default vs. custom override), whether the building admin can edit
+  // it, and a revert button when an override exists.
+  _renderOBLockPanel(coId) {
+    const buildings = (this.S.buildings || []).filter(b => b.companyId === coId);
+    if (!buildings.length) return '';
+    const co = this.S.hrOnboarding[coId] || {};
+    const rows = buildings
+      .sort((a, b) => (a.state || '').localeCompare(b.state || '') || a.name.localeCompare(b.name))
+      .map(b => {
+        const flow = this._getEffectiveBuildingFlow(b.id);
+        const onOverride = flow?.source === 'override';
+        const locked = !!(co.locks && co.locks[b.id]);
+        const lockedBadge = locked
+          ? `<span style="font-size:10px;background:#FEF3C7;color:#92400E;padding:2px 7px;border-radius:5px;font-weight:700;display:inline-flex;align-items:center;gap:3px"><svg viewBox="0 0 12 12" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="2" y="5" width="8" height="6" rx="1"/><path d="M4 5V3.5a2 2 0 0 1 4 0V5"/></svg>Locked</span>`
+          : `<span style="font-size:10px;background:#DCFCE7;color:#166534;padding:2px 7px;border-radius:5px;font-weight:700">Unlocked</span>`;
+        const sourceBadge = onOverride
+          ? `<span style="font-size:10px;background:#DBEAFE;color:#1E40AF;padding:2px 7px;border-radius:5px;font-weight:700">Custom override</span>`
+          : `<span style="font-size:10px;background:var(--g100);color:var(--g600);padding:2px 7px;border-radius:5px;font-weight:700">On ${sanitize(flow?.state||'—')} default</span>`;
+        const stepsCount = flow?.steps?.length || 0;
+        const revertBtn = onOverride
+          ? `<button class="btn btn-ghost btn-sm" style="font-size:11px;color:var(--red)" onclick="App.revertBuildingOverride('${coId}','${b.id}')">Revert to state default</button>`
+          : '';
+        return `<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--g100)">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:600;color:var(--g900)">${sanitize(b.name)} <span style="font-size:11px;color:var(--g500)">· ${sanitize(b.state||'—')} · ${stepsCount} steps</span></div>
+            <div style="display:flex;gap:6px;margin-top:4px;align-items:center">${sourceBadge}${lockedBadge}</div>
+          </div>
+          ${revertBtn}
+          <button class="btn btn-secondary btn-sm" style="font-size:11px" onclick="App.toggleBuildingLock('${coId}','${b.id}')">${locked ? 'Allow building admin edits' : 'Lock from building admin'}</button>
+        </div>`;
+      }).join('');
+    return `<div class="hr-section" style="margin-top:18px">
+      <div style="padding:14px 18px;border-bottom:1px solid var(--g100);background:var(--g50)">
+        <div style="font-size:12px;font-weight:700;color:var(--g600)">Per-building editing & overrides</div>
+        <div style="font-size:11px;color:var(--g600);margin-top:2px">Choose which buildings can have their flow modified by their own building admin. Buildings on the state default automatically inherit changes you make above; once a building has a custom override, edits to the state template no longer affect it.</div>
+      </div>
+      ${rows}
+    </div>`;
+  },
+
+  // ── Regional admin: list of overrides under their portfolio with revert ─
+  _renderOBOverridesPanel(coId) {
+    const u = this.S.user;
+    const myBIds = new Set((u?.buildingIds || []));
+    const co = this.S.hrOnboarding[coId] || {};
+    const overrides = co.overrides || {};
+    const bIds = Object.keys(overrides).filter(bId => myBIds.has(bId));
+    if (bIds.length === 0) return '';
+    const rows = bIds.map(bId => {
+      const b = (this.S.buildings || []).find(x => x.id === bId);
+      if (!b) return '';
+      const ov = overrides[bId];
+      const updatedAt = ov.updatedAt ? new Date(ov.updatedAt).toLocaleString() : '—';
+      return `<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--g100)">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:var(--g900)">${sanitize(b.name)} <span style="font-size:11px;color:var(--g500)">· based on ${sanitize(ov.basedOn||'—')} · ${ov.steps?.length||0} steps</span></div>
+          <div style="font-size:11px;color:var(--g500);margin-top:2px">Last updated ${sanitize(updatedAt)}${ov.updatedBy?(' by '+sanitize(ov.updatedBy)):''}</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" style="font-size:11px;color:var(--red)" onclick="App.revertBuildingOverride('${coId}','${bId}')">Revert to state default</button>
+      </div>`;
+    }).join('');
+    return `<div class="hr-section" style="margin-top:18px">
+      <div style="padding:14px 18px;border-bottom:1px solid var(--g100);background:var(--g50)">
+        <div style="font-size:12px;font-weight:700;color:var(--g600)">Building overrides in your portfolio</div>
+        <div style="font-size:11px;color:var(--g600);margin-top:2px">Buildings under your control that have a custom flow distinct from the state template. Reverting drops the override and puts the building back on the live state default.</div>
+      </div>
+      ${rows}
+    </div>`;
+  },
+
+  // (dead _renderOBBuildingAdminView removed — building admin now flows
+  // through the main renderHROnboarding path with scope = 'override:<bId>')
 
   renderCandidatePortal() {
     const u = this.S.user;
@@ -8470,11 +8657,18 @@ const App = {
       return;
     }
 
-    const state = emp.onboardingState || 'TX';
-    // Find the company for this employee's building, then look up that company's package
+    // Resolve to the effective per-building flow — building override if set,
+    // else the state default. _getEffectiveBuildingFlow handles this for us.
     const empBld = (this.S.buildings || []).find(b => b.id === (this.S.user?.buildingId || this.S.activeBuildingId));
-    const empCoId = empBld?.companyId || Object.keys(this.S.hrOnboarding || {})[0] || 'co_skyblue';
-    const pkg = ((this.S.hrOnboarding || {})[empCoId] || {})[state] || null;
+    const effFlow = empBld ? this._getEffectiveBuildingFlow(empBld.id) : null;
+    let pkg = null;
+    if (effFlow && effFlow.steps?.length) {
+      pkg = { name: effFlow.name, steps: effFlow.steps };
+    } else {
+      const state = emp.onboardingState || empBld?.state || 'TX';
+      const empCoId = empBld?.companyId || Object.keys(this.S.hrOnboarding || {})[0] || 'co_skyblue';
+      pkg = ((this.S.hrOnboarding || {})[empCoId] || {})[state] || null;
+    }
     if (!pkg) { document.getElementById('main').innerHTML = '<div style="padding:40px;text-align:center;color:var(--g600)">Onboarding package not configured.</div>'; return; }
 
     const steps = pkg.steps;
@@ -12147,7 +12341,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (!emp) return;
     const fac  = (this.S.buildings||[]).find(b => b.id === emp.facilityId);
     const stKey = emp.onboardingState || fac?.state || 'TX';
-    const pkg  = this._getActiveOBPkg(stKey) || Object.values((this.S.hrOnboarding || {})).reduce((acc,co) => acc || co[stKey], null);
+    // Prefer the building's effective flow (override if set, else state default)
+    let pkg = fac ? (() => {
+      const ef = this._getEffectiveBuildingFlow(fac.id);
+      return ef && ef.steps?.length ? { name: ef.name, steps: ef.steps } : null;
+    })() : null;
+    if (!pkg) pkg = this._getActiveOBPkg(stKey) || Object.values((this.S.hrOnboarding || {})).reduce((acc,co) => acc || co[stKey], null);
     const docs = emp.docs || {};
 
     // Infer step completion from employee status
@@ -12228,7 +12427,13 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const emp  = this.S.hrEmployees.find(e => e.id === empId);
     const fac  = (this.S.buildings||[]).find(b => b.id === emp?.facilityId);
     const stKey = emp?.onboardingState || fac?.state || 'TX';
-    const pkgForView = this._getActiveOBPkg(stKey) || Object.values((this.S.hrOnboarding || {})).reduce((acc,co) => acc || co[stKey], null);
+    // Prefer per-building override; fall back to state default
+    let pkgForView = null;
+    if (fac) {
+      const ef = this._getEffectiveBuildingFlow(fac.id);
+      if (ef && ef.steps?.length) pkgForView = { name: ef.name, steps: ef.steps };
+    }
+    if (!pkgForView) pkgForView = this._getActiveOBPkg(stKey) || Object.values((this.S.hrOnboarding || {})).reduce((acc,co) => acc || co[stKey], null);
     const step = pkgForView?.steps.find(s => s.id === stepId);
     if (!step) return;
     if (step.url) {
@@ -12244,11 +12449,289 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.showToast('Resubmission request sent');
   },
 
-  _obPkg(state) {
+  // _obPkg now accepts either a state code ('TX', 'OK') OR an override scope
+  // string ('override:<buildingId>'). The override scope routes to the
+  // per-building override package stored at hrOnboarding[coId].overrides[bId].
+  // All step-mutation handlers (saveHRStep, addHRStep, removeHRStep, etc.) go
+  // through this accessor, so they transparently support both editing the
+  // state template and editing a building-specific override.
+  _obPkg(scope) {
     const coId = this._getActiveOBCoId();
     if (!this.S.hrOnboarding[coId]) this.S.hrOnboarding[coId] = {};
-    if (!this.S.hrOnboarding[coId][state]) this.S.hrOnboarding[coId][state] = {name: state + ' package', steps: []};
-    return this.S.hrOnboarding[coId][state];
+    if (typeof scope === 'string' && scope.startsWith('override:')) {
+      const bId = scope.slice('override:'.length);
+      if (!this.S.hrOnboarding[coId].overrides) this.S.hrOnboarding[coId].overrides = {};
+      if (!this.S.hrOnboarding[coId].overrides[bId]) {
+        const bld = (this.S.buildings || []).find(b => b.id === bId);
+        const basedOn = bld?.state || 'TX';
+        const stateTpl = this.S.hrOnboarding[coId][basedOn];
+        this.S.hrOnboarding[coId].overrides[bId] = {
+          name: (bld?.name || 'Building') + ' — custom onboarding flow',
+          steps: stateTpl ? JSON.parse(JSON.stringify(stateTpl.steps)) : [],
+          basedOn,
+          updatedAt: new Date().toISOString(),
+          updatedBy: this.S.user?.email || null,
+        };
+      } else {
+        // Touch updatedAt so revert/audit have a meaningful timestamp
+        this.S.hrOnboarding[coId].overrides[bId].updatedAt = new Date().toISOString();
+        this.S.hrOnboarding[coId].overrides[bId].updatedBy = this.S.user?.email || null;
+      }
+      const pkg = this.S.hrOnboarding[coId].overrides[bId];
+      this._ensureSmsConsentStep(pkg);
+      return pkg;
+    }
+    if (!this.S.hrOnboarding[coId][scope]) this.S.hrOnboarding[coId][scope] = {name: scope + ' package', steps: []};
+    return this.S.hrOnboarding[coId][scope];
+  },
+
+  // Returns the effective onboarding flow for a specific building. Used by:
+  //   • renderHROnboarding (building-admin view shows ONLY this)
+  //   • candidate portal (existing — to be wired up below)
+  //   • viewer functions in the HR detail modal
+  // Returns: { source: 'override'|'state', steps, name, locked, basedOn, coId, state, buildingId, scope }
+  //   scope    — string to pass to _obPkg() / mutation handlers
+  //   locked   — true if the building admin can't edit (locks[buildingId])
+  //   basedOn  — state code the override was derived from (when source='override')
+  _getEffectiveBuildingFlow(buildingId) {
+    const bld = (this.S.buildings || []).find(b => b.id === buildingId);
+    if (!bld) return null;
+    const coId = bld.companyId || Object.keys(this.S.hrOnboarding || {})[0] || 'co_skyblue';
+    const co = (this.S.hrOnboarding || {})[coId] || {};
+    const state = bld.state || Object.keys(co).filter(k => k !== 'overrides' && k !== 'locks')[0] || 'TX';
+    const override = co.overrides?.[buildingId];
+    const locked = !!(co.locks && co.locks[buildingId]);
+    if (override) {
+      // Defensive: ensure SMS step still present after restore
+      this._ensureSmsConsentStep(override);
+      return {
+        source: 'override',
+        steps: override.steps || [],
+        name: override.name || (bld.name + ' — custom flow'),
+        locked,
+        basedOn: override.basedOn || state,
+        coId, state, buildingId,
+        scope: 'override:' + buildingId,
+        updatedAt: override.updatedAt || null,
+        updatedBy: override.updatedBy || null,
+      };
+    }
+    const stateTpl = co[state] || null;
+    return {
+      source: 'state',
+      steps: stateTpl ? stateTpl.steps : [],
+      name: stateTpl?.name || (state + ' package'),
+      locked,
+      basedOn: state,
+      coId, state, buildingId,
+      scope: state,
+    };
+  },
+
+  // Is the building admin permitted to edit their own flow?
+  // Building admins (role === 'admin' or 'hradmin') can edit only when not
+  // locked AND the active building is theirs. New buildings default to
+  // unlocked (locks[bId] absent === unlocked).
+  _canBuildingAdminEditFlow() {
+    const u = this.S.user;
+    if (!u) return false;
+    if (u.role === 'superadmin' || u.role === 'regionaladmin') return true;
+    if (u.role !== 'admin' && u.role !== 'hradmin') return false;
+    const bId = this.S.activeBuildingId || u.buildingId;
+    if (!bId) return false;
+    const flow = this._getEffectiveBuildingFlow(bId);
+    return !!(flow && !flow.locked);
+  },
+
+  // Toggle a building's lock (SA only). When true, the building admin can no
+  // longer modify their flow — they see a view-only banner. Regional admins
+  // are never locked out.
+  toggleBuildingLock(coId, buildingId) {
+    if (this.S.user?.role !== 'superadmin') {
+      this.showToast('Only Super Admins can change lock settings', 'warn');
+      return;
+    }
+    if (!this.S.hrOnboarding[coId]) this.S.hrOnboarding[coId] = {};
+    if (!this.S.hrOnboarding[coId].locks) this.S.hrOnboarding[coId].locks = {};
+    const cur = !!this.S.hrOnboarding[coId].locks[buildingId];
+    if (cur) {
+      delete this.S.hrOnboarding[coId].locks[buildingId];
+      this.showToast('Building admin can now edit their flow');
+    } else {
+      this.S.hrOnboarding[coId].locks[buildingId] = true;
+      this.showToast('Building admin can no longer edit their flow');
+    }
+    this.persistData();
+    this.renderHRMain();
+  },
+
+  // Building admin path: create a per-building override seeded from the
+  // current state default. After this, they edit the override (not the state
+  // template), so changes don't leak to other buildings on that state.
+  async customizeFlowForBuilding(buildingId) {
+    if (this.S.user?.role === 'employee' || this.S.user?.role === 'hrcandidate') return;
+    const flow = this._getEffectiveBuildingFlow(buildingId);
+    if (!flow) return;
+    if (flow.locked && this.S.user?.role !== 'superadmin' && this.S.user?.role !== 'regionaladmin') {
+      this.showToast('This building\'s flow is locked by your Super Admin', 'warn');
+      return;
+    }
+    if (flow.source === 'override') {
+      this.showToast('Already customized', 'warn');
+      return;
+    }
+    const ok = await this.mmsConfirm({
+      title: 'Customize flow for this building',
+      message: `Create a copy of the ${flow.state} state template just for this building? Future changes to the ${flow.state} template will no longer affect this building.`,
+      confirmLabel: 'Customize',
+    });
+    if (!ok) return;
+    // _obPkg(scope) seeds the override on first access using the building's state.
+    this._obPkg('override:' + buildingId);
+    this.persistData();
+    this.renderHRMain();
+    this.showToast('Custom flow created for this building');
+  },
+
+  // Revert a building override back to the state default. Building admins can
+  // do this for their own building (effectively asking to opt back into the
+  // shared flow); regional/SA can do it for any building in their portfolio.
+  async revertBuildingOverride(coId, buildingId) {
+    const u = this.S.user;
+    if (!u) return;
+    if (u.role !== 'superadmin' && u.role !== 'regionaladmin') {
+      const own = (u.buildingId === buildingId) || (u.buildingIds || []).includes(buildingId);
+      if (!own) { this.showToast('Not authorized', 'warn'); return; }
+    }
+    const co = this.S.hrOnboarding?.[coId];
+    if (!co?.overrides?.[buildingId]) { this.showToast('No override to revert', 'warn'); return; }
+    const ok = await this.mmsConfirm({
+      title: 'Revert to state default',
+      message: 'Discard this building\'s custom onboarding flow and go back to the shared state template? Any building-specific changes will be lost.',
+      confirmLabel: 'Revert',
+      danger: true,
+    });
+    if (!ok) return;
+    delete co.overrides[buildingId];
+    this.persistData();
+    this.renderHRMain();
+    this.showToast('Reverted to state default');
+  },
+
+  // Regional admin / SA: bulk-push the current flow to multiple buildings.
+  // Source can be a state template ('TX'/'OK') OR an existing override (pass
+  // 'override:<buildingId>' as sourceScope). Each destination building gets
+  // an override stamped with basedOn=source. Ignores per-building locks
+  // (regional admins are trusted to override).
+  async openBulkPushModal(sourceScope) {
+    const u = this.S.user;
+    if (u?.role !== 'superadmin' && u?.role !== 'regionaladmin') {
+      this.showToast('Only Regional / Super Admins can bulk-push flows', 'warn');
+      return;
+    }
+    const coId = this._getActiveOBCoId();
+    const co = this.S.hrOnboarding[coId] || {};
+    // Resolve the source package for display
+    let sourceName, sourcePkg;
+    if (sourceScope.startsWith('override:')) {
+      const bId = sourceScope.slice('override:'.length);
+      const bld = (this.S.buildings || []).find(b => b.id === bId);
+      sourcePkg = co.overrides?.[bId];
+      sourceName = sourcePkg?.name || (bld?.name + ' — custom flow');
+    } else {
+      sourcePkg = co[sourceScope];
+      sourceName = sourcePkg?.name || (sourceScope + ' state template');
+    }
+    if (!sourcePkg) { this.showToast('Source flow not found', 'warn'); return; }
+
+    // Determine destination candidate buildings: regional sees only their portfolio
+    const callerBIds = u.role === 'superadmin'
+      ? new Set((this.S.buildings || []).map(b => b.id))
+      : new Set(u.buildingIds || []);
+    const buildings = (this.S.buildings || [])
+      .filter(b => b.companyId === coId && callerBIds.has(b.id))
+      .sort((a, b) => (a.state || '').localeCompare(b.state || '') || a.name.localeCompare(b.name));
+
+    if (buildings.length === 0) { this.showToast('No destination buildings available', 'warn'); return; }
+
+    // Build a custom modal (mmsForm doesn't support multi-checkbox)
+    const div = document.createElement('div');
+    div.className = 'modal-overlay open';
+    const bldRows = buildings.map(b => {
+      const flow = this._getEffectiveBuildingFlow(b.id);
+      const stateLabel = b.state ? `<span style="font-size:11px;color:var(--g500)">${sanitize(b.state)}</span>` : '';
+      const onOverride = flow?.source === 'override';
+      const lockedTag = flow?.locked ? '<span style="font-size:10px;background:#FEF3C7;color:#92400E;padding:2px 6px;border-radius:5px;font-weight:700">Locked</span>' : '';
+      const overrideTag = onOverride ? '<span style="font-size:10px;background:#FEE2E2;color:#991B1B;padding:2px 6px;border-radius:5px;font-weight:700">Has override (will replace)</span>' : '';
+      return `<label style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--g200);border-radius:8px;margin-bottom:6px;cursor:pointer;background:#fff">
+        <input type="checkbox" class="bulk-push-bld" data-bid="${sanitize(b.id)}" style="width:16px;height:16px;flex-shrink:0;accent-color:#2563EB">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:var(--g900)">${sanitize(b.name)} ${stateLabel}</div>
+          <div style="display:flex;gap:6px;margin-top:3px">${overrideTag}${lockedTag}</div>
+        </div>
+      </label>`;
+    }).join('');
+
+    div.innerHTML = `<div class="modal" style="max-width:560px;max-height:85vh;display:flex;flex-direction:column">
+      <div class="modal-header"><span class="modal-title">Push flow to buildings</span></div>
+      <div class="modal-body" style="padding:18px;overflow-y:auto">
+        <div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:var(--g700)">
+          Pushing: <strong>${sanitize(sourceName)}</strong> (${sourcePkg.steps.length} steps)
+        </div>
+        <div style="font-size:13px;color:var(--g700);margin-bottom:10px">Select destination buildings. Each will get a building-specific copy of this flow. Existing custom flows for selected buildings will be replaced.</div>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <button class="btn btn-ghost btn-sm" id="bulk-push-all" type="button">Select all</button>
+          <button class="btn btn-ghost btn-sm" id="bulk-push-none" type="button">Clear</button>
+        </div>
+        <div>${bldRows}</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-act="cancel">Cancel</button>
+        <button class="btn btn-primary" data-act="push">Push to selected</button>
+      </div>
+    </div>`;
+    const cleanup = () => { div.remove(); document.removeEventListener('keydown', onKey); };
+    const onKey = (e) => { if (e.key === 'Escape') cleanup(); };
+    document.body.appendChild(div);
+    document.addEventListener('keydown', onKey);
+    div.querySelector('[data-act=cancel]').onclick = cleanup;
+    div.querySelector('#bulk-push-all').onclick = () => div.querySelectorAll('.bulk-push-bld').forEach(c => c.checked = true);
+    div.querySelector('#bulk-push-none').onclick = () => div.querySelectorAll('.bulk-push-bld').forEach(c => c.checked = false);
+    div.querySelector('[data-act=push]').onclick = () => {
+      const picked = [...div.querySelectorAll('.bulk-push-bld:checked')].map(c => c.dataset.bid);
+      if (picked.length === 0) { this.showToast('Pick at least one building', 'warn'); return; }
+      cleanup();
+      this._executeBulkPush(coId, sourceScope, sourcePkg, picked);
+    };
+  },
+
+  _executeBulkPush(coId, sourceScope, sourcePkg, buildingIds) {
+    if (!this.S.hrOnboarding[coId]) this.S.hrOnboarding[coId] = {};
+    if (!this.S.hrOnboarding[coId].overrides) this.S.hrOnboarding[coId].overrides = {};
+    const basedOn = sourceScope.startsWith('override:')
+      ? (sourcePkg.basedOn || 'TX')
+      : sourceScope;
+    const now = new Date().toISOString();
+    const by  = this.S.user?.email || null;
+    for (const bId of buildingIds) {
+      const bld = (this.S.buildings || []).find(b => b.id === bId);
+      this.S.hrOnboarding[coId].overrides[bId] = {
+        name: (bld?.name || 'Building') + ' — custom onboarding flow',
+        steps: JSON.parse(JSON.stringify(sourcePkg.steps || [])),
+        basedOn,
+        updatedAt: now,
+        updatedBy: by,
+        pushedFromScope: sourceScope,
+      };
+      // Defensive: ensure SMS step remains last in the cloned steps
+      this._ensureSmsConsentStep(this.S.hrOnboarding[coId].overrides[bId]);
+    }
+    this.persistData();
+    this.renderHRMain();
+    this.showToast(`Flow pushed to ${buildingIds.length} building${buildingIds.length>1?'s':''}`);
+    if (typeof Audit !== 'undefined' && Audit.log) {
+      Audit.log('ONBOARDING_BULK_PUSH', `Pushed flow from ${sourceScope} to ${buildingIds.length} buildings`, this.S.user?.id, 'medium');
+    }
   },
 
   moveHRStep(state, idx, dir) {
@@ -17753,8 +18236,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (this.S.user?.role !== 'admin' && this.S.user?.role !== 'superadmin') { this.showToast('Unauthorized','warn'); return; }
     const emp = this._empLookup(empId);
     if (!emp) return;
-    this._pushUndo(`Assigned ${emp.name} to ${shiftType} ${date}`);
     const bId = this.S.user?.buildingId || 'b1';
+    // Guard: prevent duplicate assignment for same employee on same date/group/type
+    if (this.S.shifts.find(s => s.date === date && matchesGroup(s, group) && s.type === shiftType && s.employeeId === empId && (s.buildingId === bId || !s.buildingId))) {
+      this.showToast('Already scheduled for this shift', 'warn'); return;
+    }
+    this._pushUndo(`Assigned ${emp.name} to ${shiftType} ${date}`);
     // Find an existing open shift for this date/group/type, or create one and assign it.
     // matchesGroup so display-group selections (e.g. Dietary) reuse open
     // slots tagged under any of the underlying actual groups (Cook,
@@ -18499,8 +18986,8 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       const raw = sessionStorage.getItem('mms_removedDates_backup');
       if (!raw) return;
       const backup = JSON.parse(raw);
-      // Only restore if backup is less than 5 minutes old
-      if (Date.now() - backup.t > 300000) {
+      // Only restore if backup is less than 24 hours old
+      if (Date.now() - backup.t > 86400000) {
         sessionStorage.removeItem('mms_removedDates_backup');
         return;
       }
