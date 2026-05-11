@@ -76,6 +76,60 @@ body{font-family:'DM Sans',sans-serif;background:var(--g50);color:var(--g900);mi
 .form-group input:not([type=radio]):not([type=checkbox]),.form-group select,.form-group textarea{width:100%;padding:10px 12px;border:1.5px solid var(--g200);border-radius:var(--radius);font-family:inherit;font-size:14px;color:var(--g900);background:#fff;transition:border-color .15s}
 .form-group input:not([type=radio]):not([type=checkbox]):focus,.form-group select:focus,.form-group textarea:focus{outline:none;border-color:var(--blue-d);box-shadow:0 0 0 3px rgba(107,158,122,.15)}
 input[type="time"]{font-family:'DM Sans',sans-serif}
+
+/* ── Modern form controls ────────────────────────────────────────────────
+   Defines the .form-input / .form-label / .form-inp / .form-lbl helper
+   classes that markup throughout the SPA references (they were referenced
+   but never CSS-defined — selects fell back to native OS chrome with the
+   harsh default chevron).
+
+   Also unifies every <select> in the app under one modern look: rounded
+   border, soft hover/focus ring, and a custom inline-SVG chevron in place
+   of the heavy native arrow. `appearance:none` strips the default UA
+   widget across Chrome, Firefox, Safari, and Edge.
+
+   Inline-styled selects scattered through the markup still keep their
+   widths/sizes from the inline rules; this rule only governs the chrome
+   (border, radius, chevron, focus). Anything that opts out of the global
+   look (e.g. the header building switcher with border:none) can still
+   override via its own inline `style`. */
+.form-label,.form-lbl{display:block;font-size:13px;font-weight:600;color:var(--g700);margin-bottom:6px}
+.form-input,.form-inp{width:100%;padding:10px 12px;border:1.5px solid var(--g200);border-radius:var(--radius);font-family:inherit;font-size:14px;color:var(--g900);background:#fff;transition:border-color .15s,box-shadow .15s,background-color .15s;outline:none}
+.form-input:hover,.form-inp:hover{border-color:var(--g300)}
+.form-input:focus,.form-inp:focus{border-color:var(--blue-d);box-shadow:0 0 0 3px rgba(107,158,122,.15)}
+.form-input:disabled,.form-inp:disabled{background:var(--g50);color:var(--g500);cursor:not-allowed}
+textarea.form-input,textarea.form-inp{resize:vertical;min-height:72px}
+
+/* Global <select> chrome — applies to every native dropdown unless the
+   element opts out via .select-bare (e.g. the toolbar building switcher
+   that intentionally has no border). The chevron is an inline SVG that
+   matches the site's existing g500 stroke color. */
+select:not(.select-bare):not(.assign-select){
+  -webkit-appearance:none;-moz-appearance:none;appearance:none;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 16 16' fill='none' stroke='%236B7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M4 6l4 4 4-4'/></svg>");
+  background-repeat:no-repeat;background-position:right 10px center;background-size:12px 12px;
+  /* Reserve room for the chevron. !important guards against inline
+     `padding:Xpx Ypx` shorthand declarations on many existing selects
+     (those would otherwise reset padding-right to a value too small
+     for the chevron and cause text overlap). */
+  padding-right:32px !important;
+}
+select:not(.select-bare):not(.assign-select):hover{cursor:pointer}
+select:not(.select-bare):not(.assign-select)::-ms-expand{display:none}
+/* Focus on selects gets the same green ring as inputs — even when they
+   come from a `.form-group` parent or have inline styles. */
+select:not(.select-bare):focus{outline:none;border-color:var(--blue-d);box-shadow:0 0 0 3px rgba(107,158,122,.15)}
+/* .assign-select is the dense inline dropdown that lives inside calendar
+   OPEN pills. It already has its own compact look; we still strip the
+   native chevron and give it a small custom one (chevron-right offset is
+   smaller because the control itself is tiny). */
+.assign-select{
+  -webkit-appearance:none;-moz-appearance:none;appearance:none;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 16 16' fill='none' stroke='%23537E61' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M4 6l4 4 4-4'/></svg>");
+  background-repeat:no-repeat;background-position:right 6px center;background-size:9px 9px;
+  padding-right:20px !important;
+}
+.assign-select::-ms-expand{display:none}
 .btn{display:inline-flex;align-items:center;gap:6px;padding:10px 18px;border-radius:var(--radius);font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;border:none;transition:all .15s;white-space:nowrap}
 .btn-primary{background:var(--blue);color:#fff}.btn-primary:hover{background:var(--blue-d)}
 .btn-secondary{background:#fff;color:var(--g700);border:1.5px solid var(--g200)}.btn-secondary:hover{background:var(--g50);border-color:var(--g300)}
@@ -2742,7 +2796,7 @@ const App = {
         switcher = `
           <div style="display:flex;align-items:center;gap:6px;margin-right:8px;padding:5px 10px;background:var(--blue-l);border:1.5px solid var(--blue-m);border-radius:8px">
             <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="var(--blue-d)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="14" height="11" rx="1"/><path d="M5 15V9h6v6"/><path d="M1 8l7-6 7 6"/></svg>
-            <select onchange="App.switchBuilding(this.value)" style="border:none;background:transparent;font-family:inherit;font-size:13px;font-weight:600;color:var(--blue-d);cursor:pointer;outline:none">${opts}</select>
+            <select class="select-bare" onchange="App.switchBuilding(this.value)" style="border:none;background:transparent;font-family:inherit;font-size:13px;font-weight:600;color:var(--blue-d);cursor:pointer;outline:none">${opts}</select>
           </div>`;
       }
       nav = `${switcher}<div class="month-nav">
