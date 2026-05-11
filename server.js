@@ -1466,6 +1466,25 @@ const app = express();
 app.set('trust proxy', 1);     // Behind App Service / Front Door
 app.disable('x-powered-by');
 
+// ── Async route safety net ──────────────────────────────────────────────────
+// Express 4 doesn't catch rejected promises from async route handlers. An
+// unhandled rejection leaves the client hanging (no response sent). Wrap
+// every async route so rejections forward to the Express error handler.
+{
+  for (const method of ['get','post','put','delete','patch']) {
+    const orig = app[method].bind(app);
+    app[method] = function (...args) {
+      const wrapped = args.map(fn => {
+        if (typeof fn === 'function' && fn.constructor.name === 'AsyncFunction') {
+          return (req, res, next) => fn(req, res, next).catch(next);
+        }
+        return fn;
+      });
+      return orig(...wrapped);
+    };
+  }
+}
+
 // Gzip/Brotli compression — reduces the 1.2MB HTML to ~150KB on the wire
 app.use(compression({ threshold: 1024 }));
 
@@ -5226,14 +5245,19 @@ app.post('/api/shifts/:id/end-rotation', requireAuth, requireAdmin, async (req, 
       count++;
     }
   }
-  // Disable matching schedule patterns so future generation stops
+  // Disable matching schedule patterns so future generation stops.
+  // Disable BOTH the assigned employee's pattern AND the open pattern
+  // for the same group/type/building — otherwise the open pattern would
+  // still regenerate shifts for that slot, creating ghosts.
   if (Array.isArray(data.schedulePatterns)) {
     for (const p of data.schedulePatterns) {
-      if (p.empId === employeeId && (!p.shiftType || p.shiftType === type) &&
-          (!p.group || p.group === group)) {
-        p.endDate = date;
-        p.active = false;
-      }
+      if (p.buildingId !== buildingId) continue;
+      if (p.shiftType && p.shiftType !== type) continue;
+      if (p.group && p.group !== group) continue;
+      // Skip assign patterns for a DIFFERENT employee
+      if (p.empId && p.empId !== employeeId) continue;
+      p.endDate = date;
+      p.active = false;
     }
   }
   try { await flushNow(); } catch (e) {
@@ -7411,7 +7435,7 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
 
   data.schedulePatterns = mergeScoped(data.schedulePatterns, payload.schedulePatterns, inScopePattern);
   data.hrEmployees      = mergeScoped(data.hrEmployees,      payload.hrEmployees,      inScopeEmployee);
-  data.hrTimeClock      = mergeScoped(data.hrTimeClock,      payload.hrTimeClock,      inScopeEmployee);
+  data.hrTimeClock      = mergeScoped(data.hrTimeClock,      payload.hrTimeClock,      inScopeTimeClock);
 
   // Accounts: protect seed accounts; prevent caller from escalating own role
   // OR another in-scope admin's authority via mass-assignment.

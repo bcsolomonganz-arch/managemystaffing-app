@@ -998,6 +998,7 @@ async function appendAuditEntry(entry) {
        entry.prevHash, entry.hmac]);
   } catch (e) {
     // Don't fail the request if audit DB write fails — file + cloud are primary
+    console.error('[repo] audit_db_write_failed:', e.message);
   }
 }
 

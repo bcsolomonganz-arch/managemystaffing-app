@@ -7787,10 +7787,13 @@ const App = {
       }
       if (Array.isArray(this.S.schedulePatterns)) {
         for (const p of this.S.schedulePatterns) {
-          if (p.empId === empId && (!p.shiftType || p.shiftType === shiftType) && (!p.group || p.group === g)) {
-            p.endDate = date;
-            p.active = false;
-          }
+          if (p.buildingId !== shift.buildingId) continue;
+          if (p.shiftType && p.shiftType !== shiftType) continue;
+          if (p.group && p.group !== g) continue;
+          // Skip assign patterns for a DIFFERENT employee
+          if (p.empId && p.empId !== empId) continue;
+          p.endDate = date;
+          p.active = false;
         }
       }
       this.logAudit('SHIFT_ROTATION_ENDED', `${emp.name} removed from all future ${shiftType} ${g} shifts on/after ${date} (${removed} shifts opened)`);
@@ -14021,10 +14024,24 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         opened++;
       }
     }
-    // Also disable any rotation patterns
+    // Disable any rotation patterns — both the employee's assign pattern
+    // AND the open pattern for the same building/group/type, so the rotation
+    // extender doesn't regenerate shifts for the now-vacated slot.
     if (Array.isArray(this.S.schedulePatterns)) {
+      // Gather the buildings/groups this employee has patterns for
+      const empPatKeys = new Set();
       for (const p of this.S.schedulePatterns) {
+        if (p.empId === empId) empPatKeys.add(`${p.buildingId}|${p.group||''}|${p.shiftType||''}`);
+      }
+      for (const p of this.S.schedulePatterns) {
+        // Disable all of this employee's own patterns
         if (p.empId === empId) {
+          p.endDate = today;
+          p.active = false;
+          continue;
+        }
+        // Also disable matching open patterns to stop regeneration
+        if (!p.empId && empPatKeys.has(`${p.buildingId}|${p.group||''}|${p.shiftType||''}`)) {
           p.endDate = today;
           p.active = false;
         }

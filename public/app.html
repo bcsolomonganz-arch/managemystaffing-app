@@ -889,9 +889,13 @@ async function apiFetch(url, opts = {}) {
     // Queue mutation for later replay if offline and queueable
     const method = (opts.method || 'GET').toUpperCase();
     if (!navigator.onLine && OfflineQueue.isQueueable(url, method)) {
-      await OfflineQueue.enqueue(url, opts).catch(() => {});
-      toast('Saved offline — will sync when connected', 'warn');
-      return new Response('{"queued":true}', { status: 202, headers: { 'Content-Type': 'application/json' } });
+      try {
+        await OfflineQueue.enqueue(url, opts);
+        toast('Saved offline — will sync when connected', 'warn');
+        return new Response('{"queued":true}', { status: 202, headers: { 'Content-Type': 'application/json' } });
+      } catch (_qErr) {
+        toast('Could not save offline — change may be lost', 'error');
+      }
     }
     if (!navigator.onLine) toast('You\u2019re offline', 'warn');
     throw e;
