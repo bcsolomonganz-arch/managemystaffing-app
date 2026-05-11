@@ -3546,12 +3546,43 @@ app.post('/api/admin/snapshots/restore', requireAuth, requireSuperAdmin, async (
 
     if (dryRun) {
       // Read-only — no mutation, no persistCache. Safe to call repeatedly.
-      auditLog('BACKUP_SNAPSHOT_RESTORE_DRYRUN', req.user, { filename, maxDrop });
+      // When inspect:true is also passed, surface a digest of the
+      // decrypted snapshot's content (building state assignments,
+      // hrOnboarding shape, etc.) so an operator can identify which
+      // snapshot to roll back to without doing a real restore first.
+      // Designed for incident recovery — no PHI leaves the server.
+      const inspect = !!req.body?.inspect;
+      const inspectData = inspect ? {
+        buildings: (decoded.buildings || []).map(b => ({
+          id: b.id, name: b.name,
+          state: b.state || (b.metadata && b.metadata.state) || null,
+          address: b.address || null,
+          zip: b.zip || (b.metadata && b.metadata.zip) || null,
+          inactive: !!b.inactive,
+        })),
+        hrOnboarding: Object.fromEntries(
+          Object.entries(decoded.hrOnboarding || {}).map(([coId, byState]) => [
+            coId,
+            Object.fromEntries(Object.entries(byState || {}).map(([k, pkg]) => [
+              k,
+              {
+                name: pkg && pkg.name || '',
+                stepCount: pkg && Array.isArray(pkg.steps) ? pkg.steps.length : 0,
+                buildingIds: pkg && Array.isArray(pkg.buildingIds) ? pkg.buildingIds : null,
+                stepTitles: pkg && Array.isArray(pkg.steps) ? pkg.steps.map(s => s.title) : [],
+              },
+            ])),
+          ])
+        ),
+        topLevelKeys: Object.keys(decoded || {}).sort(),
+      } : null;
+      auditLog('BACKUP_SNAPSHOT_RESTORE_DRYRUN', req.user, { filename, maxDrop, inspect });
       return res.json({
         ok: true, dryRun: true, filename,
         snapshotTakenAt: parsed._snapshottedAt || null,
         diff, maxDropPercent: maxDrop,
         wouldShrinkSignificantly: maxDrop >= 10,
+        inspect: inspectData,
       });
     }
 
