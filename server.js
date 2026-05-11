@@ -7374,6 +7374,41 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   data.buildings        = mergeScoped(data.buildings,        payload.buildings,        inScopeBuilding);
   data.employees        = mergeScoped(data.employees,        payload.employees,        inScopeEmployee);
   data.shifts           = mergeScoped(data.shifts,           payload.shifts,           inScopeShift);
+
+  // ── Shift dedup guard ──────────────────────────────────────────────────
+  // The client-side rotation extender (_extendRotationsThrough) can create
+  // new shifts for dates that already have shifts on the server — this
+  // happens when two tabs, two admins, or a stale lastExtendedTo value
+  // causes the extender to regenerate shifts that already exist. Dedup by
+  // composite key (date + group + type + buildingId + employeeId) keeping
+  // the FIRST occurrence (which is the server-side canonical one from
+  // mergeScoped, since out-of-scope items are appended after in-scope).
+  {
+    const seen = new Set();
+    const deduped = [];
+    const seenIds = new Set();
+    for (const s of data.shifts) {
+      // Primary dedup by ID — no two shifts should share an ID
+      if (seenIds.has(s.id)) continue;
+      seenIds.add(s.id);
+      // Secondary dedup by composite key — prevents same slot being filled twice
+      // Only dedup open shifts (assigned shifts for different employees are valid)
+      if (!s.employeeId) {
+        const key = `${s.date}|${s.group}|${s.type}|${s.buildingId}|open`;
+        const count = (seen.get(key) || 0) + 1;
+        seen.set(key, count);
+        // Allow up to the staffingSlots limit (or 10 as hard cap)
+        const maxSlots = data.staffingSlots?.[s.buildingId]?.[s.group]?.[s.type] || 10;
+        if (count > maxSlots) continue; // skip duplicate open shift
+      }
+      deduped.push(s);
+    }
+    if (deduped.length < data.shifts.length) {
+      logger.info('shift_dedup', { before: data.shifts.length, after: deduped.length });
+    }
+    data.shifts = deduped;
+  }
+
   data.schedulePatterns = mergeScoped(data.schedulePatterns, payload.schedulePatterns, inScopePattern);
   data.hrEmployees      = mergeScoped(data.hrEmployees,      payload.hrEmployees,      inScopeEmployee);
   data.hrTimeClock      = mergeScoped(data.hrTimeClock,      payload.hrTimeClock,      inScopeEmployee);
