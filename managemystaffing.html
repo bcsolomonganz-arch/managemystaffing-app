@@ -15265,7 +15265,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     }
     if (badge) emp.badgeId = badge; else delete emp.badgeId;
     if (dob)   emp.dob = dob;   else delete emp.dob;
-    if (hire)  emp.hireDate = hire;
+    if (hire)  emp.hireDate = hire; else delete emp.hireDate;
     if (pbj)   emp.pbjCode = pbj; else delete emp.pbjCode;
     this.persistData();
     Audit.log('EMP_CODES_UPDATED', `${sanitize(emp.name)} codes/IDs updated`, this.S.user?.id, 'low');
