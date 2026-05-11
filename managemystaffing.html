@@ -1125,7 +1125,7 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
          a placeholder — the real footer (including the bottom-left
          "Remove from schedule" button) is emitted from JS so it can react
          to the current view (assign vs message) and the current shiftId. -->
-    <div id="modal-assign-shift-footer" class="modal-footer" style="flex-shrink:0;display:flex;align-items:center;gap:8px"></div>
+    <div id="modal-assign-shift-footer" class="modal-footer" style="flex-shrink:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px"></div>
   </div>
 </div>
 
@@ -1297,7 +1297,19 @@ try { localStorage.removeItem('mms_token'); sessionStorage.removeItem('mms_demo_
 })();
 
 // Convenience wrapper still useful for new call-sites
+// Tracks in-flight mutation requests to prevent duplicate submissions from rapid clicks
+const _inflightMutations = new Set();
 async function api(path, opts = {}) {
+  const method = (opts.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') {
+    const key = method + ':' + path;
+    if (_inflightMutations.has(key)) {
+      return new Response(JSON.stringify({ error: 'Request already in progress' }), { status: 429 });
+    }
+    _inflightMutations.add(key);
+    try { return await fetch(path, opts); }
+    finally { _inflightMutations.delete(key); }
+  }
   return fetch(path, opts);
 }
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -1369,32 +1381,18 @@ function genTempPw() {
   return pw;
 }
 
-// Demo credential table — displayed in the demo bar, hashed for actual verification
-// In production: remove demo buttons; use server-side bcrypt
-const DEMO_CREDS = {
-  'superadmin@managemystaffing.com': 'SuperAdmin@2026!',
-  'admin@harmony.com':    'Harmony@Admin1!',
-  'admin@sunrise.com':    'Sunrise@Admin1!',
-  'admin@willowbrook.com':'Willow@Admin1!',
-  'admin@goldenacres.com':'Golden@Admin1!',
-  'sam@harmony.com':      'SamT@Admin2026!',
-};
+// Default password for employee accounts created without an explicit password.
+// Only relevant in local/offline demo mode — server-mode uses bcrypt on the server.
 const EMP_DEFAULT_PW = 'Employee@2026!';
 
 const SEED_ACCOUNTS = [
   {id:'sa0',name:'Ben Solomon',email:'solomong@managemystaffing.com',role:'superadmin',buildingId:null,ph:null},
-  {id:'sa1',name:'Platform Super Admin',email:'superadmin@managemystaffing.com',role:'superadmin',buildingId:null,
-   ph:hashPw('superadmin@managemystaffing.com','SuperAdmin@2026!')},
-  {id:'a1',name:'Jennifer Walsh',email:'admin@harmony.com',role:'admin',buildingId:'b1',
-   ph:hashPw('admin@harmony.com','Harmony@Admin1!')},
-  {id:'a2',name:'Marcus Chen',email:'admin@sunrise.com',role:'admin',buildingId:'b2',
-   ph:hashPw('admin@sunrise.com','Sunrise@Admin1!')},
-  {id:'a3',name:'Patricia Moore',email:'admin@willowbrook.com',role:'admin',buildingId:'b3',
-   ph:hashPw('admin@willowbrook.com','Willow@Admin1!')},
-  {id:'a4',name:'Robert Lee',email:'admin@goldenacres.com',role:'admin',buildingId:'b4',
-   ph:hashPw('admin@goldenacres.com','Golden@Admin1!')},
-  {id:'a5',name:'Samantha Torres',email:'sam@harmony.com',role:'admin',buildingId:'b1',
-   ph:hashPw('sam@harmony.com','SamT@Admin2026!')},
+  {id:'sa1',name:'Platform Super Admin',email:'superadmin@managemystaffing.com',role:'superadmin',buildingId:null,ph:'6c8835ed'},
+  {id:'a1',name:'Jennifer Walsh',email:'admin@harmony.com',role:'admin',buildingId:'b1',ph:'3983909d'},
+  {id:'a2',name:'Marcus Chen',email:'admin@sunrise.com',role:'admin',buildingId:'b2',ph:'ebf389e6'},
+  {id:'a3',name:'Patricia Moore',email:'admin@willowbrook.com',role:'admin',buildingId:'b3',ph:'50ad9068'},
+  {id:'a4',name:'Robert Lee',email:'admin@goldenacres.com',role:'admin',buildingId:'b4',ph:'83dc70dd'},
+  {id:'a5',name:'Samantha Torres',email:'sam@harmony.com',role:'admin',buildingId:'b1',ph:'1895eb88'},
 ];
 
 const SEED_EMPLOYEES = [
@@ -1600,7 +1598,6 @@ const SEC = {
   AUDIT_KEY:     'mms_audit_v1',
   PRIVACY_PFX:   'mms_priv_',
   ATTEMPT_PFX:   'mms_att_',
-  OBF:           'MMS_HIPAA_2026_SEC_KEY',
   // User data persistence — survives code updates; never cleared on deploy
   DATA_KEY:      'mms_data_v1',
 };
@@ -1633,22 +1630,15 @@ function fnv32(str) {
   return h.toString(16).padStart(8,'0');
 }
 
-/** XOR-obfuscate + base64 session data in localStorage */
+/** Encode/decode session marker for localStorage (local/demo mode only).
+ *  In server mode, authentication is handled via httpOnly secure cookies —
+ *  this marker is never used. For local mode, all data is already client-side
+ *  so encryption would add no security; base64 encoding prevents casual inspection. */
 function obf(data) {
-  const s = JSON.stringify(data), k = SEC.OBF;
-  let o = '';
-  for (let i = 0; i < s.length; i++) o += String.fromCharCode(s.charCodeAt(i) ^ k.charCodeAt(i % k.length));
-  try { return btoa(unescape(encodeURIComponent(o))); } catch(e) { return btoa(o); }
+  try { return btoa(unescape(encodeURIComponent(JSON.stringify(data)))); } catch(e) { return ''; }
 }
 function deobf(enc) {
-  try {
-    let s;
-    try { s = decodeURIComponent(escape(atob(enc))); } catch(e) { s = atob(enc); }
-    const k = SEC.OBF;
-    let o = '';
-    for (let i = 0; i < s.length; i++) o += String.fromCharCode(s.charCodeAt(i) ^ k.charCodeAt(i % k.length));
-    return JSON.parse(o);
-  } catch(e) { return null; }
+  try { return JSON.parse(decodeURIComponent(escape(atob(enc)))); } catch(e) { return null; }
 }
 
 /** Strip dangerous chars from user input */
@@ -1942,7 +1932,7 @@ const App = {
           const markerTTL = isPrivileged ? 86400000 : 86400000 * 30;
           if (Date.now() - parsed.ts < markerTTL) {
             const user = this.S.accounts.find(a => a.id === parsed.uid)
-              || (() => { const e = this.S.employees.find(e => e.id === parsed.uid); return e ? {id:e.id,name:e.name,role:'employee',group:e.group,email:e.email,buildingId:e.buildingId} : null; })();
+              || (() => { const e = this._empLookup(parsed.uid); return e ? {id:e.id,name:e.name,role:'employee',group:e.group,email:e.email,buildingId:e.buildingId} : null; })();
             if (user) { this.S.user = user; this.showApp(); return; }
           }
         }
@@ -2505,6 +2495,10 @@ const App = {
     const u = this.S.user;
     if (u.role === 'employee') this.S.selectedGroup = u.group;
     else this.S.selectedGroup = 'CNA';
+    // Restore any removedDates that were backed up before the last save
+    // failed. This prevents _extendRotationsThrough from regenerating
+    // shifts the admin explicitly deleted.
+    this._restoreRemovedDatesBackup();
     // HR module gated to specific account while in development.
     if (this.S.appMode === 'hr' && !this._canAccessHR()) this.S.appMode = 'schedule';
     // Start HIPAA-required 15-min idle timer
@@ -2572,27 +2566,41 @@ const App = {
     Audit.log('SESSION_LOCKED', 'Auto-locked after inactivity', this.S.user?.id, 'medium');
   },
 
-  unlockSession() {
+  async unlockSession() {
     const passEl = document.getElementById('lock-pass');
     const pass = (passEl.value || '').trim();
     if (!pass) { this.showToast('Please enter your password', 'warn'); return; }
-    const storedHash = sessionStorage.getItem('mms_lock_hash');
     const userEmail = this.S.user && this.S.user.email ? this.S.user.email.toLowerCase() : '';
-    if (storedHash) {
-      const entered = hashPw(userEmail, pass);
-      if (entered !== storedHash) {
-        passEl.value = '';
-        passEl.placeholder = 'Incorrect password — try again';
-        passEl.style.borderColor = '#EF4444';
-        setTimeout(() => { passEl.placeholder = 'Re-enter your password'; passEl.style.borderColor = ''; }, 2500);
-        Audit.log('UNLOCK_FAILED', 'Lock screen: wrong password', this.S.user?.id, 'high');
-        return;
+    const failUnlock = () => {
+      passEl.value = '';
+      passEl.placeholder = 'Incorrect password — try again';
+      passEl.style.borderColor = '#EF4444';
+      setTimeout(() => { passEl.placeholder = 'Re-enter your password'; passEl.style.borderColor = ''; }, 2500);
+      Audit.log('UNLOCK_FAILED', 'Lock screen: wrong password', this.S.user?.id, 'high');
+    };
+    if (IS_SERVER_MODE) {
+      // Verify against server using the auth endpoint
+      try {
+        const resp = await api('/api/auth/verify-password', {
+          method:'POST', body:JSON.stringify({email:userEmail, password:pass})
+        });
+        if (!resp.ok) { failUnlock(); return; }
+      } catch(e) {
+        // If server is unreachable, fall back to stored hash
+        const storedHash = sessionStorage.getItem('mms_lock_hash');
+        if (storedHash) {
+          if (hashPw(userEmail, pass) !== storedHash) { failUnlock(); return; }
+        } else { this.logout(); return; }
       }
     } else {
-      // No stored hash — force logout for security
-      Audit.log('UNLOCK_NO_HASH', 'No session hash found — forcing logout', this.S.user?.id, 'high');
-      this.logout();
-      return;
+      const storedHash = sessionStorage.getItem('mms_lock_hash');
+      if (storedHash) {
+        if (hashPw(userEmail, pass) !== storedHash) { failUnlock(); return; }
+      } else {
+        Audit.log('UNLOCK_NO_HASH', 'No session hash found — forcing logout', this.S.user?.id, 'high');
+        this.logout();
+        return;
+      }
     }
     document.getElementById('lock-screen').classList.remove('active');
     passEl.value = '';
@@ -4068,7 +4076,7 @@ const App = {
 
     // ── EMPLOYEE: personal sidebar ───────────────────────────
     if (u.role === 'employee') {
-      const emp = this.S.employees.find(e => e.id === u.id);
+      const emp = this._empLookup(u.id);
       const col = G_COLORS[u.group] || 'var(--blue)';
       const todayShift = this.S.shifts.find(s => s.date === TODAY && s.employeeId === u.id);
       const shiftTypes = SHIFT_TYPES(u.group);
@@ -4164,7 +4172,7 @@ const App = {
     groups.forEach(g => {
       const count = this.S.employees.filter(e => getActualGroups(g).includes(e.group) && e.buildingId === effBuildingId && !e.inactive).length;
       const col = G_COLORS[g];
-      groupItems += `<div class="group-item ${sel===g?'active':''}" onclick="App.selectGroup('${g}')">
+      groupItems += `<div class="group-item ${sel===g?'active':''}" onclick="App.selectGroup('${sanitize(g)}')">
         <div class="group-icon" style="background:${col}22;color:${col}">${G_ICONS[g]}</div>${groupLabel(g)}
         <span class="group-badge">${count}</span></div>`;
     });
@@ -4619,7 +4627,7 @@ const App = {
     const deptPills = allRoles.map(r => {
       const sel = selDepts.includes(r);
       return `<button class="btn btn-${sel?'primary':'secondary'} btn-sm" style="font-size:11px;padding:3px 10px"
-        onclick="App.toggleHRScheduleDept('${r}')">${sanitize(r)}</button>`;
+        onclick="App.toggleHRScheduleDept('${sanitize(r)}')">${sanitize(r)}</button>`;
     }).join('');
 
     return `
@@ -4843,7 +4851,7 @@ const App = {
         <td style="padding:9px 14px">
           <span title="${scTip}" style="display:inline-flex;align-items:center;font-size:12px;font-weight:800;color:${scColor};background:${scBg};padding:2px 9px;border-radius:6px;cursor:help;min-width:30px;justify-content:center">${sc.score}</span>
         </td>
-        <td style="padding:9px 14px"><button class="btn btn-ghost btn-sm" onclick="App.tcEditPunch('${r.empId}','${r.date}','${r.in||''}','${r.out||''}')">Edit</button></td>
+        <td style="padding:9px 14px"><button class="btn btn-ghost btn-sm" onclick="App.tcEditPunch('${sanitize(r.empId)}','${sanitize(r.date)}','${sanitize(r.in||'')}','${sanitize(r.out||'')}')">Edit</button></td>
       </tr>`;
     }).join('');
 
@@ -5258,7 +5266,7 @@ const App = {
       if (!i || !i.configured || i.status !== 'connected') continue;
       const info = this.payrollProviderInfo(p);
       const dis = report.rows.length ? '' : 'disabled';
-      buttons.push(`<button class="btn btn-secondary btn-sm" onclick="App.syncPayrollToProvider('${p}')" ${dis} title="Sync this period to ${info.name}">
+      buttons.push(`<button class="btn btn-secondary btn-sm" onclick="App.syncPayrollToProvider('${sanitize(p)}')" ${dis} title="Sync this period to ${info.name}">
         <span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:${info.logoBg};color:${info.logoFg};font-weight:800;font-size:10px;line-height:14px;text-align:center;margin-right:4px;vertical-align:-2px">${info.logoText}</span>
         Sync to ${info.name === 'ADP Workforce Now' ? 'ADP' : info.name}
       </button>`);
@@ -6491,6 +6499,8 @@ const App = {
       const name = (st.customName || '').trim();
       if (!name) { this.showToast('Enter a name for this shift type', 'warn'); return; }
       if (!st.customStart || !st.customEnd) { this.showToast('Enter start and end times', 'warn'); return; }
+      const testHrs = this._shiftHours({ start: st.customStart, end: st.customEnd });
+      if (testHrs <= 0 || testHrs > 24) { this.showToast('Invalid shift times — end must be after start (max 24h)', 'warn'); return; }
       const tmplId = this.saveShiftTemplate(g, name, st.customStart, st.customEnd);
       shiftType = tmplId;
       shiftDef = { type: shiftType, name, start: st.customStart, end: st.customEnd };
@@ -6633,24 +6643,31 @@ const App = {
                     : `Removed ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dow]} ${seed.type} ${seed.group} rotation`;
     this._pushUndo(undoLabel, ['shifts', 'schedulePatterns']);
 
-    // Collect IDs to delete based on mode
+    // Collect IDs and dates to delete BEFORE server calls replace the array
     let idsToDelete = [];
+    let _removedDatesList = [];
     if (mode === 'one') {
       idsToDelete = [shiftId];
+      _removedDatesList = [seed.date];
     } else if (mode === 'future') {
-      idsToDelete = this.S.shifts
+      const matched = this.S.shifts
         .filter(s => s.status === 'open' && s.buildingId === seed.buildingId &&
-                     s.group === seed.group && s.type === seed.type && s.date >= TODAY)
-        .map(s => s.id);
+                     s.group === seed.group && s.type === seed.type && s.date >= TODAY);
+      idsToDelete = matched.map(s => s.id);
+      _removedDatesList = matched.map(s => s.date);
     } else if (mode === 'weekday') {
-      idsToDelete = this.S.shifts.filter(s => {
+      const matched = this.S.shifts.filter(s => {
         if (s.status !== 'open' || s.buildingId !== seed.buildingId ||
             s.group !== seed.group || s.type !== seed.type || s.date < TODAY) return false;
         return new Date(s.date + 'T12:00:00').getDay() === dow;
-      }).map(s => s.id);
+      });
+      idsToDelete = matched.map(s => s.id);
+      _removedDatesList = matched.map(s => s.date);
     } else {
       this.showToast('Unknown remove mode', 'warn'); return;
     }
+    // Deduplicate dates
+    _removedDatesList = [...new Set(_removedDatesList)];
 
     document.getElementById('modal-open-slot-remove')?.remove();
 
@@ -6701,13 +6718,30 @@ const App = {
       }
     }
 
-    // Deactivate matching open schedule patterns so shifts don't regenerate
-    if (mode === 'future' && Array.isArray(this.S.schedulePatterns)) {
-      for (const p of this.S.schedulePatterns) {
-        if (p.group === g && p.shiftType === seed.type && p.buildingId === bId &&
-            (p.kind === 'open' || (!p.kind && !p.empId))) {
-          p.active = false;
-          p.endDate = TODAY;
+    // Deactivate or mark removedDates on matching open schedule patterns
+    // so _extendRotationsThrough() won't regenerate deleted shifts.
+    // Uses _removedDatesList captured BEFORE applyServerData replaced the array.
+    if (Array.isArray(this.S.schedulePatterns)) {
+      if (mode === 'future') {
+        // Deactivate entirely — no more open shifts from this pattern
+        for (const p of this.S.schedulePatterns) {
+          if (p.group === g && p.shiftType === seed.type && p.buildingId === bId &&
+              (p.kind === 'open' || (!p.kind && !p.empId))) {
+            p.active = false;
+            p.endDate = TODAY;
+          }
+        }
+      }
+      // For ALL modes (including future as a safety net), mark dates as removed.
+      if (_removedDatesList.length > 0) {
+        for (const p of this.S.schedulePatterns) {
+          if (p.active === false && mode !== 'future') continue;
+          if (p.group !== g || p.shiftType !== seed.type || p.buildingId !== bId) continue;
+          if (p.kind === 'assign') continue; // only update open patterns
+          if (!p.removedDates) p.removedDates = [];
+          for (const dt of _removedDatesList) {
+            if (!p.removedDates.includes(dt)) p.removedDates.push(dt);
+          }
         }
       }
     }
@@ -7252,7 +7286,7 @@ const App = {
     if (!st) return;
     if (!st.empId) { this.showToast('Select an employee', 'warn'); return; }
     if (!st.selectedDays.length) { this.showToast('Select at least one working day', 'warn'); return; }
-    const emp = this.S.employees.find(e => e.id === st.empId);
+    const emp = this._empLookup(st.empId);
     if (!emp) { this.showToast('Employee not found', 'warn'); return; }
     const { group: g, buildingId: bId, shiftType } = st;
     const shiftDef = this.resolveShiftDef(g, shiftType) || {};
@@ -7316,7 +7350,7 @@ const App = {
     const st = this.S._assignShiftState;
     if (!st) return;
     if (!st.empId) { this.showToast('Select an employee', 'warn'); return; }
-    const emp = this.S.employees.find(e => e.id === st.empId);
+    const emp = this._empLookup(st.empId);
     if (!emp) { this.showToast('Employee not found', 'warn'); return; }
     const { group: g, buildingId: bId, shiftType, date } = st;
     const shiftDef = this.resolveShiftDef(g, shiftType) || {};
@@ -7344,7 +7378,7 @@ const App = {
 
   // ── REMOVE FROM DAY ─────────────────────────────────────────
   openRemoveShiftModal(date, shiftId, shiftType, empId) {
-    const emp = this.S.employees.find(e => e.id === empId);
+    const emp = this._empLookup(empId);
     const shift = this.S.shifts.find(s => s.id === shiftId);
     if (!emp || !shift) return;
     // Remember context so the staff picker's Back button can re-open this modal
@@ -7426,12 +7460,12 @@ const App = {
         </div>
 
         <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
-          <button class="btn btn-secondary" onclick="App.removeFromDay('${shiftId}','${date}','${empId}')" style="justify-content:flex-start;text-align:left;color:var(--g800)">
+          <button class="btn btn-secondary" onclick="App.removeFromDay('${sanitize(shiftId)}','${sanitize(date)}','${sanitize(empId)}')" style="justify-content:flex-start;text-align:left;color:var(--g800)">
             <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 8h12M6 4l-4 4 4 4"/></svg>
             Remove from ${new Date(date+'T00:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})} only
             <span style="font-size:11px;color:var(--g500);margin-left:auto">Keeps rotation</span>
           </button>
-          <button class="btn btn-secondary" onclick="App.removeFromAllFuture('${shiftId}','${date}','${empId}','${shiftType}')" style="justify-content:flex-start;text-align:left;color:var(--g800)">
+          <button class="btn btn-secondary" onclick="App.removeFromAllFuture('${sanitize(shiftId)}','${sanitize(date)}','${sanitize(empId)}','${sanitize(shiftType)}')" style="justify-content:flex-start;text-align:left;color:var(--g800)">
             <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h10M5 6V4a2 2 0 012-2h2a2 2 0 012 2v2M6 6v7M10 6v7M4 6l1 9h6l1-9"/></svg>
             Remove from this and all future shifts
             <span style="font-size:11px;color:var(--g500);margin-left:auto">Ends rotation</span>
@@ -7457,7 +7491,7 @@ const App = {
                     <div style="font-size:11px;color:var(--g500)">${sanitize(e.group)}${e.phone?` · ${sanitize(e.phone)}`:''}</div>
                   </div>
                   <button class="btn btn-ghost btn-sm" onclick="App.assignCoverEmployee('${shiftId}','${e.id}')" style="font-size:11px;color:var(--blue-d)">Assign</button>
-                  ${e.phone ? `<button class="btn btn-ghost btn-sm" onclick="App.openCoverSMS('${e.id}','${date}','${shiftType}')" style="font-size:11px;color:var(--green)">
+                  ${e.phone ? `<button class="btn btn-ghost btn-sm" onclick="App.openCoverSMS('${sanitize(e.id)}','${sanitize(date)}','${sanitize(shiftType)}')" style="font-size:11px;color:var(--green)">
                     <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="1" y="2" width="14" height="10" rx="1.5"/><path d="M1 5l7 4 7-4"/></svg>
                     Text
                   </button>` : ''}
@@ -7469,7 +7503,7 @@ const App = {
             <textarea id="cover-sms-body" rows="3" style="width:100%;padding:8px;border:1.5px solid var(--g200);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical">A shift needs coverage. Sign in at ManageMyStaffing.com to view details and claim.</textarea>
           <p style="font-size:11px;color:var(--g500);margin-top:6px;display:flex;align-items:start;gap:6px"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="#D97706" stroke-width="1.8" stroke-linecap="round" style="flex-shrink:0;margin-top:1px"><path d="M8 1l7 14H1L8 1zM8 6v4M8 12v.01"/></svg><span>SMS is unencrypted by carriers — never include patient names, dates of service, or other PHI in this message.</span></p>
             <div style="display:flex;justify-content:flex-end;margin-top:8px">
-              <button class="btn btn-primary btn-sm" onclick="App.openStaffPicker('${date}','${shiftType}','${g}')">
+              <button class="btn btn-primary btn-sm" onclick="App.openStaffPicker('${sanitize(date)}','${sanitize(shiftType)}','${sanitize(g)}')">
                 <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 6l7 4 7-4"/></svg>
                 Message Staff
               </button>
@@ -7536,7 +7570,7 @@ const App = {
     }
 
     const empName = shift.employeeId
-      ? (this.S.employees.find(e => e.id === shift.employeeId)?.name || '')
+      ? (this._empLookup(shift.employeeId)?.name || '')
       : 'open slot';
     this._pushUndo(`Edited hours on ${updated} shift${updated===1?'':'s'}`, ['shifts']);
     this.logAudit('SHIFT_HOURS_EDITED',
@@ -7612,12 +7646,12 @@ const App = {
             <input type="time" id="ets-end" value="${endInputVal}" style="font-size:13px;padding:6px 8px;border:1.5px solid var(--g200);border-radius:6px">
           </div>
           <div style="display:flex;flex-direction:column;gap:8px">
-            <button class="btn btn-secondary" onclick="App.editShiftTimes('${date}','${sanitize(group)}','${sanitize(shiftType)}','one')" style="justify-content:flex-start;text-align:left;color:var(--g800)">
+            <button class="btn btn-secondary" onclick="App.editShiftTimes('${sanitize(date)}','${sanitize(group)}','${sanitize(shiftType)}','one')" style="justify-content:flex-start;text-align:left;color:var(--g800)">
               <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 8l3 3 9-9"/></svg>
               Apply to ${new Date(date+'T00:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})} only
               <span style="font-size:11px;color:var(--g500);margin-left:auto">${oneDayCount} shift${oneDayCount===1?'':'s'}</span>
             </button>
-            <button class="btn btn-secondary" onclick="App.editShiftTimes('${date}','${sanitize(group)}','${sanitize(shiftType)}','all')" style="justify-content:flex-start;text-align:left;color:var(--g800)">
+            <button class="btn btn-secondary" onclick="App.editShiftTimes('${sanitize(date)}','${sanitize(group)}','${sanitize(shiftType)}','all')" style="justify-content:flex-start;text-align:left;color:var(--g800)">
               <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6h12M5 1v3M11 1v3"/></svg>
               Apply to all ${sanitize(shiftType)} shifts on this calendar
               <span style="font-size:11px;color:var(--g500);margin-left:auto">${allCount} total</span>
@@ -7644,6 +7678,13 @@ const App = {
     }
     const newStart = this._inputToTime(startEl.value);
     const newEnd   = this._inputToTime(endEl.value);
+    // Validate that end is after start (accounting for overnight shifts)
+    const testShift = { start: newStart, end: newEnd };
+    const hrs = this._shiftHours(testShift);
+    if (hrs <= 0 || hrs > 24) {
+      this.showToast('Invalid shift times — end must be after start and shift must be 24 hours or less', 'warn');
+      return;
+    }
     const bId = this.S.user?.buildingId || 'b1';
 
     let updated = 0;
@@ -7675,10 +7716,27 @@ const App = {
     const shift = this.S.shifts.find(s => s.id === shiftId);
     if (!shift) return;
     // Remove employee from just this day — shift becomes open, rotation intact
+    const _group = shift.group;
+    const _type = shift.type;
+    const _bldg = shift.buildingId;
     shift.employeeId = null;
     shift.status = 'open';
     shift._removedDate = date;
-    const emp = this.S.employees.find(e => e.id === empId);
+    // Mark removedDates on matching assign-type rotation patterns so the
+    // rotation extender won't re-fill this slot on the next render cycle.
+    if (empId && Array.isArray(this.S.schedulePatterns)) {
+      for (const pat of this.S.schedulePatterns) {
+        if (pat.active === false) continue;
+        const kind = pat.kind || (pat.empId ? 'assign' : 'open');
+        if (kind !== 'assign') continue;
+        if (pat.empId !== empId) continue;
+        if (pat.group !== _group || pat.shiftType !== _type) continue;
+        if (pat.buildingId !== _bldg) continue;
+        if (!pat.removedDates) pat.removedDates = [];
+        if (!pat.removedDates.includes(date)) pat.removedDates.push(date);
+      }
+    }
+    const emp = this._empLookup(empId);
     this.logAudit('SHIFT_REMOVED', `${emp?.name||empId} removed from ${date} ${shift.type} shift (rotation kept)`);
     this.persistData();
     this.closeModal('modal-remove-shift');
@@ -7687,7 +7745,7 @@ const App = {
   },
 
   async removeFromAllFuture(shiftId, date, empId, shiftType) {
-    const emp = this.S.employees.find(e => e.id === empId);
+    const emp = this._empLookup(empId);
     const shift = this.S.shifts.find(s => s.id === shiftId);
     if (!emp || !shift) return;
     const g = shift.group;
@@ -7778,7 +7836,7 @@ const App = {
     const shift = (this.S.shifts || []).find(s => s.id === shiftId);
     if (!shift) { this.showToast('Shift not found', 'warn'); return; }
     const emp = shift.employeeId
-      ? this.S.employees.find(e => e.id === shift.employeeId)
+      ? this._empLookup(shift.employeeId)
       : null;
     const dateLabel = new Date(shift.date + 'T12:00:00').toLocaleDateString('en-US', {
       weekday: 'short', month: 'short', day: 'numeric',
@@ -7794,7 +7852,15 @@ const App = {
     });
     if (!ok) return;
 
-    this._pushUndo('Removed 1 shift', ['shifts']);
+    this._pushUndo('Removed 1 shift', ['shifts', 'schedulePatterns']);
+    // Capture shift details BEFORE deletion so we can mark removedDates
+    // even after applyServerData() replaces in-memory arrays.
+    const _delDate = shift.date;
+    const _delGroup = shift.group;
+    const _delType = shift.type;
+    const _delBldg = shift.buildingId;
+    const _delEmpId = shift.employeeId;
+    const _delStatus = shift.status;
     try {
       const r = await fetch(`/api/shifts/${encodeURIComponent(shiftId)}`, { method: 'DELETE' });
       if (!r.ok) {
@@ -7813,22 +7879,39 @@ const App = {
       } catch {
         this.S.shifts = this.S.shifts.filter(s => s.id !== shiftId);
       }
-      // If the deleted shift was open and a staffing requirement exists,
-      // decrement by 1 so the virtual OPEN placeholder also disappears.
-      if (shift.status === 'open') {
-        const sBId = shift.buildingId;
-        const sG   = shift.group;
-        const sT   = shift.type;
-        const slots = this.S.staffingSlots = this.S.staffingSlots || {};
-        if (slots[sBId]?.[sG]?.[sT] > 0) {
-          slots[sBId][sG][sT] = Math.max(0, slots[sBId][sG][sT] - 1);
-          this.persistData();
+      // Mark the deleted shift's date in ALL matching schedule patterns'
+      // removedDates so _extendRotationsThrough() won't regenerate it.
+      // Uses captured shift details (not the now-deleted shift object).
+      if (Array.isArray(this.S.schedulePatterns)) {
+        for (const pat of this.S.schedulePatterns) {
+          if (pat.active === false) continue;
+          if (pat.group !== _delGroup || pat.shiftType !== _delType) continue;
+          if (pat.buildingId !== _delBldg) continue;
+          // Match both assign and open patterns for this date — an open
+          // pattern can produce shifts that later get assigned, so we must
+          // still mark the date removed regardless of employeeId.
+          const kind = pat.kind || (pat.empId ? 'assign' : 'open');
+          if (kind === 'assign' && pat.empId && pat.empId !== _delEmpId) continue;
+          if (!pat.removedDates) pat.removedDates = [];
+          if (!pat.removedDates.includes(_delDate)) {
+            pat.removedDates.push(_delDate);
+          }
         }
       }
+      // If the deleted shift was open and a staffing requirement exists,
+      // decrement by 1 so the virtual OPEN placeholder also disappears.
+      if (_delStatus === 'open') {
+        const slots = this.S.staffingSlots = this.S.staffingSlots || {};
+        if (slots[_delBldg]?.[_delGroup]?.[_delType] > 0) {
+          slots[_delBldg][_delGroup][_delType] = Math.max(0, slots[_delBldg][_delGroup][_delType] - 1);
+        }
+      }
+      // Always persist after deletion to save removedDates and staffingSlots
+      this.persistData();
       this.closeModal('modal-remove-shift');
       this.closeModal('modal-assign-shift');
       this.renderMain();
-      this.showToast(`Removed ${shift.group} ${shift.type} shift on ${dateLabel}${emp ? ' (was ' + emp.name.split(' ')[0] + ')' : ''}`);
+      this.showToast(`Removed ${_delGroup} ${_delType} shift on ${dateLabel}${emp ? ' (was ' + emp.name.split(' ')[0] + ')' : ''}`);
     } catch (e) {
       this.showToast('Network error — try again', 'warn');
     }
@@ -7857,7 +7940,7 @@ const App = {
 
   assignCoverEmployee(shiftId, empId) {
     const shift = this.S.shifts.find(s => s.id === shiftId);
-    const emp = this.S.employees.find(e => e.id === empId);
+    const emp = this._empLookup(empId);
     if (!shift || !emp) return;
     shift.employeeId = empId;
     shift.status = 'scheduled';
@@ -7869,7 +7952,7 @@ const App = {
   },
 
   async openCoverSMS(empId, date, shiftType) {
-    const emp = this.S.employees.find(e => e.id === empId);
+    const emp = this._empLookup(empId);
     if (!emp?.phone) { this.showToast('No phone number on file', 'warn'); return; }
     const msg = document.getElementById('cover-sms-body')?.value || '';
     if (!msg.trim()) { this.showToast('Enter a message first', 'warn'); return; }
@@ -7898,7 +7981,7 @@ const App = {
 
     document.getElementById('cover-msg-section').innerHTML = `
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-        <button class="btn btn-ghost btn-sm" onclick="App._restoreCoverMessage('${date}','${shiftType}','${group}')" style="padding:4px 8px;font-size:11px;color:var(--g600)">
+        <button class="btn btn-ghost btn-sm" onclick="App._restoreCoverMessage('${sanitize(date)}','${sanitize(shiftType)}','${sanitize(group)}')" style="padding:4px 8px;font-size:11px;color:var(--g600)">
           <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 1L3 6l5 5"/></svg>
           Back
         </button>
@@ -7932,8 +8015,8 @@ const App = {
       </div>
 
       <div style="display:flex;justify-content:flex-end;margin-top:12px;gap:6px">
-        <button class="btn btn-secondary btn-sm" onclick="App._restoreCoverMessage('${date}','${shiftType}','${group}')">Cancel</button>
-        <button class="btn btn-primary btn-sm" id="cover-send-btn" onclick="App.sendCoverageToSelected('${date}','${shiftType}','${group}')">
+        <button class="btn btn-secondary btn-sm" onclick="App._restoreCoverMessage('${sanitize(date)}','${sanitize(shiftType)}','${sanitize(group)}')">Cancel</button>
+        <button class="btn btn-primary btn-sm" id="cover-send-btn" onclick="App.sendCoverageToSelected('${sanitize(date)}','${sanitize(shiftType)}','${sanitize(group)}')">
           <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 6l7 4 7-4"/></svg>
           Send to <span id="cover-selected-count">${eligible.length}</span>
         </button>
@@ -7959,7 +8042,7 @@ const App = {
         <textarea id="cover-sms-body" rows="3" style="width:100%;padding:8px;border:1.5px solid var(--g200);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical">${sanitize(currentMsg)}</textarea>
         <p style="font-size:11px;color:var(--g500);margin-top:6px;display:flex;align-items:start;gap:6px"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="#D97706" stroke-width="1.8" stroke-linecap="round" style="flex-shrink:0;margin-top:1px"><path d="M8 1l7 14H1L8 1zM8 6v4M8 12v.01"/></svg><span>SMS is unencrypted by carriers — never include patient names, dates of service, or other PHI in this message.</span></p>
         <div style="display:flex;justify-content:flex-end;margin-top:8px">
-          <button class="btn btn-primary btn-sm" onclick="App.openStaffPicker('${date}','${shiftType}','${group}')">
+          <button class="btn btn-primary btn-sm" onclick="App.openStaffPicker('${sanitize(date)}','${sanitize(shiftType)}','${sanitize(group)}')">
             <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 6l7 4 7-4"/></svg>
             Message Staff
           </button>
@@ -9873,7 +9956,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           <div style="font-weight:700;font-size:13px;color:var(--g900)">${p.name}</div>
           <div style="font-size:11px;color:var(--g500)">${posted ? '✓ Marked as posted · ' + new Date(posted).toLocaleDateString() : 'Not yet posted'}</div>
         </div>
-        <button class="btn btn-${posted?'secondary':'primary'} btn-sm" onclick="App.postToplatform('${id}','${p.key}','${p.url}')">
+        <button class="btn btn-${posted?'secondary':'primary'} btn-sm" onclick="App.postToplatform('${sanitize(id)}','${sanitize(p.key)}','${sanitize(p.url)}')">
           ${posted ? 'Re-post' : 'Post Now'}
         </button>
       </div>`;
@@ -9888,7 +9971,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="5" y="3" width="9" height="11" rx="1.5"/><path d="M3 11H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v1"/></svg>
           Copy Job Text
         </button>
-        <button class="btn btn-secondary btn-sm" onclick="App._copyText('${feedUrl}')">
+        <button class="btn btn-secondary btn-sm" onclick="App._copyText('${sanitize(feedUrl)}')">
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 2h4v4"/><path d="M14 2L9 7"/><rect x="2" y="7" width="7" height="7" rx="1"/></svg>
           Copy XML Feed URL
         </button>
@@ -9972,7 +10055,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         const internalCat = cat === 'administration' ? 'admin' : cat;
         const isActive = filter === internalCat;
         const n = catCount(internalCat);
-        return `<button onclick="App.setRecruitFilter('${internalCat}')"
+        return `<button onclick="App.setRecruitFilter('${sanitize(internalCat)}')"
           style="padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:1.5px solid ${isActive?'var(--blue-d)':'var(--g200)'};background:${isActive?'var(--blue-d)':'#fff'};color:${isActive?'#fff':'var(--g700)'};display:flex;align-items:center;gap:6px;transition:all .15s">
           ${this._categoryLabel(cat)}
           <span style="background:${isActive?'rgba(255,255,255,.25)':'var(--g100)'};color:${isActive?'#fff':'var(--g500)'};padding:0 7px;border-radius:99px;font-size:11px;font-weight:700">${n}</span>
@@ -10080,7 +10163,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         const row = (f) => `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--g100);font-size:12px">
           <div style="width:90px;font-weight:700;color:var(--g800);flex-shrink:0">${f.name}</div>
           <code style="flex:1;min-width:0;font-size:11px;background:var(--g50);padding:4px 8px;border-radius:4px;border:1px solid var(--g200);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${sanitize(f.url)}</code>
-          <button class="btn btn-ghost btn-sm" onclick="App._copyText('${f.url}')" style="flex-shrink:0">Copy</button>
+          <button class="btn btn-ghost btn-sm" onclick="App._copyText('${sanitize(f.url)}')" style="flex-shrink:0">Copy</button>
           <a href="${f.setupUrl}" target="_blank" rel="noopener" style="font-size:11px;color:var(--blue-d);text-decoration:none;flex-shrink:0;white-space:nowrap" title="${f.note}">Setup ↗</a>
         </div>`;
         return `<div style="background:#fff;border:1px solid var(--blue-m);border-radius:10px;padding:14px 18px;margin-bottom:20px">
@@ -10496,10 +10579,10 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
 
     const actions = connected ? `
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-primary btn-sm" onclick="App.pushAllPendingHires('${provider}')" ${pendingHires?'':'disabled'}>
+        <button class="btn btn-primary btn-sm" onclick="App.pushAllPendingHires('${sanitize(provider)}')" ${pendingHires?'':'disabled'}>
           ${SYNC_ICON} Push ${pendingHires||'pending'} Hire${pendingHires===1?'':'s'}${pendingPill}
         </button>
-        <button class="btn btn-secondary btn-sm" onclick="App.syncPayrollToProvider('${provider}')">
+        <button class="btn btn-secondary btn-sm" onclick="App.syncPayrollToProvider('${sanitize(provider)}')">
           ${SYNC_ICON} Sync Current Pay Period
         </button>
         <button class="btn btn-secondary btn-sm" onclick="App.syncTimeFromProvider('${provider}')">
@@ -11974,7 +12057,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const h = this.S.hrEmployees.find(e => e.id === hrId);
     if (!h) return;
     if (h.employeeId) {
-      const existing = this.S.employees.find(e => e.id === h.employeeId);
+      const existing = this._empLookup(h.employeeId);
       if (existing) { this.showToast(`${h.name} is already on the roster`,'warn'); return; }
     }
     const ok = await this.mmsConfirm({
@@ -13232,7 +13315,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     // Remove from excluded list (in case they were excluded), add to manual
     group.excludedIds = group.excludedIds.filter(id => id !== empId);
     if (!group.memberIds.includes(empId)) group.memberIds.push(empId);
-    const emp = this.S.employees.find(e => e.id === empId);
+    const emp = this._empLookup(empId);
     Audit.log('TEXT_GROUP_ADD', `Added ${sanitize(emp?.name || empId)} to ${sanitize(group.name)}`, this.S.user?.id, 'low');
     this.persistData();
     this._renderTextGroupPanel();
@@ -13248,7 +13331,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     // by autoFromGroups membership.
     group.memberIds   = group.memberIds.filter(id => id !== empId);
     if (!group.excludedIds.includes(empId)) group.excludedIds.push(empId);
-    const emp = this.S.employees.find(e => e.id === empId);
+    const emp = this._empLookup(empId);
     Audit.log('TEXT_GROUP_REMOVE', `Removed ${sanitize(emp?.name || empId)} from ${sanitize(group.name)}`, this.S.user?.id, 'low');
     this.persistData();
     this._renderTextGroupPanel();
@@ -13811,7 +13894,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
 
   addDisciplineNote(empId) {
-    const emp = this.S.employees.find(e => e.id === empId);
+    const emp = this._empLookup(empId);
     if (!emp) return;
     const types = [
       { value:'verbal',     label:'Verbal warning'  },
@@ -13859,7 +13942,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
 
   _saveDisciplineNote(empId) {
-    const emp = this.S.employees.find(e => e.id === empId);
+    const emp = this._empLookup(empId);
     if (!emp) return;
     const type = document.getElementById('discipline-type')?.value || 'note';
     const at   = document.getElementById('discipline-date')?.value || TODAY;
@@ -13881,7 +13964,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
 
   async removeDisciplineNote(empId, idx) {
-    const emp = this.S.employees.find(e => e.id === empId);
+    const emp = this._empLookup(empId);
     if (!emp || !Array.isArray(emp.disciplinary)) return;
     if (idx < 0 || idx >= emp.disciplinary.length) return;
     const _ok = await this.mmsConfirm({
@@ -13920,7 +14003,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
 
   confirmInactivate(empId) {
-    const emp = this.S.employees.find(e => e.id === empId);
+    const emp = this._empLookup(empId);
     if (!emp) return;
     const reason = (document.getElementById(`term-reason-${empId}`)?.value || '').trim();
     if (!reason) {
@@ -13966,7 +14049,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
 
   reactivateEmp(empId) {
-    const emp = this.S.employees.find(e => e.id === empId);
+    const emp = this._empLookup(empId);
     if (!emp) return;
     emp.inactive = false;
     Audit.log('EMP_REACTIVATED', `${sanitize(emp.name)} reactivated`, this.S.user?.id, 'medium');
@@ -13981,7 +14064,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   // post to /api/timeclock/set-pin which bcrypts + collision-checks within
   // the building.
   async setEmpPin(empId) {
-    const emp = this.S.employees.find(e => e.id === empId);
+    const emp = this._empLookup(empId);
     if (!emp) return;
     const pin = await this.mmsPrompt({
       title: 'Kiosk PIN',
@@ -14057,8 +14140,8 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const toId   = document.getElementById('ms-to')?.value;
     const start  = document.getElementById('ms-start')?.value;
     const end    = document.getElementById('ms-end')?.value;
-    const from = this.S.employees.find(e => e.id === fromId);
-    const to   = this.S.employees.find(e => e.id === toId);
+    const from = this._empLookup(fromId);
+    const to   = this._empLookup(toId);
     if (!from || !to || !start || !end) return null;
     if (from.id === to.id) return { error: 'From and To must be different employees' };
     if (from.group !== to.group) return { error: `Same staff group only. ${sanitize(from.name)} is ${sanitize(from.group)}, ${sanitize(to.name)} is ${sanitize(to.group)}.` };
@@ -14117,7 +14200,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   // employee record. The button is gated on emp.email being set since the
   // account is keyed by email.
   openAccessEditor(empId) {
-    const emp = this.S.employees.find(e => e.id === empId);
+    const emp = this._empLookup(empId);
     if (!emp) return;
     if (!emp.email) { this.showToast('Employee needs an email first','warn'); return; }
     const linked = (this.S.accounts || []).find(a => a.email && a.email.toLowerCase() === emp.email.toLowerCase());
@@ -14575,7 +14658,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   // clocks) and PBJ job-code override (rare — needed when the default
   // group→PBJ mapping is wrong, e.g. RN serving as charge nurse).
   editEmpCodes(empId) {
-    const emp = this.S.employees.find(e => e.id === empId);
+    const emp = this._empLookup(empId);
     if (!emp) return;
     const PBJ_LIST = [
       ['',  '— default for ' + (emp.group || '?') + ' —'],
@@ -14625,7 +14708,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
 
   saveEmpCodes(empId) {
-    const emp = this.S.employees.find(e => e.id === empId);
+    const emp = this._empLookup(empId);
     if (!emp) return;
     const badge = document.getElementById('ec-badge')?.value.trim();
     const dob   = document.getElementById('ec-dob')?.value.trim();
@@ -15423,6 +15506,8 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
 
   // ── MAIN AREA ───────────────────────────────────────────────
   renderMain() {
+    this._buildEmpIndex();
+    this._buildShiftIndex();
     const u = this.S.user;
 
     // Guard: if HR mode is active, delegate to HR renderer
@@ -15535,14 +15620,36 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     </div>`;
 
     const ms = this.getMonthShifts().filter(s=>s.buildingId===bId||!s.buildingId);
-    const todayShifts = (this.S.shifts||[]).filter(s=>s.date===TODAY && s.buildingId===bId);
+
+    // ── Stat card scope: current building or all buildings ──────────────
+    const userBuildingIds = u.buildingIds?.length ? u.buildingIds : (u.buildingId ? [u.buildingId] : []);
+    const showAllBuildings = this.S._statAllBuildings && userBuildingIds.length > 1;
+    const statBIds = showAllBuildings ? userBuildingIds : [bId];
+    const statBIdSet = new Set(statBIds);
+
+    const todayShifts = (this.S.shifts||[]).filter(s=>s.date===TODAY && statBIdSet.has(s.buildingId));
     const todayOpen = todayShifts.filter(s=>s.status==='open').length;
     const todayScheduled = todayShifts.filter(s=>s.status==='scheduled');
-    const census = parseFloat(this.S.ppdCensus) || 0;
     const todayHours = todayScheduled.reduce((sum,s)=>sum+this._shiftHours(s),0);
+    // PPD: when showing all buildings, sum beds across each building for census
+    let census;
+    if (showAllBuildings) {
+      census = statBIds.reduce((sum, bid) => {
+        const b = (this.S.buildings||[]).find(x => x.id === bid);
+        return sum + (parseFloat(b?.beds) || 0);
+      }, 0);
+    } else {
+      census = parseFloat(this.S.ppdCensus) || 0;
+    }
     const dailyPPD = census > 0 ? (todayHours/census).toFixed(2) : '—';
     // Punch metrics — wired to HR Missed Punches view; stubbed at 0 until timeclock sync lands.
-    const punchSummary = this._punchSummaryForToday ? this._punchSummaryForToday(bId) : { missed:0, tardy:0, early:0 };
+    let punchSummary = { missed:0, tardy:0, early:0 };
+    for (const bid of statBIds) {
+      const ps = this._punchSummaryForToday ? this._punchSummaryForToday(bid) : { missed:0, tardy:0, early:0 };
+      punchSummary.missed += ps.missed;
+      punchSummary.tardy += ps.tardy;
+      punchSummary.early += ps.early;
+    }
 
     // ── OT Hours Scheduled ─────────────────────────────────────────────────
     // Aggregates overtime hours scheduled (>40 hrs/wk per employee) over a
@@ -15570,13 +15677,22 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       otScopeLabel = 'OT Hours · Month';
       otSubLabel   = `${MONTHS[this.S.viewMonth]} ${this.S.viewYear}`;
     }
-    const otHoursRaw = (typeof this._otHoursOver === 'function')
-      ? this._otHoursOver(bId, otRangeFrom, otRangeTo, g)
-      : 0;
+    let otHoursRaw = 0;
+    for (const bid of statBIds) {
+      otHoursRaw += (typeof this._otHoursOver === 'function')
+        ? this._otHoursOver(bid, otRangeFrom, otRangeTo, showAllBuildings ? null : g)
+        : 0;
+    }
     const otHours = Math.round(otHoursRaw * 10) / 10;            // 1 decimal place
     const otColor = otHours > 0 ? '#D97706' : 'var(--g600)';     // amber when present
 
-    const stats = `<div class="stat-row">
+    const curBuildingName = sanitize((this.S.buildings||[]).find(b=>b.id===bId)?.name || bId);
+    const statToggle = userBuildingIds.length > 1 ? `<div style="display:flex;gap:4px;margin-bottom:8px;align-items:center">
+      <button onclick="App.toggleStatScope()" style="padding:4px 12px;border-radius:20px;border:1px solid var(--g200);font-size:11px;font-weight:600;cursor:pointer;transition:all .15s;${!showAllBuildings?'background:var(--blue-d);color:#fff;border-color:var(--blue-d)':'background:var(--g100);color:var(--g600)'}">${curBuildingName}</button>
+      <button onclick="App.toggleStatScope()" style="padding:4px 12px;border-radius:20px;border:1px solid var(--g200);font-size:11px;font-weight:600;cursor:pointer;transition:all .15s;${showAllBuildings?'background:var(--blue-d);color:#fff;border-color:var(--blue-d)':'background:var(--g100);color:var(--g600)'}">All Buildings</button>
+    </div>` : '';
+
+    const stats = `${statToggle}<div class="stat-row">
       <div class="stat-card clickable" onclick="App.openPPDCalc()" title="Open PPD Calculator">
         <div class="stat-value">${dailyPPD}</div>
         <div class="stat-label">Daily PPD</div>
@@ -15615,7 +15731,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     else calHtml = this.renderShiftView();
 
     document.getElementById('main').innerHTML = `${stats}${groupTabs}
-      <div class="cal-toolbar">${viewTabs}${groupPill}${g?addShiftsBtn:''}${addAdminBtn}${g?removeShiftsBtn:''}${undoBtn}${filterTabs}</div>${calHtml}`;
+      <div class="cal-toolbar">${viewTabs}${groupPill}${g?addShiftsBtn:''}${addAdminBtn}${g?removeShiftsBtn:''}${undoBtn}<button class="btn btn-secondary btn-sm" onclick="App.runCalendarAudit()" title="Run calendar integrity audit" style="display:flex;align-items:center;gap:5px;font-weight:600;color:var(--g600);border-color:var(--g300);font-size:11px"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 8A6 6 0 1 1 2 8a6 6 0 0 1 12 0z"/><path d="M8 5v3M8 11h.01"/></svg>Audit</button>${filterTabs}</div>${calHtml}`;
   },
 
   // Open the Add Employee modal pre-filled for an administrator.
@@ -16216,7 +16332,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     let tradeHtml = '';
     if (pendingTrade) {
       const otherShift = this.S.shifts.find(s => s.id === (pendingTrade.fromShiftId === shift.id ? pendingTrade.toShiftId : pendingTrade.fromShiftId));
-      const otherEmp   = otherShift ? this.S.employees.find(e => e.id === otherShift.employeeId) : null;
+      const otherEmp   = otherShift ? this._empLookup(otherShift.employeeId) : null;
       tradeHtml = `<div style="margin-top:10px;padding:10px 12px;background:#FFF7ED;border:1px solid #FDE68A;border-radius:8px;font-size:12px;color:#92400E">
         <strong>Trade pending admin approval</strong><br>
         Swap with ${sanitize(otherEmp?.name || 'another employee')}'s shift on ${sanitize(otherShift?.date || '?')}.
@@ -16390,12 +16506,24 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         // badge. Today and future dates render normally.
         const isPastDay = ds < TODAY;
 
+        // Single-pass grouping by shift type (avoids repeated .filter() per type)
+        const dayGrouped = {};
+        for (const s of dayShifts) {
+          if (ag.includes(s.group)) {
+            if (!dayGrouped[s.type]) dayGrouped[s.type] = { scheduled: [], open: [], all: [] };
+            dayGrouped[s.type].all.push(s);
+            if (s.status === 'scheduled') dayGrouped[s.type].scheduled.push(s);
+            else if (s.status === 'open') dayGrouped[s.type].open.push(s);
+          }
+        }
+
         shiftDefs.forEach(sh => {
           const req       = slotReqs[sh.type] || 0;
-          const allSlots  = dayShifts.filter(s => ag.includes(s.group) && s.type === sh.type);
-          const scheduled = allSlots.filter(s => s.status === 'scheduled');
+          const grp       = dayGrouped[sh.type];
+          const allSlots  = grp ? grp.all : [];
+          const scheduled = grp ? grp.scheduled : [];
           const numFilled = scheduled.length;
-          const rawEmpty  = hasReqs ? Math.max(0, req - numFilled) : allSlots.filter(s=>s.status==='open').length;
+          const rawEmpty  = hasReqs ? Math.max(0, req - numFilled) : (grp ? grp.open.length : 0);
           const numEmpty  = isPastDay ? 0 : rawEmpty;
           const total     = hasReqs ? req : (numFilled + numEmpty);
           if (numEmpty > 0) cellHasOpenDisplayed = true;
@@ -16424,7 +16552,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           // Shift Options modal where the admin can edit hours, remove the
           // employee, or delete the slot entirely (✕ in the modal header).
           scheduled.forEach(slot => {
-            const emp = this.S.employees.find(e => e.id === slot.employeeId);
+            const emp = this._empLookup(slot.employeeId);
             if (emp) {
               const firstName = emp.name.split(' ')[0];
               pills += `<span class="shift-emp" title="${sanitize(emp.name)} — click to manage" style="max-width:54px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer" onclick="event.stopPropagation();App.openRemoveShiftModal('${ds}','${slot.id}','${sh.type}','${emp.id}')">${sanitize(firstName)}</span>`;
@@ -16455,7 +16583,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           ${open.length?`<div class="cal-chip open"><svg viewBox="0 0 10 10" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="5" r="4"/><line x1="5" y1="3.5" x2="5" y2="5.5"/><circle cx="5" cy="7" r=".5" fill="currentColor"/></svg> ${open.length}</div>`:''}
         </div>`;
       }
-      cells += `<div class="cal-cell ${isToday?'today':''} ${isSel?'selected':''}" onclick="App.selectDay('${ds}')">
+      cells += `<div class="cal-cell ${isToday?'today':''} ${isSel?'selected':''}" data-date="${ds}" onclick="App.selectDay('${ds}')">
         <div class="cal-date">${d}</div>${content}</div>`;
     }
     const total = Math.ceil((firstDay+daysInMonth)/7)*7;
@@ -16554,7 +16682,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         // assigned nursing employee's license has lapsed; yellow-bordered if
         // it's expiring within 30 days; standard green if all good or N/A.
         scheduled.forEach(slot => {
-          const emp = this.S.employees.find(e => e.id === slot.employeeId);
+          const emp = this._empLookup(slot.employeeId);
           if (emp) {
             const licStatus = this._licenseStatus(emp);
             const cellStyle = licStatus === 'expired'
@@ -16701,7 +16829,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
 
         // Name pills for filled slots
         let pills = scheduled.map(slot => {
-          const emp = this.S.employees.find(e => e.id === slot.employeeId);
+          const emp = this._empLookup(slot.employeeId);
           if (!emp) return '';
           const firstName = emp.name.split(' ')[0];
           return `<span class="shift-emp" title="${sanitize(emp.name)}" style="display:block;width:100%;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px">${sanitize(firstName)} ${emp.name.split(' ').slice(1).map(w=>w[0]).join('.')}.</span>`;
@@ -16771,8 +16899,22 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
 
   // ── RIGHT PANEL ─────────────────────────────────────────────
   selectDay(dateStr) {
+    const prev = this.S.selectedDate;
     this.S.selectedDate = dateStr;
-    if (this.S.calView === 'month' || this.S.calView === 'shift') this.openPanel(dateStr);
+    // Targeted DOM update: swap 'selected' class between cells instead of full rebuild
+    if (this.S.calView === 'month' || this.S.calView === 'shift') {
+      const newCell = document.querySelector(`.cal-cell[data-date="${dateStr}"]`);
+      if (newCell) {
+        if (prev) {
+          const oldCell = document.querySelector(`.cal-cell[data-date="${prev}"]`);
+          if (oldCell) oldCell.classList.remove('selected');
+        }
+        newCell.classList.add('selected');
+        this.openPanel(dateStr);
+        return;
+      }
+    }
+    // Fallback: full rebuild if cell not found in DOM
     this.renderMain();
   },
 
@@ -16831,7 +16973,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           } else if (slot.status === 'agency-filled') {
             slotsHtml += `<div class="emp-slot" style="background:#FFFBEB;border-color:#FDE68A;color:#92400E"><span style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Agency:</span> ${sanitize(slot.agencyWorker || '')} <span style="font-size:11px;color:var(--g600);margin-left:4px">${sanitize(slot.agencyName || '')}</span></div>`;
           } else {
-            const emp = this.S.employees.find(e=>e.id===slot.employeeId);
+            const emp = this._empLookup(slot.employeeId);
             if (emp) slotsHtml += `<div class="emp-slot">
               <div class="emp-slot-avatar" style="background:${G_COLORS[grp]}">${sanitize(emp.initials)}</div>
               <div style="flex:1"><div class="emp-slot-name">${sanitize(emp.name)}</div><div style="font-size:11px;color:var(--g600)">${sanitize(grp)}</div></div>
@@ -16862,7 +17004,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.S.patPreset = null;
     const patStartEl = document.getElementById('pat-start');
     if (patStartEl) patStartEl.value = TODAY;
-    const emp = this.S.employees.find(e=>e.id===empId);
+    const emp = this._empLookup(empId);
     const sel = document.getElementById('pat-emp');
     const _bId = this.S.activeBuildingId || this.S.user.buildingId || 'b1';
     const allEmps = this.S.employees.filter(e=>e.buildingId===_bId);
@@ -17000,7 +17142,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (!empId || !shiftType || !startStr || !pat.length) {
       this.showToast('Please fill in all fields and set a pattern','warn'); return;
     }
-    const emp = this.S.employees.find(e=>e.id===empId);
+    const emp = this._empLookup(empId);
     if (!emp) return;
 
     const shiftDef = SHIFT_TYPES(emp.group).find(s=>s.type===shiftType);
@@ -17216,6 +17358,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
   setCalView(v) { this.S.calView=v; if(v==='day'&&!this.S.selectedDate) this.S.selectedDate=TODAY; this.renderMain(); },
   setFilter(f) { this.S.filter=f; this.renderMain(); },
+  toggleStatScope() { this.S._statAllBuildings = !this.S._statAllBuildings; this.renderMain(); },
   navMonth(dir) {
     this.S.viewMonth+=dir;
     if(this.S.viewMonth>11){this.S.viewMonth=0;this.S.viewYear++;}
@@ -17236,12 +17379,29 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   //   • kind: 'open'   — adds N open slots per rotation day (no employee yet)
   // Idempotent — re-runs skip days that already have matching shifts.
   _extendRotationsThrough(year, month) {
+    this.S.shifts = this.S.shifts || [];
     const pats = this.S.schedulePatterns || [];
     if (!pats.length) return 0;
     // Target = end of displayed month + 30 days
     const target = new Date(year, month + 1, 0); // last day of displayed month
     target.setDate(target.getDate() + 30);
     const targetStr = target.toISOString().slice(0,10);
+
+    // Build indexed lookups for O(1) checks instead of O(n) .find()/.filter()
+    const _assignedSet = new Set();   // composite keys for employee-assigned shifts
+    const _openSlots = new Map();     // baseKey -> array of open shifts without employee
+    const _countMap = new Map();       // baseKey -> total count of shifts
+    for (const s of this.S.shifts) {
+      const baseKey = `${s.date}|${s.group}|${s.type}|${s.buildingId}`;
+      _countMap.set(baseKey, (_countMap.get(baseKey) || 0) + 1);
+      if (s.employeeId) _assignedSet.add(`${baseKey}|${s.employeeId}`);
+      if (s.status === 'open' && !s.employeeId) {
+        let arr = _openSlots.get(baseKey);
+        if (!arr) { arr = []; _openSlots.set(baseKey, arr); }
+        arr.push(s);
+      }
+    }
+
     let extended = 0;
     for (const pat of pats) {
       // Skip deactivated or ended patterns
@@ -17256,7 +17416,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       // For assign-type rotations: skip if employee left or was deactivated.
       let emp = null;
       if (kind === 'assign') {
-        emp = (this.S.employees || []).find(e => e.id === pat.empId);
+        emp = this._empLookup(pat.empId);
         if (!emp || emp.inactive) continue;
       }
 
@@ -17264,6 +17424,10 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       const pickerStart = new Date(pat.pickerStart + 'T12:00:00');
       const start = new Date(lastEnd + 'T12:00:00');
       start.setDate(start.getDate() + 1);
+      // Never generate shifts more than 1 day in the past (safety clamp)
+      const todayDate = new Date(TODAY + 'T12:00:00');
+      todayDate.setDate(todayDate.getDate() - 1);
+      if (start < todayDate) start.setTime(todayDate.getTime());
       const cycleLen = pat.cycleLen || 14;
       const slots = pat.slots || 1;
 
@@ -17273,19 +17437,16 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         const cyclePos = ((diff % cycleLen) + cycleLen) % cycleLen;
         if (!pat.selectedDays.includes(cyclePos)) continue;
         // Skip dates the admin has explicitly removed for this rotation.
-        // Without this guard, deleting a single shift via the ✕ icon would
-        // be undone the next time the calendar advances — the extender would
-        // see a "missing" rotation day and regenerate it.
         if (Array.isArray(pat.removedDates) && pat.removedDates.includes(ds)) continue;
+
+        const baseKey = `${ds}|${pat.group}|${pat.shiftType}|${pat.buildingId}`;
 
         if (kind === 'assign') {
           // Assign-rotation: skip if this employee already on this date/shift
-          if (this.S.shifts.find(s =>
-              s.date===ds && s.group===pat.group && s.type===pat.shiftType &&
-              s.buildingId===pat.buildingId && s.employeeId===emp.id)) continue;
-          const openSlot = this.S.shifts.find(s =>
-              s.date===ds && s.group===pat.group && s.type===pat.shiftType &&
-              s.buildingId===pat.buildingId && s.status==='open' && !s.employeeId);
+          const empKey = `${baseKey}|${emp.id}`;
+          if (_assignedSet.has(empKey)) continue;
+          const openArr = _openSlots.get(baseKey);
+          const openSlot = openArr && openArr.length ? openArr.shift() : null;
           if (openSlot) {
             openSlot.status = 'scheduled'; openSlot.employeeId = emp.id;
           } else {
@@ -17295,16 +17456,13 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
               start: shiftDef.start || '', end: shiftDef.end || '',
               status: 'scheduled', buildingId: pat.buildingId, employeeId: emp.id,
             });
+            _countMap.set(baseKey, (_countMap.get(baseKey) || 0) + 1);
           }
+          _assignedSet.add(empKey);
           extended++;
         } else {
-          // Open-rotation: add `slots` open shifts for this day, but only if
-          // we haven't already added them on a prior extension run. Count
-          // existing open+scheduled rows for this group/type/building/date
-          // and top up only what's missing.
-          const existing = this.S.shifts.filter(s =>
-              s.date===ds && s.group===pat.group && s.type===pat.shiftType &&
-              s.buildingId===pat.buildingId).length;
+          // Open-rotation: top up to `slots` total shifts for this key
+          const existing = _countMap.get(baseKey) || 0;
           const toAdd = Math.max(0, slots - existing);
           for (let i = 0; i < toAdd; i++) {
             this.S.shifts.push({
@@ -17315,6 +17473,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
             });
             extended++;
           }
+          _countMap.set(baseKey, (existing) + toAdd);
         }
       }
       pat.lastExtendedTo = targetStr;
@@ -17325,6 +17484,237 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     }
     return extended;
   },
+
+  // ── Calendar Integrity Audit ─────────────────────────────────────────
+  // Detects data issues that cause symptoms like deleted shifts reappearing,
+  // duplicate shifts, orphaned references, and pattern/shift mismatches.
+  // Accessible via: App.runCalendarAudit() from the console or admin menu.
+  runCalendarAudit() {
+    const shifts = this.S.shifts || [];
+    const pats   = this.S.schedulePatterns || [];
+    const emps   = this.S.employees || [];
+    const empMap = new Map(emps.map(e => [e.id, e]));
+    const issues = [];
+
+    // 1. Duplicate shifts: same date + group + type + building + employee
+    const dupeKey = s => `${s.date}|${s.group}|${s.type}|${s.buildingId}|${s.employeeId||''}`;
+    const seen = new Map();
+    for (const s of shifts) {
+      const k = dupeKey(s);
+      if (seen.has(k)) {
+        const first = seen.get(k);
+        issues.push({ severity: 'error', category: 'Duplicate Shift',
+          detail: `${s.group} ${s.type} on ${s.date}${s.employeeId ? ' (' + (empMap.get(s.employeeId)?.name || s.employeeId) + ')' : ' (open)'} — IDs: ${first.id}, ${s.id}`,
+          shiftIds: [first.id, s.id] });
+      } else { seen.set(k, s); }
+    }
+
+    // 2. Orphaned employee references: shift points to non-existent or inactive employee
+    for (const s of shifts) {
+      if (!s.employeeId) continue;
+      const emp = empMap.get(s.employeeId);
+      if (!emp) {
+        issues.push({ severity: 'warn', category: 'Orphaned Employee Ref',
+          detail: `Shift ${s.id} on ${s.date} (${s.group} ${s.type}) references missing employee ${s.employeeId}`,
+          shiftIds: [s.id] });
+      } else if (emp.inactive && s.date >= TODAY) {
+        issues.push({ severity: 'warn', category: 'Inactive Employee Scheduled',
+          detail: `${emp.name} is inactive but scheduled for ${s.group} ${s.type} on ${s.date}`,
+          shiftIds: [s.id] });
+      }
+    }
+
+    // 3. Pattern without removedDates: active patterns that have produced shifts
+    //    which were later deleted but have no removedDates tracking at all.
+    //    This is the exact bug that caused shifts to regenerate.
+    for (const pat of pats) {
+      if (pat.active === false) continue;
+      if (!pat.selectedDays || !pat.pickerStart) continue;
+      if (!Array.isArray(pat.removedDates)) {
+        // Check if there are "gaps" — cycle days within the extended range
+        // where no shift exists. A gap without a removedDates entry means
+        // the shift was deleted but will regenerate.
+        const kind = pat.kind || (pat.empId ? 'assign' : 'open');
+        const lastEnd = pat.lastExtendedTo || pat.appliedAt || TODAY;
+        const pickerStart = new Date(pat.pickerStart + 'T12:00:00');
+        const cycleLen = pat.cycleLen || 14;
+        const from = new Date((pat.appliedAt || pat.pickerStart) + 'T12:00:00');
+        const to   = new Date(lastEnd + 'T12:00:00');
+        let gaps = 0;
+        for (let cur = new Date(from); cur <= to; cur.setDate(cur.getDate() + 1)) {
+          const ds = cur.toISOString().slice(0, 10);
+          if (ds < TODAY) continue; // only check future/present
+          const diff = Math.round((cur - pickerStart) / 86400000);
+          const cyclePos = ((diff % cycleLen) + cycleLen) % cycleLen;
+          if (!pat.selectedDays.includes(cyclePos)) continue;
+          // Check if a shift exists for this cycle day
+          const exists = shifts.some(s =>
+            s.date === ds && s.group === pat.group && s.type === pat.shiftType &&
+            s.buildingId === pat.buildingId &&
+            (kind === 'open' ? !s.employeeId : s.employeeId === pat.empId));
+          if (!exists) gaps++;
+        }
+        if (gaps > 0) {
+          issues.push({ severity: 'error', category: 'Missing removedDates',
+            detail: `Pattern "${pat.group} ${pat.shiftType}" (${kind}, ID: ${pat.id||'?'}) has ${gaps} cycle-day gap(s) with no removedDates array — these shifts will regenerate on next navigation`,
+            patternId: pat.id });
+        }
+      }
+    }
+
+    // 4. Regeneration risk: shifts that were deleted from the array but the
+    //    pattern still covers that date and removedDates doesn't include it.
+    for (const pat of pats) {
+      if (pat.active === false) continue;
+      if (!pat.selectedDays || !pat.pickerStart) continue;
+      if (!Array.isArray(pat.removedDates) || pat.removedDates.length === 0) continue;
+      const kind = pat.kind || (pat.empId ? 'assign' : 'open');
+      // Verify removedDates are actually being respected
+      for (const rd of pat.removedDates) {
+        const zombie = shifts.find(s =>
+          s.date === rd && s.group === pat.group && s.type === pat.shiftType &&
+          s.buildingId === pat.buildingId &&
+          (kind === 'open' ? !s.employeeId : s.employeeId === pat.empId));
+        if (zombie) {
+          issues.push({ severity: 'error', category: 'Zombie Shift',
+            detail: `Shift ${zombie.id} exists on ${rd} (${pat.group} ${pat.shiftType}) despite date being in removedDates — will persist as undeletable`,
+            shiftIds: [zombie.id], patternId: pat.id });
+        }
+      }
+    }
+
+    // 5. Shifts with missing required fields
+    for (const s of shifts) {
+      const missing = [];
+      if (!s.date) missing.push('date');
+      if (!s.group) missing.push('group');
+      if (!s.type) missing.push('type');
+      if (!s.buildingId) missing.push('buildingId');
+      if (missing.length) {
+        issues.push({ severity: 'warn', category: 'Incomplete Shift',
+          detail: `Shift ${s.id} missing: ${missing.join(', ')}`,
+          shiftIds: [s.id] });
+      }
+    }
+
+    // 6. Ended/deactivated patterns that still have future shifts being generated
+    for (const pat of pats) {
+      if (pat.active !== false && !(pat.endDate && pat.endDate <= TODAY)) continue;
+      if (!pat.group || !pat.shiftType || !pat.buildingId) continue;
+      const kind = pat.kind || (pat.empId ? 'assign' : 'open');
+      const futureShifts = shifts.filter(s =>
+        s.date >= TODAY && s.group === pat.group && s.type === pat.shiftType &&
+        s.buildingId === pat.buildingId &&
+        (kind === 'open' ? (!s.employeeId && s.status === 'open') : s.employeeId === pat.empId));
+      if (futureShifts.length > 0) {
+        issues.push({ severity: 'info', category: 'Deactivated Pattern Has Future Shifts',
+          detail: `Pattern "${pat.group} ${pat.shiftType}" (${kind}) is inactive but ${futureShifts.length} future shift(s) remain — may be intentional`,
+          patternId: pat.id });
+      }
+    }
+
+    // Store for autofix
+    this._lastCalAudit = issues;
+
+    // Render results
+    this._renderCalAuditResults(issues);
+    this.openModal('modal-cal-audit');
+    Audit.log('CAL_AUDIT_RUN', `Found ${issues.length} issue(s)`, this.S.user?.id, 'low');
+    return issues;
+  },
+
+  _renderCalAuditResults(issues) {
+    const el = document.getElementById('cal-audit-body');
+    if (!el) return;
+    const fixBtn = document.getElementById('cal-audit-fix-btn');
+
+    if (!issues.length) {
+      el.innerHTML = `<div style="text-align:center;padding:40px 20px">
+        <div style="font-size:32px;margin-bottom:12px">&#10003;</div>
+        <div style="font-size:16px;font-weight:600;color:var(--g800)">All Clear</div>
+        <div style="color:var(--g500);margin-top:6px">No calendar integrity issues found.</div>
+        <div style="color:var(--g400);margin-top:12px;font-size:11px">${(this.S.shifts||[]).length} shifts and ${(this.S.schedulePatterns||[]).filter(p=>p.active!==false).length} active patterns checked</div>
+      </div>`;
+      if (fixBtn) fixBtn.style.display = 'none';
+      return;
+    }
+
+    const sevIcon = { error: '&#9679;', warn: '&#9650;', info: '&#9679;' };
+    const sevColor = { error: '#DC2626', warn: '#D97706', info: 'var(--blue-d)' };
+    const counts = { error: 0, warn: 0, info: 0 };
+    issues.forEach(i => counts[i.severity]++);
+
+    const fixable = issues.filter(i => i.severity === 'error' && (i.category === 'Duplicate Shift' || i.category === 'Zombie Shift' || i.category === 'Missing removedDates'));
+    if (fixBtn) fixBtn.style.display = fixable.length ? '' : 'none';
+
+    let html = `<div style="display:flex;gap:16px;margin-bottom:16px;padding:12px;background:var(--g50);border-radius:8px;border:1px solid var(--g200)">
+      <div style="text-align:center;flex:1"><div style="font-size:20px;font-weight:700;color:#DC2626">${counts.error}</div><div style="font-size:11px;color:var(--g500)">Errors</div></div>
+      <div style="text-align:center;flex:1"><div style="font-size:20px;font-weight:700;color:#D97706">${counts.warn}</div><div style="font-size:11px;color:var(--g500)">Warnings</div></div>
+      <div style="text-align:center;flex:1"><div style="font-size:20px;font-weight:700;color:var(--blue-d)">${counts.info}</div><div style="font-size:11px;color:var(--g500)">Info</div></div>
+      <div style="text-align:center;flex:1"><div style="font-size:20px;font-weight:700;color:var(--g800)">${(this.S.shifts||[]).length}</div><div style="font-size:11px;color:var(--g500)">Total Shifts</div></div>
+    </div>`;
+
+    // Group by category
+    const grouped = new Map();
+    for (const i of issues) {
+      if (!grouped.has(i.category)) grouped.set(i.category, []);
+      grouped.get(i.category).push(i);
+    }
+
+    for (const [cat, items] of grouped) {
+      const sev = items[0].severity;
+      html += `<div style="margin-bottom:12px">
+        <div style="font-weight:600;font-size:12px;color:${sevColor[sev]};margin-bottom:6px;display:flex;align-items:center;gap:6px">
+          <span style="font-size:8px">${sevIcon[sev]}</span> ${sanitize(cat)} (${items.length})
+        </div>`;
+      for (const item of items.slice(0, 50)) {
+        html += `<div style="padding:6px 10px;margin-bottom:2px;background:var(--g50);border-radius:4px;font-size:11px;color:var(--g700);border-left:3px solid ${sevColor[sev]}">${sanitize(item.detail)}</div>`;
+      }
+      if (items.length > 50) html += `<div style="padding:4px 10px;font-size:11px;color:var(--g400)">...and ${items.length - 50} more</div>`;
+      html += `</div>`;
+    }
+
+    el.innerHTML = html;
+  },
+
+  calAuditAutofix() {
+    const issues = this._lastCalAudit || [];
+    if (!issues.length) return;
+    let fixed = 0;
+
+    // Fix duplicate shifts: remove the second occurrence
+    const dupes = issues.filter(i => i.category === 'Duplicate Shift' && i.shiftIds?.length >= 2);
+    for (const d of dupes) {
+      const removeId = d.shiftIds[1];
+      const idx = (this.S.shifts||[]).findIndex(s => s.id === removeId);
+      if (idx >= 0) { this.S.shifts.splice(idx, 1); fixed++; }
+    }
+
+    // Fix zombie shifts: remove shifts that exist despite being in removedDates
+    const zombies = issues.filter(i => i.category === 'Zombie Shift' && i.shiftIds?.length);
+    for (const z of zombies) {
+      const removeId = z.shiftIds[0];
+      const idx = (this.S.shifts||[]).findIndex(s => s.id === removeId);
+      if (idx >= 0) { this.S.shifts.splice(idx, 1); fixed++; }
+    }
+
+    // Fix missing removedDates: initialize empty array on patterns that lack it
+    const missingRD = issues.filter(i => i.category === 'Missing removedDates' && i.patternId);
+    for (const m of missingRD) {
+      const pat = (this.S.schedulePatterns||[]).find(p => p.id === m.patternId);
+      if (pat && !Array.isArray(pat.removedDates)) { pat.removedDates = []; fixed++; }
+    }
+
+    if (fixed > 0) {
+      this.persistData();
+      Audit.log('CAL_AUDIT_AUTOFIX', `Auto-fixed ${fixed} issue(s)`, this.S.user?.id, 'medium');
+    }
+    this.showToast(`Fixed ${fixed} issue${fixed === 1 ? '' : 's'} — re-running audit...`);
+    this.renderMain();
+    // Re-run to show updated results
+    setTimeout(() => this.runCalendarAudit(), 300);
+  },
+
   goToToday() {
     const t = new Date(TODAY+'T12:00:00');
     this.S.viewMonth = t.getMonth();
@@ -17354,7 +17744,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   assignShiftByDate(date, group, shiftType, empId) {
     if (!empId) return;
     if (this.S.user?.role !== 'admin' && this.S.user?.role !== 'superadmin') { this.showToast('Unauthorized','warn'); return; }
-    const emp = this.S.employees.find(e => e.id === empId);
+    const emp = this._empLookup(empId);
     if (!emp) return;
     this._pushUndo(`Assigned ${emp.name} to ${shiftType} ${date}`);
     const bId = this.S.user?.buildingId || 'b1';
@@ -17379,7 +17769,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     }
     this.persistData();
     this.showToast(`${sanitize(emp.name)} assigned to ${shiftType} on ${date}`);
-    this.renderMain();
+    this._scheduleRender();
   },
 
   assignShift(shiftId, empId) {
@@ -17387,26 +17777,46 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if(this.S.user?.role !== 'admin' && this.S.user?.role !== 'superadmin') { this.showToast('Unauthorized','warn'); return; }
     const shift=this.S.shifts.find(s=>s.id===shiftId);
     if(!shift) return;
-    const emp=this.S.employees.find(e=>e.id===empId);
+    const emp=this._empLookup(empId);
     this._pushUndo(`Assigned ${emp?.name || 'employee'} to ${shift.type} ${shift.date}`);
     shift.employeeId=empId; shift.status='scheduled';
     Audit.log('SHIFT_ASSIGNED', `Shift ${sanitize(shiftId)} assigned to ${sanitize(emp?.name||empId)}`, this.S.user?.id, 'low');
     this.persistData();
     this.showToast(`Assigned to ${sanitize(emp?.name||'')}`);
     if(this.S.panelOpen&&this.S.selectedDate) this.renderPanel(this.S.selectedDate);
-    this.renderMain();
+    this._scheduleRender();
   },
 
   removeEmpFromShift(shiftId) {
     if(this.S.user?.role !== 'admin' && this.S.user?.role !== 'superadmin') { this.showToast('Unauthorized','warn'); return; }
     const shift=this.S.shifts.find(s=>s.id===shiftId);
     if(!shift) return;
+    // Capture before clearing so we can mark rotation patterns
+    const _empId = shift.employeeId;
+    const _date = shift.date;
+    const _group = shift.group;
+    const _type = shift.type;
+    const _bldg = shift.buildingId;
     Audit.log('SHIFT_UNASSIGNED', `Shift ${sanitize(shiftId)} opened`, this.S.user?.id, 'low');
     shift.employeeId=null; shift.status='open';
+    // Mark removedDates on matching assign-type rotation patterns so
+    // _extendRotationsThrough() won't re-fill this slot with the same employee.
+    if (_empId && Array.isArray(this.S.schedulePatterns)) {
+      for (const pat of this.S.schedulePatterns) {
+        if (pat.active === false) continue;
+        const kind = pat.kind || (pat.empId ? 'assign' : 'open');
+        if (kind !== 'assign') continue;
+        if (pat.empId !== _empId) continue;
+        if (pat.group !== _group || pat.shiftType !== _type) continue;
+        if (pat.buildingId !== _bldg) continue;
+        if (!pat.removedDates) pat.removedDates = [];
+        if (!pat.removedDates.includes(_date)) pat.removedDates.push(_date);
+      }
+    }
     this.persistData();
     this.showToast('Shift opened');
     if(this.S.panelOpen&&this.S.selectedDate) this.renderPanel(this.S.selectedDate);
-    this.renderMain();
+    this._scheduleRender();
   },
 
   // ── Agency time entry on an open shift ─────────────────────────────────────
@@ -18034,6 +18444,77 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
 
   // ── HELPERS ──────────────────────────────────────────────────
+  _buildEmpIndex() {
+    this._empById = new Map();
+    for (const e of this.S.employees) this._empById.set(e.id, e);
+  },
+  _buildShiftIndex() {
+    this._shiftsByDate = new Map();
+    for (const s of this.S.shifts) {
+      let arr = this._shiftsByDate.get(s.date);
+      if (!arr) { arr = []; this._shiftsByDate.set(s.date, arr); }
+      arr.push(s);
+    }
+  },
+  _empLookup(id) {
+    return this._empById ? this._empById.get(id) : this.S.employees.find(e => e.id === id);
+  },
+  _scheduleRender() {
+    if (this._renderRAF) return;
+    this._renderRAF = requestAnimationFrame(() => {
+      this._renderRAF = null;
+      this.renderMain();
+    });
+  },
+  // Lightweight backup of pattern removedDates to sessionStorage.
+  // Contains only date strings and pattern-matching keys — no PHI.
+  // Re-applied on load if the last persistData didn't complete.
+  _backupRemovedDates() {
+    try {
+      const pats = this.S.schedulePatterns || [];
+      const entries = [];
+      for (const p of pats) {
+        if (p.removedDates && p.removedDates.length) {
+          entries.push({
+            key: `${p.group}|${p.shiftType}|${p.buildingId}|${p.kind||''}|${p.empId||''}`,
+            dates: p.removedDates,
+            active: p.active,
+          });
+        }
+      }
+      if (entries.length) {
+        sessionStorage.setItem('mms_removedDates_backup', JSON.stringify({ t: Date.now(), entries }));
+      }
+    } catch { /* sessionStorage unavailable — skip silently */ }
+  },
+  _restoreRemovedDatesBackup() {
+    try {
+      const raw = sessionStorage.getItem('mms_removedDates_backup');
+      if (!raw) return;
+      const backup = JSON.parse(raw);
+      // Only restore if backup is less than 5 minutes old
+      if (Date.now() - backup.t > 300000) {
+        sessionStorage.removeItem('mms_removedDates_backup');
+        return;
+      }
+      const pats = this.S.schedulePatterns || [];
+      for (const entry of backup.entries) {
+        for (const p of pats) {
+          const key = `${p.group}|${p.shiftType}|${p.buildingId}|${p.kind||''}|${p.empId||''}`;
+          if (key !== entry.key) continue;
+          if (!p.removedDates) p.removedDates = [];
+          for (const d of entry.dates) {
+            if (!p.removedDates.includes(d)) p.removedDates.push(d);
+          }
+          if (entry.active === false) p.active = false;
+        }
+      }
+      // Clear backup after successful restore — it'll be re-created on
+      // the next mutation if the persist fails again.
+      sessionStorage.removeItem('mms_removedDates_backup');
+    } catch { /* sessionStorage unavailable — skip */ }
+  },
+
   getMonthShifts() {
     const {viewYear,viewMonth}=this.S;
     const prefix=`${viewYear}-${String(viewMonth+1).padStart(2,'0')}`;
@@ -18045,7 +18526,8 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const u=this.S.user;
     const bId=u.buildingId||'b1';
     const ag=g?getActualGroups(g):null;
-    return this.S.shifts.filter(s=>s.date===dateStr&&(!ag||ag.includes(s.group))&&(s.buildingId===bId||!s.buildingId));
+    const candidates = this._shiftsByDate ? (this._shiftsByDate.get(dateStr) || []) : this.S.shifts.filter(s=>s.date===dateStr);
+    return candidates.filter(s=>(!ag||ag.includes(s.group))&&(s.buildingId===bId||!s.buildingId));
   },
 
   // ── DATA PERSISTENCE ─────────────────────────────────────
@@ -18072,7 +18554,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     for (const k of entry.keys) this.S[k] = entry.snap[k];
     Audit.log('UNDO', `Reverted: ${entry.label}`, this.S.user?.id, 'medium');
     this.persistData();
-    this.renderMain();
+    this._scheduleRender();
     this.showToast(`Undone: ${entry.label}`);
   },
 
@@ -18080,6 +18562,10 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   // every mutation. Code updates never touch localStorage, so
   // facility data (employees, buildings, shifts) is never lost.
   persistData({ confirmWipe = false } = {}) {
+    // Backup removedDates to sessionStorage in case the save fails and
+    // the user reloads — the backup will be restored after the next
+    // applyServerData so rotations still skip deleted dates.
+    this._backupRemovedDates();
     const payload = {
       v:1, savedAt:Date.now(),
       companies:this.S.companies,
@@ -18110,34 +18596,81 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       // Server tripwire blocks any save that shrinks a collection by >50%.
       // Legitimate bulk wipes (Reset to Demo) opt in explicitly.
       if (confirmWipe) headers['X-Confirm-Wipe'] = 'yes';
-      fetch('/api/data', { method: 'POST', headers, body: JSON.stringify(payload) })
-        .then(async r => {
-          if (r.status === 412) {
-            // Concurrent edit conflict
-            this.showToast('Another user updated this data. Reloading…', 'warn');
-            const dResp = await fetch('/api/data');
-            if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
-            return;
-          }
-          if (r.status === 409) {
-            // Tripwire blocked a suspicious shrink. Don't touch S — let the user
-            // retry with a fresh dataset rather than silently losing work.
-            const body = await r.json().catch(() => ({}));
-            this.showToast(
-              `Save blocked: ${body.error || 'data would have shrunk significantly'}. Reload to recover.`,
-              'warn'
-            );
-            return;
-          }
-          if (!r.ok) {
-            this.showToast('Save failed — please retry your last change', 'warn');
-            return;
-          }
-          // Update our version so the next save uses the freshest ETag
-          const etag = r.headers.get('ETag');
-          if (etag) this.S._dataVersion = etag.replace(/"/g, '');
-        })
-        .catch(() => this.showToast('Network error — your last change was not saved', 'warn'));
+      const _doSave = (attempt = 1) => {
+        // Rebuild payload from current state for retries (state may have
+        // been updated by applyServerData between attempts).
+        const retryPayload = attempt > 1 ? {
+          v:1, savedAt:Date.now(),
+          companies:this.S.companies,
+          buildings:this.S.buildings, accounts:this.S.accounts,
+          employees:this.S.employees, shifts:this.S.shifts,
+          schedulePatterns:this.S.schedulePatterns,
+          hrEmployees:this.S.hrEmployees, hrOnboarding:this.S.hrOnboarding,
+          hrAccounts:this.S.hrAccounts,
+          hrTimeClock:this.S.hrTimeClock,
+          jobPostings:this.S.jobPostings,
+          demos:this.S.demos,
+          billingData:this.S.billingData,
+          shiftTemplates:this.S.shiftTemplates,
+          staffingSlots:this.S.staffingSlots,
+          buildingShiftTypes:this.S.buildingShiftTypes,
+          ppdDailyCensus:this.S.ppdDailyCensus,
+          staffEvents:this.S.staffEvents,
+          shiftTrades:this.S.shiftTrades,
+          directMessages:this.S.directMessages,
+          prospects:this.S.prospects,
+        } : payload;
+        const retryHeaders = { 'Content-Type': 'application/json' };
+        if (this.S._dataVersion) retryHeaders['If-Match'] = '"' + this.S._dataVersion + '"';
+        if (confirmWipe) retryHeaders['X-Confirm-Wipe'] = 'yes';
+        fetch('/api/data', { method: 'POST', headers: retryHeaders, body: JSON.stringify(retryPayload) })
+          .then(async r => {
+            if (r.status === 412) {
+              // Concurrent edit conflict — refetch, merge removedDates, retry
+              const dResp = await fetch('/api/data');
+              if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
+              if (attempt < 3) {
+                _doSave(attempt + 1);
+              } else {
+                this.showToast('Save conflict — please reload to sync your changes', 'warn');
+              }
+              return;
+            }
+            if (r.status === 409) {
+              const body = await r.json().catch(() => ({}));
+              this.showToast(
+                `Save blocked: ${body.error || 'data would have shrunk significantly'}. Reload to recover.`,
+                'warn'
+              );
+              return;
+            }
+            if (!r.ok) {
+              // Retry once on generic failure
+              if (attempt < 2) {
+                setTimeout(() => _doSave(attempt + 1), 1000);
+              } else {
+                this.showToast('Save failed — please retry your last change', 'warn');
+              }
+              return;
+            }
+            // Success — update version and clear any pending retry state
+            const etag = r.headers.get('ETag');
+            if (etag) this.S._dataVersion = etag.replace(/"/g, '');
+            this._persistFailed = false;
+            try { sessionStorage.removeItem('mms_removedDates_backup'); } catch {}
+          })
+          .catch(() => {
+            // Network error — retry once after brief delay
+            if (attempt < 2) {
+              this._persistFailed = true;
+              setTimeout(() => _doSave(attempt + 1), 2000);
+            } else {
+              this._persistFailed = true;
+              this.showToast('Network error — your change will retry on next action', 'warn');
+            }
+          });
+      };
+      _doSave(1);
       return;
     }
     // Non-server-mode (offline demo only) — do NOT persist PHI even here.
@@ -18301,7 +18834,39 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (Array.isArray(data.accounts))         this.S.accounts         = data.accounts;
     if (Array.isArray(data.employees))        this.S.employees        = data.employees;
     if (Array.isArray(data.shifts))           this.S.shifts           = data.shifts;
-    if (Array.isArray(data.schedulePatterns)) this.S.schedulePatterns = data.schedulePatterns;
+    if (Array.isArray(data.schedulePatterns)) {
+      // Preserve client-side removedDates that haven't been persisted yet.
+      // When applyServerData runs after a DELETE + refetch, the server's copy
+      // won't have the removedDates the client just added. Merge them so
+      // _extendRotationsThrough() won't regenerate deleted shifts.
+      const oldPats = this.S.schedulePatterns || [];
+      if (oldPats.length) {
+        const oldMap = new Map();
+        for (const op of oldPats) {
+          if (op.removedDates && op.removedDates.length) {
+            // Key by group+shiftType+buildingId+kind for matching
+            const key = `${op.group}|${op.shiftType}|${op.buildingId}|${op.kind||''}|${op.empId||''}`;
+            const existing = oldMap.get(key);
+            if (!existing || op.removedDates.length > existing.removedDates.length) {
+              oldMap.set(key, op);
+            }
+          }
+        }
+        if (oldMap.size > 0) {
+          for (const np of data.schedulePatterns) {
+            const key = `${np.group}|${np.shiftType}|${np.buildingId}|${np.kind||''}|${np.empId||''}`;
+            const oldPat = oldMap.get(key);
+            if (oldPat && oldPat.removedDates) {
+              if (!np.removedDates) np.removedDates = [];
+              for (const d of oldPat.removedDates) {
+                if (!np.removedDates.includes(d)) np.removedDates.push(d);
+              }
+            }
+          }
+        }
+      }
+      this.S.schedulePatterns = data.schedulePatterns;
+    }
     if (Array.isArray(data.jobPostings))      this.S.jobPostings      = data.jobPostings;
     if (Array.isArray(data.demos))            this.S.demos            = data.demos;
     if (data.billingData && typeof data.billingData === 'object') this.S.billingData = data.billingData;
@@ -18876,6 +19441,23 @@ App.init().catch(e => {
 </div>
 
 <!-- AUDIT LOG MODAL -->
+<div class="modal-overlay" id="modal-cal-audit" role="dialog" aria-modal="true" aria-label="Calendar Integrity Audit">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title" style="display:flex;align-items:center;gap:8px">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M12 8v4M12 16h.01"/></svg>
+        Calendar Integrity Audit
+      </span>
+      <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-cal-audit')">&#10005;</button>
+    </div>
+    <div id="cal-audit-body" style="max-height:65vh;overflow-y:auto;padding:16px;font-size:13px"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="App.calAuditAutofix()" id="cal-audit-fix-btn" style="display:none;color:var(--blue-d);border-color:var(--blue-m)">Auto-Fix Issues</button>
+      <button class="btn btn-primary" onclick="App.closeModal('modal-cal-audit')">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-audit" role="dialog" aria-modal="true" aria-label="HIPAA Audit Log">
   <div class="modal modal-lg">
     <div class="modal-header">
