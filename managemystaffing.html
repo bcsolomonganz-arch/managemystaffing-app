@@ -6874,122 +6874,112 @@ const App = {
     // Either way the user sees the visible OPEN tags collapse, which is
     // what they actually came here to do.
 
+    // ── OPTIMISTIC LOCAL UPDATE ─────────────────────────────────────────
+    // Apply every visible change to local state FIRST so the modal closes
+    // and the calendar redraws instantly. The previous version did
+    // delete-batch → full /api/data refetch → applyServerData →
+    // persistData synchronously before closing the modal — easily 2-3
+    // seconds on a 1.6k-employee building because /api/data ships the
+    // entire dataset and applyServerData re-builds every index from
+    // scratch. We already know exactly what changed (idsToDrop +
+    // requirement + patterns) so the refetch is redundant.
+    //
+    // Safety: _pushUndo above captures the pre-change snapshot, so a
+    // wrong delete is one click away from being reversed. The 25s
+    // background poll also re-syncs if the server diverged.
+    this.S.shifts = this.S.shifts.filter(s => !idsToDrop.has(s.id));
+
+    // Lower the building's staffing requirement (cap at 0). OPEN tags
+    // on the calendar are computed as max(0, requirement - filled), so
+    // this is what makes them visibly disappear.
+    const slots = this.S.staffingSlots = this.S.staffingSlots || {};
+    slots[bId] = slots[bId] || {};
+    slots[bId][g] = slots[bId][g] || {};
+    const reqBefore = slots[bId][g][shiftType] || 0;
+    const reqAfter  = Math.max(0, reqBefore - slotsPerDay);
+    const reqChanged = reqAfter !== reqBefore;
+    if (reqChanged) slots[bId][g][shiftType] = reqAfter;
+
+    // Deactivate matching open schedule patterns so the next month
+    // navigation doesn't regenerate the slots via
+    // _extendRotationsThrough(). End-dating at TODAY is more robust
+    // than deleting — keeps the audit trail intact.
+    let patsDeactivated = 0;
+    if (Array.isArray(this.S.schedulePatterns)) {
+      for (const p of this.S.schedulePatterns) {
+        if (p.group !== g || p.shiftType !== shiftType || p.buildingId !== bId) continue;
+        if (p.active === false) continue;
+        const kind = p.kind || (p.empId ? 'assign' : 'open');
+        if (kind !== 'open') continue;
+        p.active = false;
+        p.endDate = TODAY;
+        patsDeactivated++;
+      }
+    }
+
+    const removedCount = idsToDrop.size;
+
+    // Build success toast. Lead with the visible result the admin cares
+    // about: the staffing requirement change (which makes the OPEN tags
+    // disappear) and the actual rows removed.
+    let msg;
+    if (reqChanged) {
+      msg = `Required ${shiftType} slots: ${reqBefore} → ${reqAfter}/day`;
+      if (removedCount > 0) {
+        msg += ` · ${removedCount} ${includeAssigned?'':'open '}shift row${removedCount===1?'':'s'} also removed`;
+      }
+    } else {
+      msg = `${removedCount} ${includeAssigned?'':'open '}shift${removedCount===1?'':'s'} removed (${slotsPerDay}/day)`;
+      if (reqBefore === 0 && removedCount === 0) {
+        if (!includeAssigned && assignedSkipped > 0) {
+          msg = `All ${shiftType} ${g} slots on the selected day(s) are already assigned (${assignedSkipped} shift${assignedSkipped===1?'':'s'}). Re-open Remove Shifts and tick "Also remove assigned" if you want to unschedule them too.`;
+        } else {
+          msg = `Nothing to remove on the selected day(s) — no open ${shiftType} ${g} shifts on those dates and no staffing requirement set. The OPEN tags you see may be on different days; pick those days in the picker.`;
+        }
+      }
+    }
+    if (includeAssigned && assignedDeleted > 0) {
+      msg += ` · ${assignedDeleted} assigned shift${assignedDeleted===1?'':'s'} unscheduled`;
+    }
+    if (!includeAssigned && assignedSkipped > 0 && !(reqBefore === 0 && removedCount === 0)) {
+      msg += ` · ${assignedSkipped} already-assigned kept (tick "Also remove assigned" to include)`;
+    }
+
+    // Close modal + redraw + toast NOW. The user sees the change instantly.
+    this.closeModal('modal-add-shifts');
+    this.renderMain();
+    this.showToast(msg);
+    Audit.log('SHIFTS_REMOVED',
+      `Removed ${removedCount} ${includeAssigned?'':'open '}${shiftType} ${g} shifts (${slotsPerDay} per day${includeAssigned?', incl assigned':''})${reqChanged?'; requirement '+reqBefore+'→'+reqAfter:''}`,
+      this.S.user?.id, includeAssigned ? 'high' : 'medium');
+
+    // ── BACKGROUND SYNC ─────────────────────────────────────────────────
+    // Fire the actual server mutations in the background. If anything
+    // goes sideways the user gets a follow-up toast — they can refresh
+    // or hit Undo to recover. Polling will resync within 25s either way.
     (async () => {
       try {
-        let d = { removed: 0, skippedAuthz: 0 };
-        // Step 1: delete real open rows if any matched. Skip the network
-        // call entirely when nothing matched — that's the common case
-        // when all OPEN tags on the calendar are virtual placeholders
-        // driven by the staffing requirement (rows don't exist in the DB).
         if (idsToDrop.size > 0) {
           const r = await fetch('/api/shifts/delete-batch', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ids: Array.from(idsToDrop) }),
           });
-          d = await r.json().catch(() => ({}));
           if (!r.ok) {
-            this.showToast(d.error || `Bulk remove failed (HTTP ${r.status})`, 'warn');
+            const err = await r.json().catch(() => ({}));
+            this.showToast(`Server delete failed (${err.error || 'HTTP '+r.status}) — hit Undo to restore`, 'warn');
             return;
           }
-          // Re-pull canonical state so the calendar matches the server.
-          try {
-            const dResp = await fetch('/api/data');
-            if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
-            else this.S.shifts = this.S.shifts.filter(s => !idsToDrop.has(s.id));
-          } catch {
-            this.S.shifts = this.S.shifts.filter(s => !idsToDrop.has(s.id));
-          }
         }
-        const removedCount = d.removed != null ? d.removed : 0;
-
-        // ── Also lower the building's staffing requirement ────────────────
-        // The OPEN tags on the calendar are computed as
-        // max(0, requirement - filled), not from the count of stored open
-        // rows. So deleting open rows alone produces zero visible change
-        // when a requirement is set. To match the admin's mental model
-        // ("remove N slots/day means the calendar should show N fewer
-        // OPENs"), also decrement the requirement by slotsPerDay.
-        // Caps at 0 so a requirement never goes negative. Skipped only if
-        // there's no requirement to begin with.
-        const slots = this.S.staffingSlots = this.S.staffingSlots || {};
-        slots[bId] = slots[bId] || {};
-        slots[bId][g] = slots[bId][g] || {};
-        const reqBefore = slots[bId][g][shiftType] || 0;
-        const reqAfter  = Math.max(0, reqBefore - slotsPerDay);
-        const reqChanged = reqAfter !== reqBefore;
-        if (reqChanged) {
-          slots[bId][g][shiftType] = reqAfter;
-        }
-
-        // ── Deactivate matching open schedule patterns ──────────────────────
-        // The server's delete-batch already tagged removedDates for the
-        // specific dates we just deleted, but the pattern itself stays
-        // active. On the next month navigation _extendRotationsThrough()
-        // would create NEW shifts for dates beyond the removed set. End-
-        // date the pattern at TODAY so no new shifts are generated.
-        let patsDeactivated = 0;
-        if (Array.isArray(this.S.schedulePatterns)) {
-          for (const p of this.S.schedulePatterns) {
-            if (p.group !== g || p.shiftType !== shiftType || p.buildingId !== bId) continue;
-            if (p.active === false) continue;
-            const kind = p.kind || (p.empId ? 'assign' : 'open');
-            if (kind !== 'open') continue;
-            p.active = false;
-            p.endDate = TODAY;
-            patsDeactivated++;
-          }
-        }
-
-        // Persist requirement + pattern changes together
+        // Persist the requirement + pattern changes (these are client-
+        // only mutations that the delete-batch endpoint doesn't know
+        // about). persistData POSTs the full client state via /api/data
+        // which is heavy but happens entirely in the background now.
         if (reqChanged || patsDeactivated > 0) {
           this.persistData();
         }
-
-        Audit.log('SHIFTS_REMOVED',
-          `Removed ${removedCount} ${includeAssigned?'':'open '}${shiftType} ${g} shifts (${slotsPerDay} per day${includeAssigned?', incl assigned':''})${reqChanged?'; requirement '+reqBefore+'→'+reqAfter:''}`,
-          this.S.user?.id, includeAssigned ? 'high' : 'medium');
-        this.closeModal('modal-add-shifts');
-        this.renderMain();
-
-        // Build success toast. Lead with the visible result the admin
-        // cares about: the staffing requirement change (which makes the
-        // OPEN tags disappear) and the actual rows removed.
-        let msg;
-        if (reqChanged) {
-          msg = `Required ${shiftType} slots: ${reqBefore} → ${reqAfter}/day`;
-          if (removedCount > 0) {
-            msg += ` · ${removedCount} ${includeAssigned?'':'open '}shift row${removedCount===1?'':'s'} also removed`;
-          }
-        } else {
-          msg = `${removedCount} ${includeAssigned?'':'open '}shift${removedCount===1?'':'s'} removed (${slotsPerDay}/day)`;
-          if (reqBefore === 0 && removedCount === 0) {
-            // Lead with the actionable answer when the only matches were
-            // assigned shifts. The previous wording ("no open shifts and no
-            // staffing requirement set") read as "the calendar is full" even
-            // when 92 staff were assigned on the selected days — the user
-            // saw OPEN tags on the calendar (driven by real open rows on
-            // OTHER dates, or by a now-zeroed staffing requirement) and got
-            // confused. Surface "they're already assigned" first.
-            if (!includeAssigned && assignedSkipped > 0) {
-              msg = `All ${shiftType} ${g} slots on the selected day(s) are already assigned (${assignedSkipped} shift${assignedSkipped===1?'':'s'}). Re-open Remove Shifts and tick "Also remove assigned" if you want to unschedule them too.`;
-            } else {
-              msg = `Nothing to remove on the selected day(s) — no open ${shiftType} ${g} shifts on those dates and no staffing requirement set. The OPEN tags you see may be on different days; pick those days in the picker.`;
-            }
-          }
-        }
-        if (includeAssigned && assignedDeleted > 0) {
-          msg += ` · ${assignedDeleted} assigned shift${assignedDeleted===1?'':'s'} unscheduled`;
-        }
-        if (!includeAssigned && assignedSkipped > 0 && !(reqBefore === 0 && removedCount === 0)) {
-          // Only append the bare "X assigned kept" when we DIDN'T already
-          // lead with the assigned-shifts message above. Avoids the
-          // duplicate "(tick checkbox)" the previous version produced.
-          msg += ` · ${assignedSkipped} already-assigned kept (tick "Also remove assigned" to include)`;
-        }
-        this.showToast(msg);
       } catch (e) {
-        this.showToast('Network error — try again', 'warn');
+        this.showToast('Background sync failed — hit Undo if anything looks wrong', 'warn');
       }
     })();
   },
