@@ -1823,11 +1823,83 @@ app.get('/app/manifest.webmanifest', (_req, res) => {
       { src: '/app/icon-maskable-192.png',   sizes: '192x192', type: 'image/png',     purpose: 'maskable' },
       { src: '/app/icon-maskable-512.png',   sizes: '512x512', type: 'image/png',     purpose: 'maskable' },
     ],
+    screenshots: [
+      { src: '/app/screenshot-wide.png', sizes: '1280x720', type: 'image/png', form_factor: 'wide', label: 'Schedule management dashboard' },
+      { src: '/app/screenshot-schedule.png', sizes: '390x844', type: 'image/png', form_factor: 'narrow', label: 'Employee shift schedule' },
+      { src: '/app/screenshot-messages.png', sizes: '390x844', type: 'image/png', form_factor: 'narrow', label: 'Team messaging' },
+    ],
     shortcuts: [
       { name: 'My Schedule',  short_name: 'Schedule', url: '/app#schedule', icons: [{ src: '/app/icon-192.png', sizes: '192x192' }] },
       { name: 'Messages',     short_name: 'Messages', url: '/app#messages', icons: [{ src: '/app/icon-192.png', sizes: '192x192' }] },
     ],
+    ...(process.env.TWA_PACKAGE ? {
+      prefer_related_applications: true,
+      related_applications: [
+        { platform: 'play', id: process.env.TWA_PACKAGE,
+          url: `https://play.google.com/store/apps/details?id=${process.env.TWA_PACKAGE}` },
+      ],
+    } : {}),
   }));
+});
+
+// ── Digital Asset Links (Android TWA verification) ──────────────────
+app.get('/.well-known/assetlinks.json', (_req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  const sha = process.env.TWA_SHA256 || '';
+  const pkg = process.env.TWA_PACKAGE || 'com.managemystaffing.app';
+  const entries = [
+    { relation: ['delegate_permission/common.handle_all_urls'],
+      target: { namespace: 'web', site: APP_URL } },
+  ];
+  if (sha) {
+    entries.push({
+      relation: ['delegate_permission/common.handle_all_urls'],
+      target: { namespace: 'android_app', package_name: pkg,
+        sha256_cert_fingerprints: [sha] },
+    });
+  }
+  res.send(JSON.stringify(entries));
+});
+
+// ── Apple Universal Links (AASA) ────────────────────────────────────
+app.get('/.well-known/apple-app-site-association', (_req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  const teamId = process.env.APPLE_TEAM_ID || 'XXXXXXXXXX';
+  const bundleId = process.env.APPLE_BUNDLE_ID || 'com.managemystaffing.app';
+  res.send(JSON.stringify({
+    applinks: { apps: [], details: [{ appID: `${teamId}.${bundleId}`, paths: ['/app/*'] }] },
+    webcredentials: { apps: [`${teamId}.${bundleId}`] },
+  }));
+});
+
+// ── Placeholder screenshots for manifest (PWA store listing) ────────
+// Generates branded placeholder PNGs using inline SVG rendered to PNG.
+// Replace with real captures once the store build pipeline is set up.
+function screenshotSvg(w, h, title, subtitle) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">
+    <rect width="${w}" height="${h}" fill="#F0F7F3"/>
+    <rect width="${w}" height="${Math.round(h * 0.12)}" fill="#1B5E3B"/>
+    <text x="${w/2}" y="${Math.round(h * 0.075)}" text-anchor="middle" font-family="sans-serif" font-size="${Math.round(h * 0.03)}" font-weight="bold" fill="white">ManageMyStaffing</text>
+    <text x="${w/2}" y="${h/2}" text-anchor="middle" font-family="sans-serif" font-size="${Math.round(h * 0.045)}" font-weight="bold" fill="#1B5E3B">${title}</text>
+    <text x="${w/2}" y="${h/2 + Math.round(h * 0.06)}" text-anchor="middle" font-family="sans-serif" font-size="${Math.round(h * 0.025)}" fill="#475569">${subtitle}</text>
+  </svg>`;
+}
+app.get('/app/screenshot-wide.png', (_req, res) => {
+  res.setHeader('Content-Type', 'image/svg+xml');
+  res.setHeader('Cache-Control', 'public, max-age=604800');
+  res.send(screenshotSvg(1280, 720, 'Schedule Dashboard', 'Manage shifts, teams, and facilities at a glance'));
+});
+app.get('/app/screenshot-schedule.png', (_req, res) => {
+  res.setHeader('Content-Type', 'image/svg+xml');
+  res.setHeader('Cache-Control', 'public, max-age=604800');
+  res.send(screenshotSvg(390, 844, 'Shift Schedule', 'View and manage employee shifts'));
+});
+app.get('/app/screenshot-messages.png', (_req, res) => {
+  res.setHeader('Content-Type', 'image/svg+xml');
+  res.setHeader('Cache-Control', 'public, max-age=604800');
+  res.send(screenshotSvg(390, 844, 'Team Messages', 'Direct messaging between staff and managers'));
 });
 
 // Inline SVG app icon — exact same medical-house artwork as the main site's
@@ -1997,7 +2069,7 @@ app.get('/app/apple-touch-icon.png', (_req, res) => {
 // instantly. Network-first for /api/* (so live data wins when online),
 // cache-first for the static shell. Shipped from the same /app scope so
 // browsers register it for the right path.
-const APP_CACHE_VERSION = 'mms-app-v5';
+const APP_CACHE_VERSION = 'mms-app-v6';
 app.get('/app/sw.js', (_req, res) => {
   res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
   // SW must NOT be cached or you can never roll out a new one.
@@ -2005,7 +2077,9 @@ app.get('/app/sw.js', (_req, res) => {
   res.setHeader('Service-Worker-Allowed', '/app');
   res.send(`'use strict';
 const CACHE = '${APP_CACHE_VERSION}';
-const SHELL = ['/app', '/app/manifest.webmanifest', '/app/icon.svg', '/app/icon-192.png', '/app/icon-512.png'];
+const SHELL = ['/app', '/app/manifest.webmanifest', '/app/icon.svg',
+  '/app/icon-192.png', '/app/icon-512.png',
+  '/app/icon-maskable-192.png', '/app/icon-maskable-512.png'];
 
 self.addEventListener('install', e => {
   self.skipWaiting();
@@ -2015,7 +2089,7 @@ self.addEventListener('install', e => {
 self.addEventListener('activate', e => {
   e.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)));
+    await Promise.all(keys.filter(k => k !== CACHE && k !== CACHE + '-data').map(k => caches.delete(k)));
     await self.clients.claim();
   })());
 });
@@ -2025,8 +2099,28 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
 
-  // Live data: network first, no cache fallback (don't show stale shifts/messages)
-  if (url.pathname.startsWith('/api/')) return;
+  // API data: network-first with cache fallback for GET /api/data
+  if (url.pathname.startsWith('/api/')) {
+    if (url.pathname === '/api/data' && req.method === 'GET') {
+      e.respondWith((async () => {
+        try {
+          const r = await fetch(req);
+          if (r.ok) {
+            const cache = await caches.open(CACHE + '-data');
+            cache.put(req, r.clone()).catch(()=>{});
+          }
+          return r;
+        } catch (err) {
+          const cache = await caches.open(CACHE + '-data');
+          const cached = await cache.match(req);
+          return cached || new Response('{"offline":true}', {
+            status: 503, headers: {'Content-Type':'application/json'}
+          });
+        }
+      })());
+    }
+    return;
+  }
 
   // App shell: cache first, network fallback
   if (url.pathname === '/app' || url.pathname.startsWith('/app/')) {
