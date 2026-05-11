@@ -12957,10 +12957,10 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const year = parseInt(dateISO.slice(0,4), 10);
     const emps = (this.S.employees || []).filter(e => e.buildingId === buildingId && !e.inactive);
     for (const e of emps) {
-      if (e.dob && e.dob.length >= 10 && e.dob.slice(5) === md) {
+      if (e.dob && e.dob.length >= 10 && e.dob.slice(5, 10) === md) {
         out.push({ kind:'birthday', label:`${e.name}'s birthday`, empId:e.id });
       }
-      if (e.hireDate && e.hireDate.length >= 10 && e.hireDate.slice(5) === md) {
+      if (e.hireDate && e.hireDate.length >= 10 && e.hireDate.slice(5, 10) === md) {
         const startYear = parseInt(e.hireDate.slice(0,4), 10);
         const yrs = year - startYear;
         if (yrs >= 1) out.push({ kind:'anniversary', label:`${e.name} — ${yrs}-yr anniversary`, empId:e.id });
