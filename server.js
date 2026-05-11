@@ -1804,16 +1804,28 @@ app.get('/app/manifest.webmanifest', (_req, res) => {
   res.send(JSON.stringify({
     name: 'ManageMyStaffing',
     short_name: 'MMS',
-    description: 'Shift schedule and messaging for ManageMyStaffing',
+    description: 'Shift scheduling, team messaging, and workforce management for healthcare staffing agencies.',
     start_url: '/app',
+    id: '/app',
     scope: '/app',
     display: 'standalone',
     orientation: 'portrait',
+    lang: 'en-US',
+    dir: 'ltr',
     background_color: '#1B5E3B',
     theme_color: '#1B5E3B',
+    categories: ['business', 'productivity', 'medical'],
     icons: [
-      { src: '/app/icon.svg',          sizes: 'any',     type: 'image/svg+xml', purpose: 'any' },
-      { src: '/app/icon-maskable.svg', sizes: 'any',     type: 'image/svg+xml', purpose: 'maskable' },
+      { src: '/app/icon.svg',                sizes: 'any',     type: 'image/svg+xml', purpose: 'any' },
+      { src: '/app/icon-maskable.svg',       sizes: 'any',     type: 'image/svg+xml', purpose: 'maskable' },
+      { src: '/app/icon-192.png',            sizes: '192x192', type: 'image/png',     purpose: 'any' },
+      { src: '/app/icon-512.png',            sizes: '512x512', type: 'image/png',     purpose: 'any' },
+      { src: '/app/icon-maskable-192.png',   sizes: '192x192', type: 'image/png',     purpose: 'maskable' },
+      { src: '/app/icon-maskable-512.png',   sizes: '512x512', type: 'image/png',     purpose: 'maskable' },
+    ],
+    shortcuts: [
+      { name: 'My Schedule',  short_name: 'Schedule', url: '/app#schedule', icons: [{ src: '/app/icon-192.png', sizes: '192x192' }] },
+      { name: 'Messages',     short_name: 'Messages', url: '/app#messages', icons: [{ src: '/app/icon-192.png', sizes: '192x192' }] },
     ],
   }));
 });
@@ -1864,20 +1876,128 @@ app.get('/app/icon-maskable.svg', (_req, res) => {
 </svg>`);
 });
 
-// Apple touch icon — iOS still prefers a square PNG-shaped art; SVG works
-// in modern Safari. We serve the same icon under the iOS-specific path so
-// "Add to Home Screen" picks it up.
+// ── PNG icon generator (zero dependencies — uses built-in zlib) ────────────
+// App stores and older browsers require raster PNG icons. We render the same
+// logo artwork into a pixel buffer at the requested size and encode a valid
+// PNG using Node's built-in zlib.deflateSync. Results are cached in memory
+// since the icon never changes at runtime.
+const _pngCache = new Map();
+function _generatePngIcon(size, maskable) {
+  const key = `${size}-${maskable ? 'm' : 's'}`;
+  if (_pngCache.has(key)) return _pngCache.get(key);
+
+  const w = size, h = size;
+  const rowSize = 1 + w * 4; // filter byte + RGBA per pixel
+  const raw = Buffer.alloc(rowSize * h);
+
+  // Fill background #1B5E3B
+  for (let y = 0; y < h; y++) {
+    const ro = y * rowSize; raw[ro] = 0;
+    for (let x = 0; x < w; x++) {
+      const o = ro + 1 + x * 4;
+      raw[o] = 0x1B; raw[o+1] = 0x5E; raw[o+2] = 0x3B; raw[o+3] = 255;
+    }
+  }
+
+  function fillRect(sx, sy, sw, sh, r, g, b) {
+    const x1 = Math.max(0, Math.round(sx)), y1 = Math.max(0, Math.round(sy));
+    const x2 = Math.min(w, Math.round(sx + sw)), y2 = Math.min(h, Math.round(sy + sh));
+    for (let y = y1; y < y2; y++) {
+      const ro = y * rowSize + 1;
+      for (let x = x1; x < x2; x++) {
+        const o = ro + x * 4;
+        raw[o] = r; raw[o+1] = g; raw[o+2] = b; raw[o+3] = 255;
+      }
+    }
+  }
+
+  // Logo placement: maskable insets more to survive adaptive-icon crops
+  const scale = maskable ? (size / 512 * 3.5) : (size / 512 * 4.4);
+  const ox    = maskable ? (size / 512 * 81)  : (size / 512 * 36);
+  const oy    = maskable ? (size / 512 * 99)  : (size / 512 * 53.5);
+
+  const Lr = 0x6B, Lg = 0x9E, Lb = 0x7A; // #6B9E7A (green elements)
+  // Chimney
+  fillRect(ox+70*scale, oy+2*scale, 14*scale, 26*scale, Lr, Lg, Lb);
+  // House body
+  fillRect(ox+3*scale, oy+50*scale, 94*scale, 42*scale, Lr, Lg, Lb);
+  // Roof triangle (rasterised scan-line by scan-line)
+  for (let sy = 5; sy <= 56; sy++) {
+    const p = (sy - 5) / 47, hw = p * 50;
+    fillRect(ox+(50-hw)*scale, oy+sy*scale, hw*2*scale, scale, Lr, Lg, Lb);
+  }
+  // White elements
+  const W = 255;
+  fillRect(ox+38*scale, oy+20*scale,  9*scale,  9*scale, W,W,W);
+  fillRect(ox+52*scale, oy+20*scale,  9*scale,  9*scale, W,W,W);
+  fillRect(ox+38*scale, oy+32*scale,  9*scale,  9*scale, W,W,W);
+  fillRect(ox+52*scale, oy+32*scale,  9*scale,  9*scale, W,W,W);
+  fillRect(ox+63*scale, oy+57*scale, 10*scale,  9*scale, W,W,W);
+  fillRect(ox+76*scale, oy+57*scale, 10*scale,  9*scale, W,W,W);
+  fillRect(ox+63*scale, oy+69*scale, 10*scale,  9*scale, W,W,W);
+  fillRect(ox+76*scale, oy+69*scale, 10*scale,  9*scale, W,W,W);
+  fillRect(ox+ 7*scale, oy+71*scale, 26*scale,  8*scale, W,W,W); // cross H
+  fillRect(ox+16*scale, oy+62*scale,  8*scale, 26*scale, W,W,W); // cross V
+  fillRect(ox+41*scale, oy+70*scale, 18*scale, 22*scale, W,W,W); // door
+
+  // Compress with built-in zlib
+  const compressed = require('zlib').deflateSync(raw, { level: 6 });
+
+  // Assemble PNG: signature + IHDR + IDAT + IEND
+  function chunk(type, data) {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const tb = Buffer.from(type, 'ascii');
+    const body = Buffer.concat([tb, data]);
+    let c = 0xFFFFFFFF;
+    for (let i = 0; i < body.length; i++) {
+      c ^= body[i]; for (let j = 0; j < 8; j++) c = (c >>> 1) ^ (c & 1 ? 0xEDB88320 : 0);
+    }
+    const crc = Buffer.alloc(4); crc.writeUInt32BE((c ^ 0xFFFFFFFF) >>> 0);
+    return Buffer.concat([len, body, crc]);
+  }
+  const sig = Buffer.from([137,80,78,71,13,10,26,10]);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4);
+  ihdr[8]=8; ihdr[9]=6; // 8-bit RGBA
+  const png = Buffer.concat([sig, chunk('IHDR', ihdr), chunk('IDAT', compressed), chunk('IEND', Buffer.alloc(0))]);
+  _pngCache.set(key, png);
+  return png;
+}
+
+// PNG icon endpoints — required by app stores and older browsers
+app.get('/app/icon-192.png', (_req, res) => {
+  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Cache-Control', 'public, max-age=604800');
+  res.send(_generatePngIcon(192, false));
+});
+app.get('/app/icon-512.png', (_req, res) => {
+  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Cache-Control', 'public, max-age=604800');
+  res.send(_generatePngIcon(512, false));
+});
+app.get('/app/icon-maskable-192.png', (_req, res) => {
+  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Cache-Control', 'public, max-age=604800');
+  res.send(_generatePngIcon(192, true));
+});
+app.get('/app/icon-maskable-512.png', (_req, res) => {
+  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Cache-Control', 'public, max-age=604800');
+  res.send(_generatePngIcon(512, true));
+});
+
+// Apple touch icon — serves actual 180×180 PNG (iOS requires real PNG, not SVG)
 app.get('/app/apple-touch-icon.png', (_req, res) => {
-  // 304 redirects to the SVG keep iOS happy on iOS 16+; older devices
-  // fall back to the brand-color splash.
-  res.redirect(302, '/app/icon.svg');
+  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Cache-Control', 'public, max-age=604800');
+  res.send(_generatePngIcon(180, false));
 });
 
 // Service worker — caches the app shell so /app loads offline and reloads
 // instantly. Network-first for /api/* (so live data wins when online),
 // cache-first for the static shell. Shipped from the same /app scope so
 // browsers register it for the right path.
-const APP_CACHE_VERSION = 'mms-app-v4';
+const APP_CACHE_VERSION = 'mms-app-v5';
 app.get('/app/sw.js', (_req, res) => {
   res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
   // SW must NOT be cached or you can never roll out a new one.
@@ -1885,7 +2005,7 @@ app.get('/app/sw.js', (_req, res) => {
   res.setHeader('Service-Worker-Allowed', '/app');
   res.send(`'use strict';
 const CACHE = '${APP_CACHE_VERSION}';
-const SHELL = ['/app', '/app/manifest.webmanifest', '/app/icon.svg'];
+const SHELL = ['/app', '/app/manifest.webmanifest', '/app/icon.svg', '/app/icon-192.png', '/app/icon-512.png'];
 
 self.addEventListener('install', e => {
   self.skipWaiting();

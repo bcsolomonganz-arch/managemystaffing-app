@@ -44,6 +44,10 @@ async function close() {
 // Safe to call on every startup; relies on Postgres's IF NOT EXISTS clauses.
 async function ensureSchema() {
   if (!_pool) return;
+  // Open schedule patterns (kind='open') have no employee — allow NULL emp_id.
+  // building_id nullable as a safety valve; the save code always tries to set it.
+  await _pool.query(`ALTER TABLE schedule_patterns ALTER COLUMN emp_id DROP NOT NULL`).catch(() => {});
+  await _pool.query(`ALTER TABLE schedule_patterns ALTER COLUMN building_id DROP NOT NULL`).catch(() => {});
   await _pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS scheduler_only BOOLEAN NOT NULL DEFAULT false`);
   await _pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS device_trust_epoch BIGINT NOT NULL DEFAULT 0`);
   // Nursing license tracking. The expiry date drives a visible countdown
@@ -480,9 +484,16 @@ function rowShift(r) {
   };
 }
 function rowPattern(r) {
+  // The `pattern` JSONB column stores ALL metadata fields that don't have
+  // their own dedicated columns (selectedDays, pickerStart, removedDates,
+  // kind, cycleLen, slots, lastExtendedTo, appliedAt, etc.).  Spread it
+  // back into the top-level object so the SPA sees the same shape it saved.
+  const meta = (r.pattern && typeof r.pattern === 'object') ? r.pattern : {};
   return {
-    id: r.id, empId: r.emp_id, shiftType: r.shift_type, group: r.group,
-    pattern: r.pattern, startDate: r.start_date, endDate: r.end_date,
+    ...meta,
+    id: r.id, buildingId: r.building_id, empId: r.emp_id,
+    shiftType: r.shift_type, group: r.group,
+    startDate: r.start_date, endDate: r.end_date,
     active: r.active,
   };
 }
@@ -628,19 +639,34 @@ async function saveScopedData(data) {
            s.claimRequest ? JSON.stringify(s.claimRequest) : null,
            JSON.stringify(md), s._version || 1]);
       }
+      // DELETE orphaned shifts (scoped save — only remove shifts that
+      // belong to buildings in this save scope and are no longer present)
+      const scopedKeepIds = data.shifts.map(s => s.id);
+      if (scopedKeepIds.length > 0) {
+        // Only delete shifts whose building_id is in the incoming set
+        const scopedBIds = [...new Set(data.shifts.map(s => s.buildingId).filter(Boolean))];
+        if (scopedBIds.length > 0) {
+          await c.query(
+            'DELETE FROM shifts WHERE building_id = ANY($1::text[]) AND id != ALL($2::text[])',
+            [scopedBIds, scopedKeepIds]
+          );
+        }
+      }
     }
     if (Array.isArray(data.schedulePatterns)) {
       for (const p of data.schedulePatterns) {
-        // Look up building from emp
-        const empRow = (await c.query('SELECT building_id FROM employees WHERE id = $1', [p.empId])).rows[0];
-        const bId = empRow?.building_id;
-        if (!bId) continue;
+        let bId = p.buildingId || null;
+        if (!bId && p.empId) {
+          const empRow = (await c.query('SELECT building_id FROM employees WHERE id = $1', [p.empId])).rows[0];
+          bId = empRow?.building_id || null;
+        }
+        const meta = _strip(p, ['id','buildingId','empId','shiftType','group','startDate','endDate','active']);
         await c.query(`INSERT INTO schedule_patterns (id, building_id, emp_id, shift_type, "group", pattern, start_date, end_date, active)
           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
           ON CONFLICT (id) DO UPDATE SET
-            shift_type=$4, "group"=$5, pattern=$6, start_date=$7, end_date=$8, active=$9`,
-          [p.id || `pat_${p.empId}_${Date.now()}`, bId, p.empId,
-           p.shiftType || null, p.group || null, JSON.stringify(p.pattern || {}),
+            building_id=$2, shift_type=$4, "group"=$5, pattern=$6, start_date=$7, end_date=$8, active=$9`,
+          [p.id || `pat_${p.empId || 'open'}_${Date.now()}`, bId, p.empId || null,
+           p.shiftType || null, p.group || null, JSON.stringify(meta),
            p.startDate || null, p.endDate || null, p.active !== false]);
       }
     }
@@ -854,19 +880,42 @@ async function saveAll(data) {
            s.claimRequest ? JSON.stringify(s.claimRequest) : null,
            JSON.stringify(md), s._version || 1]);
       }
+      // ── DELETE orphaned shifts that are no longer in the data ────────
+      // Without this, shifts removed via DELETE /api/shifts/:id (which
+      // splices the in-memory array) persist in Postgres forever because
+      // saveAll only does UPSERT. On server restart, loadAll() reads them
+      // back — exactly the bug where "deleted shifts come back after 30m."
+      const keepShiftIds = data.shifts.map(s => s.id);
+      if (keepShiftIds.length > 0) {
+        await c.query('DELETE FROM shifts WHERE id != ALL($1::text[])', [keepShiftIds]);
+      }
     }
     if (Array.isArray(data.schedulePatterns)) {
       for (const p of data.schedulePatterns) {
-        const empRow = (await c.query('SELECT building_id FROM employees WHERE id = $1', [p.empId])).rows[0];
-        const bId = empRow?.building_id;
-        if (!bId) continue;
+        // Resolve buildingId: use the pattern's own field first (works for
+        // both open and assign patterns), fall back to employee lookup.
+        let bId = p.buildingId || null;
+        if (!bId && p.empId) {
+          const empRow = (await c.query('SELECT building_id FROM employees WHERE id = $1', [p.empId])).rows[0];
+          bId = empRow?.building_id || null;
+        }
+        // Store ALL metadata fields (selectedDays, pickerStart, removedDates,
+        // kind, cycleLen, slots, lastExtendedTo, appliedAt, etc.) in the
+        // `pattern` JSONB column. Strip out the fields that have dedicated
+        // columns to avoid storing them twice.
+        const meta = _strip(p, ['id','buildingId','empId','shiftType','group','startDate','endDate','active']);
         await c.query(`INSERT INTO schedule_patterns (id, building_id, emp_id, shift_type, "group", pattern, start_date, end_date, active)
           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
           ON CONFLICT (id) DO UPDATE SET
-            shift_type=$4, "group"=$5, pattern=$6, start_date=$7, end_date=$8, active=$9`,
-          [p.id || `pat_${p.empId}_${Date.now()}`, bId, p.empId,
-           p.shiftType || null, p.group || null, JSON.stringify(p.pattern || {}),
+            building_id=$2, shift_type=$4, "group"=$5, pattern=$6, start_date=$7, end_date=$8, active=$9`,
+          [p.id || `pat_${p.empId || 'open'}_${Date.now()}`, bId, p.empId || null,
+           p.shiftType || null, p.group || null, JSON.stringify(meta),
            p.startDate || null, p.endDate || null, p.active !== false]);
+      }
+      // DELETE orphaned patterns no longer in the data
+      const keepPatIds = data.schedulePatterns.filter(p => p.id).map(p => p.id);
+      if (keepPatIds.length > 0) {
+        await c.query('DELETE FROM schedule_patterns WHERE id != ALL($1::text[])', [keepPatIds]);
       }
     }
 
