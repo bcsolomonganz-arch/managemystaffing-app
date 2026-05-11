@@ -289,8 +289,12 @@ a:active{opacity:.6}
   align-items:flex-end;justify-content:center}
 .modal-back.open{display:flex}
 .modal-sheet{width:100%;max-width:560px;background:#fff;border-radius:16px 16px 0 0;
-  max-height:85vh;display:flex;flex-direction:column;
-  padding-bottom:env(safe-area-inset-bottom)}
+  max-height:85vh;max-height:85dvh;display:flex;flex-direction:column;
+  /* Desktop browsers + Android Chrome have no safe-area-inset-bottom, so the
+     last action-row would sit flush against the viewport edge — looked cut
+     off. Force at least 16px of breathing room (or the safe-area, whichever
+     is larger). */
+  padding-bottom:max(env(safe-area-inset-bottom), 16px)}
 .sheet-head{display:flex;align-items:center;justify-content:space-between;
   padding:14px 18px;border-bottom:1px solid var(--g200)}
 .sheet-head .ttl{font-size:15px;font-weight:800;color:var(--g900)}
@@ -1436,10 +1440,33 @@ function openShiftActionSheet(shiftId) {
 
   let actions = '';
   if (isOpen) {
+    // Recipient pool for "Message all" — every active employee in the same
+    // display group at this building. Uses getActualGroups so picking a
+    // Dietary shift reaches both Cook and Dietary Aid staff. Shown as a
+    // count next to the action so the admin knows what they're about to
+    // text before tapping in.
+    const bId = effectiveBuildingId();
+    const ag  = getActualGroups(shift.group || '');
+    const groupReach = (State.data?.employees || []).filter(e =>
+      ag.includes(e.group) && !e.inactive && e.buildingId === bId);
+    const groupName = escapeHTML(groupLabel(shift.group || ''));
+    const reachCount = groupReach.length;
     actions = `
       <div class="action-row" data-action="assign">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="8" r="3"/><path d="M3 21v-1a6 6 0 0 1 6-6h1M16 12v6M13 15h6"/></svg>
-        <div class="text"><span>Assign someone</span><span class="meta">Pick from staff in ${escapeHTML(groupLabel(shift.group||''))} at this building</span></div>
+        <div class="text"><span>Assign someone</span><span class="meta">Pick from staff in ${groupName} at this building</span></div>
+      </div>
+      <div class="action-row" data-action="msg-group">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>
+        <div class="text"><span>Message all ${groupName}</span><span class="meta">SMS or email everyone in this group at this building (${reachCount})</span></div>
+      </div>
+      <div class="action-row" data-action="msg-custom">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="3"/><path d="M2 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2"/><circle cx="17" cy="7" r="2"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>
+        <div class="text"><span>Message a custom group</span><span class="meta">Pick specific people in ${groupName} to text</span></div>
+      </div>
+      <div class="action-row" data-action="msg-one">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <div class="text"><span>Message an individual</span><span class="meta">DM one person about this shift</span></div>
       </div>
     `;
     if (shift.claimRequest) {
@@ -1526,6 +1553,229 @@ async function handleShiftAction(shiftId, action) {
     decideClaim(shiftId, 'reject');
     return;
   }
+  if (action === 'msg-group')  { openShiftMessageComposer(shift, 'group');  return; }
+  if (action === 'msg-custom') { openShiftMessageComposer(shift, 'custom'); return; }
+  if (action === 'msg-one')    { openShiftMessageOne(shift);                return; }
+}
+
+// ────────────────────────────────────────────────────────────────────
+//  MESSAGE-FROM-SHIFT — three flows surfaced in the open-shift sheet
+// ────────────────────────────────────────────────────────────────────
+// All three start by resolving the recipient pool to the shift's
+// display group at the same building (via getActualGroups so a
+// Dietary shift reaches Cook + Dietary Aid). Then:
+//   - 'group'  → straight to the composer with all reachable staff
+//   - 'custom' → multi-select picker first, then the composer
+//   - one-DM   → single-select picker, then jumps to the DM thread
+// The composer reuses the existing /api/alert pipeline (SMS+email
+// scope, PHI scan, audit log) — exactly what openGroupComposer uses
+// for textGroups, just with an ad-hoc empIds list.
+
+function _shiftReach(shift) {
+  const bId = effectiveBuildingId();
+  const ag  = getActualGroups(shift.group || '');
+  return (State.data?.employees || []).filter(e =>
+    ag.includes(e.group) && !e.inactive && e.buildingId === bId);
+}
+
+function _shiftContextLine(shift) {
+  // Single-line summary an admin can paste-through into the composer.
+  // Pre-filled as the placeholder so it's obvious what context the
+  // recipient is missing (instead of a bare "Type your message…").
+  const day = fmtDateLong(shift.date);
+  const time = (shift.start || '') + (shift.end ? ' – ' + shift.end : '');
+  return `Re: ${shift.type || ''} ${groupLabel(shift.group||'')} on ${day}${time?' · '+time:''}`;
+}
+
+function openShiftMessageComposer(shift, mode, preselectedIds) {
+  const reach = _shiftReach(shift);
+  if (mode === 'custom' && !preselectedIds) {
+    openShiftCustomPicker(shift, reach);
+    return;
+  }
+  const targets = (mode === 'custom') ? reach.filter(e => preselectedIds.includes(e.id)) : reach;
+  if (!targets.length) { toast('No reachable staff in this group','warn'); return; }
+  const smsCount   = targets.filter(e => e.notifSMS && e.phone).length;
+  const emailCount = targets.filter(e => e.notifEmail && e.email).length;
+  const groupName  = groupLabel(shift.group || '');
+  const ctx        = _shiftContextLine(shift);
+  $('#sheet-title').textContent = `Message ${targets.length} · ${groupName}`;
+  $('#sheet-body').innerHTML = `
+    <div style="padding:14px 16px">
+      <div style="font-size:12px;color:var(--g500);margin-bottom:10px">
+        ${escapeHTML(ctx)}
+      </div>
+      <textarea id="sm-body" rows="4" maxlength="1000" placeholder="Type your message — kept generic, no PHI." style="width:100%;padding:10px 12px;border:1.5px solid var(--g200);border-radius:9px;font-size:14px;font-family:inherit;resize:vertical;box-sizing:border-box"></textarea>
+      <div style="display:flex;align-items:center;gap:14px;margin-top:10px;font-size:13px;color:var(--g700);flex-wrap:wrap">
+        <label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="sm-sms" checked> SMS <span style="color:var(--g500)">(${smsCount})</span></label>
+        <label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="sm-email"> Email <span style="color:var(--g500)">(${emailCount})</span></label>
+      </div>
+      <p style="font-size:11px;color:var(--g500);margin-top:8px">SMS is unencrypted — never include patient names or PHI.</p>
+    </div>
+    <div class="sheet-foot">
+      <button id="sm-cancel" class="btn-secondary" style="flex:1">Cancel</button>
+      <button id="sm-send" class="btn-primary" style="flex:2">Send to ${targets.length}</button>
+    </div>
+  `;
+  openSheet();
+  $('#sm-cancel').addEventListener('click', closeSheet);
+  $('#sm-send').addEventListener('click', async () => {
+    const message = ($('#sm-body').value || '').trim();
+    if (!message) { toast('Type a message first','warn'); return; }
+    const viaSMS   = $('#sm-sms').checked;
+    const viaEmail = $('#sm-email').checked;
+    if (!viaSMS && !viaEmail) { toast('Pick SMS, Email, or both','warn'); return; }
+    const btn = $('#sm-send'); btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      const r = await apiFetch('/api/alert', {
+        method:'POST',
+        body:{
+          empIds: targets.map(e => e.id),
+          message: ctx + '\n\n' + message,
+          viaSMS, viaEmail,
+          subject: ctx,
+          buildingId: effectiveBuildingId(),
+        },
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { toast(j.error || 'Send failed','warn'); btn.disabled = false; btn.textContent = `Send to ${targets.length}`; return; }
+      const parts = [];
+      if (j.queued?.email) parts.push(j.queued.email + ' email' + (j.queued.email===1?'':'s'));
+      if (j.queued?.sms)   parts.push(j.queued.sms + ' text' + (j.queued.sms===1?'':'s'));
+      toast(parts.join(' + ') || 'Queued');
+      closeSheet();
+    } catch (e) {
+      toast('Network error','error');
+      btn.disabled = false; btn.textContent = `Send to ${targets.length}`;
+    }
+  });
+}
+
+function openShiftCustomPicker(shift, reach) {
+  if (!reach.length) { toast('No reachable staff in this group','warn'); return; }
+  const groupName = groupLabel(shift.group || '');
+  const ctx = _shiftContextLine(shift);
+  $('#sheet-title').textContent = `Pick ${groupName}`;
+  $('#sheet-body').innerHTML = `
+    <div style="padding:10px 16px;font-size:12px;color:var(--g500);border-bottom:1px solid var(--g100)">
+      ${escapeHTML(ctx)}
+    </div>
+    <div class="composer-search" style="border-bottom:1px solid var(--g100)">
+      <input id="cp-search" type="search" placeholder="Search…" autocomplete="off">
+    </div>
+    <div style="padding:8px 16px;display:flex;gap:8px;border-bottom:1px solid var(--g100)">
+      <button id="cp-all" class="btn-secondary" style="font-size:12px;padding:5px 10px">Select all</button>
+      <button id="cp-none" class="btn-secondary" style="font-size:12px;padding:5px 10px">Clear</button>
+      <span id="cp-count" style="margin-left:auto;font-size:12px;color:var(--g600);align-self:center">0 selected</span>
+    </div>
+    <div class="msg-list" id="cp-list">
+      ${reach.map(p => `
+        <label class="thread-row" data-pid="${escapeHTML(p.id)}" style="cursor:pointer">
+          <input type="checkbox" data-cb="${escapeHTML(p.id)}" style="margin-right:6px;width:18px;height:18px;accent-color:var(--green)">
+          <div class="avatar" style="background:${avatarColor(p.id)}">${escapeHTML(initials(p.name||p.email||''))}</div>
+          <div class="body">
+            <div class="top"><span class="name">${escapeHTML(p.name||p.email)}</span></div>
+            <div class="preview">${escapeHTML(groupLabel(p.group||''))}${p.phone?' · '+escapeHTML(p.phone):''}</div>
+          </div>
+        </label>
+      `).join('')}
+    </div>
+    <div class="sheet-foot">
+      <button id="cp-cancel" class="btn-secondary" style="flex:1">Cancel</button>
+      <button id="cp-next" class="btn-primary" style="flex:2" disabled>Next</button>
+    </div>
+  `;
+  openSheet();
+  const updateCount = () => {
+    const n = $$('#cp-list input[data-cb]:checked').length;
+    $('#cp-count').textContent = n + ' selected';
+    $('#cp-next').disabled = n === 0;
+    $('#cp-next').textContent = n ? `Next · ${n}` : 'Next';
+  };
+  $('#cp-search').addEventListener('input', () => {
+    const q = $('#cp-search').value.toLowerCase().trim();
+    $$('#cp-list .thread-row').forEach(row => {
+      row.style.display = !q || (row.textContent || '').toLowerCase().includes(q) ? '' : 'none';
+    });
+  });
+  $('#cp-all').addEventListener('click', () => {
+    $$('#cp-list input[data-cb]:not([disabled])').forEach(cb => {
+      // Only toggle visible rows so a search filter feels intuitive
+      if (cb.closest('.thread-row').style.display !== 'none') cb.checked = true;
+    });
+    updateCount();
+  });
+  $('#cp-none').addEventListener('click', () => {
+    $$('#cp-list input[data-cb]').forEach(cb => cb.checked = false);
+    updateCount();
+  });
+  $$('#cp-list input[data-cb]').forEach(cb => cb.addEventListener('change', updateCount));
+  $('#cp-cancel').addEventListener('click', closeSheet);
+  $('#cp-next').addEventListener('click', () => {
+    const ids = $$('#cp-list input[data-cb]:checked').map(cb => cb.dataset.cb);
+    openShiftMessageComposer(shift, 'custom', ids);
+  });
+  updateCount();
+}
+
+function openShiftMessageOne(shift) {
+  const reach = _shiftReach(shift);
+  if (!reach.length) { toast('No reachable staff in this group','warn'); return; }
+  const groupName = groupLabel(shift.group || '');
+  const ctx = _shiftContextLine(shift);
+  $('#sheet-title').textContent = `DM about ${groupName} shift`;
+  $('#sheet-body').innerHTML = `
+    <div style="padding:10px 16px;font-size:12px;color:var(--g500);border-bottom:1px solid var(--g100)">
+      ${escapeHTML(ctx)}
+    </div>
+    <div class="composer-search" style="border-bottom:1px solid var(--g100)">
+      <input id="dm-search" type="search" placeholder="Search…" autocomplete="off">
+    </div>
+    <div class="msg-list" id="dm-list">
+      ${reach.map(p => `
+        <div class="thread-row" data-pid="${escapeHTML(p.id)}" style="cursor:pointer">
+          <div class="avatar" style="background:${avatarColor(p.id)}">${escapeHTML(initials(p.name||p.email||''))}</div>
+          <div class="body">
+            <div class="top"><span class="name">${escapeHTML(p.name||p.email)}</span></div>
+            <div class="preview">${escapeHTML(groupLabel(p.group||''))}</div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  openSheet();
+  $('#dm-search').addEventListener('input', () => {
+    const q = $('#dm-search').value.toLowerCase().trim();
+    $$('#dm-list .thread-row').forEach(row => {
+      row.style.display = !q || (row.textContent || '').toLowerCase().includes(q) ? '' : 'none';
+    });
+  });
+  $$('#dm-list .thread-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const pid = row.dataset.pid;
+      // Jump straight into the DM thread for that person, with the shift
+      // context staged in the input so the admin only has to add their
+      // actual question. The thread render below will pre-fill #thread-input.
+      State.activeOtherId = pid;
+      State.activeThreadId = dmThreadId(State.user.id, pid);
+      State._pendingThreadDraft = ctx + ' — ';
+      closeSheet();
+      // Switch to Messages tab so the thread renders. setActiveTab updates
+      // State.view, the tab pill classes, and calls render() — so we don't
+      // need a separate render() call here.
+      setActiveTab('messages');
+      setTimeout(() => {
+        const ta = $('#thread-input');
+        if (ta && State._pendingThreadDraft) {
+          ta.value = State._pendingThreadDraft;
+          ta.focus();
+          // Move cursor to end
+          ta.setSelectionRange(ta.value.length, ta.value.length);
+          State._pendingThreadDraft = null;
+        }
+      }, 60);
+    });
+  });
 }
 
 function renderAddShiftFab() {
