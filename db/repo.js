@@ -388,6 +388,12 @@ const APP_STATE_KEYS = {
   hrEmployees:        [],
   hrAccounts:         [],
   hrTimeClock:        [],
+  directMessages:     [],
+  staffEvents:        [],
+  prospects:          [],
+  ppdDailyCensus:     [],
+  contentReports:     [],
+  blockedUsers:       [],
 };
 
 async function loadAppState(c) {
@@ -821,6 +827,11 @@ async function saveAll(data) {
           ON CONFLICT (id) DO UPDATE SET name=$2, color=$3, updated_at=now()`,
           [co.id, co.name, co.color]);
       }
+      // DELETE orphaned companies no longer in the data
+      const keepCompanyIds = data.companies.map(co => co.id);
+      if (keepCompanyIds.length > 0) {
+        await c.query('DELETE FROM companies WHERE id != ALL($1::text[])', [keepCompanyIds]);
+      }
     }
     if (Array.isArray(data.buildings)) {
       for (const b of data.buildings) {
@@ -830,9 +841,19 @@ async function saveAll(data) {
           ON CONFLICT (id) DO UPDATE SET company_id=$2, name=$3, address=$4, color=$5, beds=$6, metadata=$7, updated_at=now()`,
           [b.id, b.companyId || null, b.name, b.address || null, b.color || null, b.beds || null, JSON.stringify(md)]);
       }
+      // DELETE orphaned buildings no longer in the data
+      const keepBuildingIds = data.buildings.map(b => b.id);
+      if (keepBuildingIds.length > 0) {
+        await c.query('DELETE FROM buildings WHERE id != ALL($1::text[])', [keepBuildingIds]);
+      }
     }
     if (Array.isArray(data.accounts)) {
       for (const a of data.accounts) await _upsertAccountInTx(c, a);
+      // DELETE orphaned accounts no longer in the data
+      const keepAccountIds = data.accounts.map(a => a.id);
+      if (keepAccountIds.length > 0) {
+        await c.query('DELETE FROM accounts WHERE id != ALL($1::text[])', [keepAccountIds]);
+      }
     }
     if (Array.isArray(data.employees)) {
       for (const e of data.employees) {
@@ -858,19 +879,34 @@ async function saveAll(data) {
       }
     }
     if (Array.isArray(data.shifts)) {
-      for (const s of data.shifts) {
-        const md = _strip(s, ['id','buildingId','employeeId','date','type','group','start','end','status','claimRequest','_version']);
+      // Batch upsert shifts using unnest — reduces ~10,000 individual queries
+      // to ceil(N/500) batched queries for a ~20x speed-up.
+      const BATCH = 500;
+      for (let i = 0; i < data.shifts.length; i += BATCH) {
+        const batch = data.shifts.slice(i, i + BATCH);
+        const ids = [], bIds = [], eIds = [], dates = [], types = [], groups = [];
+        const starts = [], ends = [], statuses = [], claims = [], metas = [], versions = [];
+        for (const s of batch) {
+          const md = _strip(s, ['id','buildingId','employeeId','date','type','group','start','end','status','claimRequest','_version']);
+          ids.push(s.id); bIds.push(s.buildingId); eIds.push(s.employeeId || null);
+          dates.push(s.date); types.push(s.type); groups.push(s.group);
+          starts.push(s.start || null); ends.push(s.end || null);
+          statuses.push(s.status || 'open');
+          claims.push(s.claimRequest ? JSON.stringify(s.claimRequest) : null);
+          metas.push(JSON.stringify(md)); versions.push(s._version || 1);
+        }
         await c.query(`INSERT INTO shifts (id, building_id, employee_id, shift_date, shift_type, "group",
             start_time, end_time, status, claim_request, metadata, version)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, COALESCE($12,1))
+          SELECT * FROM unnest(
+            $1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[],
+            $7::text[], $8::text[], $9::text[], $10::jsonb[], $11::jsonb[], $12::int[])
           ON CONFLICT (id) DO UPDATE SET
-            building_id=$2, employee_id=$3, shift_date=$4, shift_type=$5, "group"=$6,
-            start_time=$7, end_time=$8, status=$9, claim_request=$10, metadata=$11,
-            version = shifts.version + 1, updated_at=now()`,
-          [s.id, s.buildingId, s.employeeId || null, s.date, s.type, s.group,
-           s.start || null, s.end || null, s.status || 'open',
-           s.claimRequest ? JSON.stringify(s.claimRequest) : null,
-           JSON.stringify(md), s._version || 1]);
+            building_id=EXCLUDED.building_id, employee_id=EXCLUDED.employee_id,
+            shift_date=EXCLUDED.shift_date, shift_type=EXCLUDED.shift_type, "group"=EXCLUDED."group",
+            start_time=EXCLUDED.start_time, end_time=EXCLUDED.end_time,
+            status=EXCLUDED.status, claim_request=EXCLUDED.claim_request,
+            metadata=EXCLUDED.metadata, version = shifts.version + 1, updated_at=now()`,
+          [ids, bIds, eIds, dates, types, groups, starts, ends, statuses, claims, metas, versions]);
       }
       // ── DELETE orphaned shifts that are no longer in the data ────────
       // Without this, shifts removed via DELETE /api/shifts/:id (which

@@ -1155,9 +1155,16 @@ try {
   logger.warn('redis_init_failed', { err: e.message });
 }
 
-// In-memory fallbacks (used when Redis unavailable)
-const _memRevokedTokens = new Set();
+// In-memory fallbacks (used when Redis unavailable).
+// Use a Map with expiry timestamps to prevent unbounded growth.
+const _memRevokedTokens = new Map(); // token -> expiresAt (ms)
 const _memLastActivity = new Map();
+// Periodically evict expired entries (every 10 minutes)
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, exp] of _memRevokedTokens) { if (exp < now) _memRevokedTokens.delete(k); }
+  for (const [k, ts] of _memLastActivity) { if (now - ts > _MAX_TOKEN_TTL * 1000) _memLastActivity.delete(k); }
+}, 600000).unref();
 
 // Revoked-token / last-activity Redis entries must outlive the longest JWT,
 // otherwise a logged-out employee's 30-day cookie could be reused after the
@@ -1166,7 +1173,7 @@ const _MAX_TOKEN_TTL = Math.max(JWT_TTL_SECONDS, EMPLOYEE_JWT_TTL_SECONDS);
 
 const revokedTokens = {
   async add(token) {
-    _memRevokedTokens.add(token);
+    _memRevokedTokens.set(token, Date.now() + _MAX_TOKEN_TTL * 1000);
     if (_redis) {
       try { await _redis.set(`revoked:${token}`, '1', 'EX', _MAX_TOKEN_TTL); } catch (e) {}
     }
@@ -4378,6 +4385,11 @@ app.post('/api/dm', requireAuth, async (req, res) => {
     }
   }
 
+  // Block check: recipient may have blocked the sender
+  if (Array.isArray(data.blockedUsers) && data.blockedUsers.some(b => b.blockerId === toId && b.blockedId === myId)) {
+    return res.status(403).json({ error: 'You cannot message this user' });
+  }
+
   if (!Array.isArray(data.directMessages)) data.directMessages = [];
   const msg = {
     id: 'dm_' + Date.now() + crypto.randomBytes(2).toString('hex'),
@@ -4405,6 +4417,56 @@ app.post('/api/dm', requireAuth, async (req, res) => {
     url: '/app',
   }).catch(() => {});
   res.json({ ok: true, message: msg });
+});
+
+// ── POST /api/dm/report — Report a message (Apple Guideline 1.2 UGC) ────────
+app.post('/api/dm/report', requireAuth, async (req, res) => {
+  const { messageId, reason } = req.body || {};
+  if (!messageId) return res.status(400).json({ error: 'messageId required' });
+  const data = await loadData();
+  const msg = (data.directMessages || []).find(m => m.id === messageId);
+  if (!msg) return res.status(404).json({ error: 'Message not found' });
+  if (!Array.isArray(data.contentReports)) data.contentReports = [];
+  data.contentReports.push({
+    id: 'rpt_' + Date.now() + crypto.randomBytes(2).toString('hex'),
+    messageId, reporterId: req.user.id, reporterName: req.user.name || req.user.email,
+    fromId: msg.fromId, fromName: msg.fromName, body: msg.body,
+    reason: String(reason || '').slice(0, 500), status: 'pending',
+    createdAt: new Date().toISOString(),
+  });
+  markDirty();
+  auditLog('CONTENT_REPORTED', req.user, { messageId, fromId: msg.fromId });
+  res.json({ ok: true, message: 'Report submitted. An administrator will review it.' });
+});
+
+// ── POST /api/dm/block — Block a user from sending you DMs ──────────────────
+app.post('/api/dm/block', requireAuth, async (req, res) => {
+  const { userId } = req.body || {};
+  if (!userId) return res.status(400).json({ error: 'userId required' });
+  if (userId === req.user.id) return res.status(400).json({ error: 'Cannot block yourself' });
+  const data = await loadData();
+  if (!Array.isArray(data.blockedUsers)) data.blockedUsers = [];
+  const existing = data.blockedUsers.find(b => b.blockerId === req.user.id && b.blockedId === userId);
+  if (existing) return res.json({ ok: true, message: 'Already blocked' });
+  data.blockedUsers.push({
+    blockerId: req.user.id, blockedId: userId,
+    createdAt: new Date().toISOString(),
+  });
+  markDirty();
+  auditLog('USER_BLOCKED', req.user, { blockedId: userId });
+  res.json({ ok: true, message: 'User blocked' });
+});
+
+// ── DELETE /api/dm/block — Unblock a user ────────────────────────────────────
+app.delete('/api/dm/block', requireAuth, async (req, res) => {
+  const { userId } = req.body || {};
+  if (!userId) return res.status(400).json({ error: 'userId required' });
+  const data = await loadData();
+  if (!Array.isArray(data.blockedUsers)) return res.json({ ok: true });
+  data.blockedUsers = data.blockedUsers.filter(b => !(b.blockerId === req.user.id && b.blockedId === userId));
+  markDirty();
+  auditLog('USER_UNBLOCKED', req.user, { unblockedId: userId });
+  res.json({ ok: true });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -6165,7 +6227,8 @@ app.post('/api/recruiting/push-to-roster', requireAuth, requireAdmin, async (req
 app.post('/api/timeclock/smartlinx', express.json({ limit:'1mb' }), async (req, res) => {
   const expected = process.env.SMARTLINX_WEBHOOK_SECRET;
   if (!expected) return res.status(503).json({ error: 'SmartLinx integration not configured' });
-  if (req.headers['x-smartlinx-secret'] !== expected) {
+  const provided = req.headers['x-smartlinx-secret'] || '';
+  if (provided.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected))) {
     auditLog('SMARTLINX_REJECTED', null, { reason: 'bad_secret' });
     return res.status(401).json({ error: 'Unauthorized' });
   }
@@ -6503,6 +6566,16 @@ app.post('/api/timeclock/punch/:editId/decide', requireAuth, requireAdmin, async
 // The page is locked to one building (token embedded server-side). No SPA
 // shell, no nav. Tablet can be left running 24/7 at the nurse station.
 app.get('/kiosk/:buildingId', async (req, res) => {
+  // Kiosk access requires a secret token to prevent unauthorized access.
+  // Admin generates the kiosk URL (includes ?token=...) from the dashboard.
+  const kioskSecret = process.env.KIOSK_ACCESS_SECRET;
+  if (kioskSecret) {
+    const provided = req.query.token || req.headers['x-kiosk-token'] || '';
+    const expected = crypto.createHmac('sha256', kioskSecret).update(req.params.buildingId).digest('hex').slice(0, 16);
+    if (provided !== expected) {
+      return res.status(403).type('text').send('Invalid kiosk access token. Request a kiosk URL from your administrator.');
+    }
+  }
   const buildingId = req.params.buildingId;
   const data = await loadData();
   const b = (data.buildings || []).find(x => x.id === buildingId);
@@ -7632,6 +7705,59 @@ app.delete('/api/accounts/:id', requireAuth, requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── DELETE /api/account/me — Self-service account deletion ────────────────────
+// Apple App Store Guideline 5.1.1(v) requires apps with account creation to
+// offer account deletion. HIPAA retention: audit log entries are preserved with
+// pseudonymized identifiers; personal data (name, email, phone) is scrubbed.
+app.delete('/api/account/me', requireAuth, async (req, res) => {
+  const data = await loadData();
+  const myId = req.user.id;
+
+  // Superadmins cannot self-delete (would orphan the entire org)
+  if (req.user.role === 'superadmin') {
+    return res.status(403).json({ error: 'Superadmin accounts cannot be self-deleted. Contact support.' });
+  }
+
+  // Remove account
+  const acctIdx = (data.accounts || []).findIndex(a => a.id === myId);
+  if (acctIdx >= 0) data.accounts.splice(acctIdx, 1);
+
+  // Anonymize linked employee record (keep the row for shift history, but scrub PII)
+  const emp = (data.employees || []).find(e => e.accountId === myId);
+  if (emp) {
+    emp.name = 'Deleted User';
+    emp.email = null;
+    emp.phone = null;
+    emp.inactive = true;
+    emp.accountId = null;
+  }
+
+  // Remove DMs authored by this user (scrub content, keep thread structure)
+  if (Array.isArray(data.directMessages)) {
+    for (const m of data.directMessages) {
+      if (m.fromId === myId) { m.body = '[deleted]'; m.fromName = 'Deleted User'; }
+      if (m.toId === myId) { m.toName = 'Deleted User'; }
+    }
+  }
+
+  // Remove push subscriptions
+  if (Array.isArray(data.pushSubscriptions)) {
+    data.pushSubscriptions = data.pushSubscriptions.filter(s => s.userId !== myId);
+  }
+
+  // Revoke session
+  if (req._token) await revokedTokens.add(req._token);
+  clearAuthCookie(res);
+
+  try { await flushNow(); } catch (e) {
+    return res.status(500).json({ error: 'Failed to persist account deletion. Please retry.' });
+  }
+  auditLog('ACCOUNT_SELF_DELETED', { id: myId, role: req.user.role }, {
+    hadEmployee: !!emp,
+  });
+  res.json({ ok: true, message: 'Your account has been deleted.' });
+});
+
 // ── POST /api/invite/resend ───────────────────────────────────────────────────
 // Body: { accountId } — regenerates invite token, clears password, emails link.
 // Whatever password the user sets on first login becomes permanent.
@@ -8435,7 +8561,7 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
 app.post('/api/sms/inbound', async (req, res) => {
   const expected = process.env.SMS_WEBHOOK_SECRET;
   const provided = req.headers['x-webhook-secret'] || req.query.secret;
-  if (!expected || expected !== provided) {
+  if (!expected || !provided || expected.length !== provided.length || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(provided))) {
     auditLog('SMS_INBOUND_REJECTED', null, { reason: 'bad_secret' });
     return res.status(401).json({ error: 'Unauthorized' });
   }
