@@ -780,29 +780,21 @@ async function saveAll(data) {
       }
     }
 
-    // ── Shift shrink + HWM guard ──────────────────────────────────────
-    // Same protection as employees. The /api/data POST path is upsert-only
-    // for shifts; the only legitimate way for shifts.shrink is the explicit
-    // per-row remove flows. saveAll itself NEVER deletes — but it can be
-    // called with a smaller cache than the DB, which is exactly the
-    // pattern that wiped data on 2026-04-30. This guard catches it.
+    // ── Shift HWM guard ───────────────────────────────────────────────
+    // NOTE: The shift shrink guard that used to throw here was removed
+    // because it blocked legitimate per-shift deletes. When DELETE
+    // /api/shifts/:id splices the in-memory array and calls flushNow(),
+    // saveAll sees incoming < db and threw — preventing the orphan DELETE
+    // at the end from ever running. This caused shifts to resurrect on
+    // container restart. The HTTP-layer anti-shrink tripwire on POST
+    // /api/data (line ~7049) still protects against bulk-save data loss.
+    // The orphan DELETE below (after upsert) is the authoritative cleanup.
     if (Array.isArray(data.shifts)) {
       const incomingByBld = new Map();
       for (const s of data.shifts) {
         const bid = s.building_id || s.buildingId;
         if (!bid) continue;
         incomingByBld.set(bid, (incomingByBld.get(bid) || 0) + 1);
-      }
-      const dbCounts = await c.query(`SELECT building_id, COUNT(*)::int AS n FROM shifts GROUP BY building_id`);
-      for (const row of dbCounts.rows) {
-        const incoming = incomingByBld.get(row.building_id) || 0;
-        if (incoming < row.n) {
-          throw new Error(
-            `saveAll refused to shrink shifts in building ${row.building_id}: ` +
-            `db has ${row.n}, incoming has ${incoming}. ` +
-            `Per-shift removes go through /api/admin/shifts/:id/delete.`
-          );
-        }
       }
       for (const [bid, n] of incomingByBld) {
         const scope = `shifts:${bid}`;
