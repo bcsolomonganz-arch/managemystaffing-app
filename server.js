@@ -521,7 +521,7 @@ async function flushNow() {
   _bumpDataVersion();
   dataDirty = true;
   clearTimeout(saveTimeout);
-  await persistCache();       // throws on failure — caller catches
+  await persistCache({ _calledFromFlush: true }); // throws on failure — caller catches
 }
 
 // Tracks consecutive file-mode persist failures. If we hit too many in a
@@ -532,7 +532,10 @@ async function flushNow() {
 let _consecutiveFilePersistFailures = 0;
 let _lastSuccessfulPersistAt = null;
 
-async function persistCache() {
+// _calledFromFlush: when true, re-throw errors so flushNow() can propagate
+// them to the HTTP handler. When false (debounced background save), swallow
+// errors and retry via dataDirty — we can't return a 500 to anyone.
+async function persistCache({ _calledFromFlush = false } = {}) {
   if (!dataDirty) return;
   return withPersistLock(async () => {
   if (!dataDirty) return;       // re-check after acquiring lock
@@ -561,10 +564,6 @@ async function persistCache() {
     logger.error('save_failed', { err: e.message, backend: _useDB ? 'postgres' : 'file' });
     if (!_useDB) {
       _consecutiveFilePersistFailures++;
-      // Surface a clear, loud error after 3 consecutive failures. With the
-      // pre-fix code, file writes failing silently for hours wasn't visible
-      // anywhere except buried logger.error lines. /health/ready will now
-      // return 503 with this counter so monitoring can alert on it.
       if (_consecutiveFilePersistFailures >= 3) {
         const msg = `[mms] CRITICAL: ${_consecutiveFilePersistFailures} consecutive file-mode persist failures. ` +
                     `DATA_FILE=${DATA_FILE}. Recent edits are NOT being saved. ` +
@@ -578,9 +577,13 @@ async function persistCache() {
       }
     }
     // Re-mark dirty so the next markDirty/save attempt retries this batch.
-    // Without this, a single transient EBUSY would lose the whole batch
-    // because dataDirty was already set to false at the top of persistCache.
     dataDirty = true;
+    // CRITICAL: When called from flushNow(), re-throw so the HTTP handler
+    // can return 500 instead of falsely reporting success. Previously this
+    // error was silently swallowed, causing the DELETE handler to return
+    // { ok: true } even though Postgres never got the update — the #1 cause
+    // of "deleted shifts reappear after container restart."
+    if (_calledFromFlush) throw e;
   }
   }); // end withPersistLock
 }
@@ -5261,21 +5264,23 @@ app.delete('/api/shifts/:id', requireAuth, requireAdmin, async (req, res) => {
   if (!_shiftAdminAuthorized(req.user, shift)) return res.status(403).json({ error: 'Out of scope' });
   data.shifts.splice(idx, 1);
 
-  // Record the date as removed on any rotation pattern that would otherwise
-  // regenerate this shift. We match BOTH the open and assign cases.
+  // Record the date as removed on ALL rotation patterns that could regenerate
+  // this shift — both open AND assign patterns. Previously, deleting an
+  // assigned shift only marked the assign pattern (matching empId), leaving
+  // open patterns free to regenerate a new shift for the same date. The
+  // client-side code already marks both, but if the subsequent POST /api/data
+  // fails (409, 412, network), the server-side patterns are the only truth
+  // and open patterns would lack the removedDate.
   let patternsTouched = 0;
   if (Array.isArray(data.schedulePatterns)) {
     for (const p of data.schedulePatterns) {
       if (p.group !== shift.group) continue;
       if (p.shiftType !== shift.type) continue;
       if (p.buildingId !== shift.buildingId) continue;
-      // For filled shifts: only the matching employee's pattern.
-      // For open shifts: only patterns without an empId.
-      if (shift.employeeId) {
-        if (p.empId !== shift.employeeId) continue;
-      } else {
-        if (p.empId) continue;
-      }
+      // For assign patterns with a DIFFERENT employee, skip — that employee's
+      // pattern should not be affected by deleting another employee's shift.
+      // For open patterns (no empId) and the matching assign pattern: mark it.
+      if (p.empId && shift.employeeId && p.empId !== shift.employeeId) continue;
       if (!Array.isArray(p.removedDates)) p.removedDates = [];
       if (!p.removedDates.includes(shift.date)) {
         p.removedDates.push(shift.date);
@@ -5331,10 +5336,9 @@ app.post('/api/shifts/delete-batch', requireAuth, requireAdmin, async (req, res)
   data.shifts = data.shifts.filter(s => !allowedIds.has(s.id));
   const removed = before - data.shifts.length;
 
-  // Tag removedDates on matching schedule patterns so the rotation extender
-  // doesn't bring back what we just removed. Same matching rules as the
-  // single-shift DELETE handler — group + shiftType + buildingId, plus
-  // employeeId for filled shifts (or no empId for open shifts).
+  // Tag removedDates on ALL matching schedule patterns (open AND assign) so
+  // the rotation extender doesn't bring back what we just removed. Matches
+  // the broadened logic from the single-shift DELETE handler.
   let patternsTouched = 0;
   if (Array.isArray(data.schedulePatterns)) {
     for (const s of allowed) {
@@ -5342,11 +5346,8 @@ app.post('/api/shifts/delete-batch', requireAuth, requireAdmin, async (req, res)
         if (p.group !== s.group) continue;
         if (p.shiftType !== s.type) continue;
         if (p.buildingId !== s.buildingId) continue;
-        if (s.employeeId) {
-          if (p.empId !== s.employeeId) continue;
-        } else {
-          if (p.empId) continue;
-        }
+        // Skip assign patterns for a DIFFERENT employee only
+        if (p.empId && s.employeeId && p.empId !== s.employeeId) continue;
         if (!Array.isArray(p.removedDates)) p.removedDates = [];
         if (!p.removedDates.includes(s.date)) {
           p.removedDates.push(s.date);
@@ -7291,35 +7292,6 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
       note: 'X-Confirm-Wipe is permanently ignored after the 2026-04-30 Kirkland incident',
     });
   }
-  const TRIPWIRE = [
-    ['shifts',           data.shifts,           payload.shifts],
-    ['employees',        data.employees,        payload.employees],
-    ['buildings',        data.buildings,        payload.buildings],
-    ['accounts',         data.accounts,         payload.accounts],
-    ['schedulePatterns', data.schedulePatterns, payload.schedulePatterns],
-    ['hrTimeClock',      data.hrTimeClock,      payload.hrTimeClock],
-  ];
-  for (const [name, existing, incoming] of TRIPWIRE) {
-    if (!Array.isArray(incoming)) continue;
-    const exLen = (existing || []).length;
-    const inLen = incoming.length;
-    // ANY shrink at all is suspect — even one-row drops. Per-row deletes
-    // belong on the explicit DELETE endpoints, not on /api/data POST.
-    if (inLen < exLen) {
-      auditLog('DATA_UPDATE_REJECTED_SHRINK', req.user, {
-        collection: name, existingCount: exLen, incomingCount: inLen,
-      });
-      return res.status(409).json({
-        error: `Refusing to shrink ${name} from ${exLen} to ${inLen}. ` +
-               'Use the explicit DELETE endpoints to remove individual rows. ' +
-               '/api/data POST is upsert-only.',
-        collection: name,
-        existingCount: exLen,
-        incomingCount: inLen,
-      });
-    }
-  }
-
   const isSA = req.user.role === 'superadmin';
   const callerBId = req.user.buildingId;
   const callerBIds = new Set([callerBId, ...(req.user.buildingIds||[])].filter(Boolean));
@@ -7355,6 +7327,49 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
     if (a.role === 'superadmin') return false;        // never let admins touch SA
     return callerBIds.has(a.buildingId) || (a.buildingIds||[]).some(id => callerBIds.has(id));
   };
+  // Scope-aware function for hrTimeClock — entries have empId, resolve building
+  const inScopeTimeClock = e => {
+    if (e.buildingId) return callerBIds.has(e.buildingId);
+    if (e.empId) {
+      const emp = (data.employees || []).find(em => em.id === e.empId);
+      return emp ? callerBIds.has(emp.buildingId) : false;
+    }
+    return false;
+  };
+
+  // ── Tripwire: reject payloads that would shrink collections ────────────
+  // Building admins only see/send their building's data, so their payload
+  // will naturally be smaller than the full server dataset. For non-SA
+  // callers, compare against the IN-SCOPE subset (what the caller received
+  // from GET /api/data) rather than the global total.
+  const TRIPWIRE = [
+    ['shifts',           data.shifts,           payload.shifts,           inScopeShift],
+    ['employees',        data.employees,        payload.employees,        inScopeEmployee],
+    ['buildings',        data.buildings,        payload.buildings,        inScopeBuilding],
+    ['accounts',         data.accounts,         payload.accounts,         inScopeAccount],
+    ['schedulePatterns', data.schedulePatterns, payload.schedulePatterns, inScopePattern],
+    ['hrTimeClock',      data.hrTimeClock,      payload.hrTimeClock,      inScopeTimeClock],
+  ];
+  for (const [name, existing, incoming, scopeFn] of TRIPWIRE) {
+    if (!Array.isArray(incoming)) continue;
+    const exLen = isSA
+      ? (existing || []).length
+      : (existing || []).filter(scopeFn).length;
+    const inLen = incoming.length;
+    if (inLen < exLen) {
+      auditLog('DATA_UPDATE_REJECTED_SHRINK', req.user, {
+        collection: name, existingCount: exLen, incomingCount: inLen, isSA,
+      });
+      return res.status(409).json({
+        error: `Refusing to shrink ${name} from ${exLen} to ${inLen}. ` +
+               'Use the explicit DELETE endpoints to remove individual rows. ' +
+               '/api/data POST is upsert-only.',
+        collection: name,
+        existingCount: exLen,
+        incomingCount: inLen,
+      });
+    }
+  }
 
   data.buildings        = mergeScoped(data.buildings,        payload.buildings,        inScopeBuilding);
   data.employees        = mergeScoped(data.employees,        payload.employees,        inScopeEmployee);
@@ -7530,7 +7545,7 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   dataDirty = true;          // ensure persistCache() actually writes
   clearTimeout(saveTimeout); // cancel any pending debounced flush
   try {
-    await persistCache();
+    await persistCache({ _calledFromFlush: true });
   } catch (e) {
     logger.error('data_update_persist_failed', { err: e.message });
     return res.status(500).json({ error: 'Data accepted but failed to persist. Please retry.' });

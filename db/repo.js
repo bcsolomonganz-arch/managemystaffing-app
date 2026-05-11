@@ -741,9 +741,15 @@ async function _upsertAccountInTx(c, a) {
 // shrinking employees collection cannot make it through this function.
 async function saveAll(data) {
   return withTx(async (c) => {
-    // ── Shrink guard ───────────────────────────────────────────────────
+    // ── Employee shrink guard ────────────────────────────────────────────
     // Compare incoming employees count to what's currently in postgres.
-    // If incoming is shorter — for any building — abort the entire txn.
+    // If incoming is shorter — for any building — SKIP the employee upsert
+    // but DO NOT abort the entire txn. Previously this guard threw, rolling
+    // back the ENTIRE transaction (shifts, patterns, everything). That meant
+    // a stale employee count from a scoped admin silently blocked shift
+    // deletions and pattern removedDates from persisting — the #1 cause of
+    // "deleted shifts reappear after container restart."
+    let _skipEmployeeSave = false;
     if (Array.isArray(data.employees)) {
       const incomingByBld = new Map();
       for (const e of data.employees) {
@@ -755,33 +761,35 @@ async function saveAll(data) {
       for (const row of dbCounts.rows) {
         const incoming = incomingByBld.get(row.building_id) || 0;
         if (incoming < row.n) {
-          throw new Error(
-            `saveAll refused to shrink employees in building ${row.building_id}: ` +
-            `db has ${row.n}, incoming has ${incoming}. ` +
-            `Use the explicit delete helpers if intentional.`
+          console.warn(
+            `[saveAll] employee shrink guard: skipping employee save for building ${row.building_id} ` +
+            `(db has ${row.n}, incoming has ${incoming}). Shifts/patterns will still save.`
           );
+          _skipEmployeeSave = true;
+          break;
         }
       }
-      // High-water-mark check: refuse to drop below the all-time max ever
-      // observed for this building. Updates HWM upward when incoming exceeds it.
-      for (const [bid, n] of incomingByBld) {
-        const scope = `employees:${bid}`;
-        const hw = await c.query(`SELECT max_count FROM row_high_water WHERE scope = $1`, [scope]);
-        const prev = hw.rows[0]?.max_count || 0;
-        if (n < prev) {
-          throw new Error(
-            `saveAll refused: employees in ${bid} would drop to ${n}, ` +
-            `below all-time-max ${prev}. If you intentionally inactivated ` +
-            `staff, use the explicit DELETE endpoint.`
-          );
-        }
-        if (n > prev) {
-          await c.query(
-            `INSERT INTO row_high_water (scope, max_count) VALUES ($1, $2)
-             ON CONFLICT (scope) DO UPDATE SET max_count = GREATEST(row_high_water.max_count, $2),
-             observed_at = now()`,
-            [scope, n]
-          );
+      if (!_skipEmployeeSave) {
+        for (const [bid, n] of incomingByBld) {
+          const scope = `employees:${bid}`;
+          const hw = await c.query(`SELECT max_count FROM row_high_water WHERE scope = $1`, [scope]);
+          const prev = hw.rows[0]?.max_count || 0;
+          if (n < prev) {
+            console.warn(
+              `[saveAll] employee HWM guard: skipping employee save ` +
+              `(${bid} would drop to ${n}, below HWM ${prev}).`
+            );
+            _skipEmployeeSave = true;
+            break;
+          }
+          if (n > prev) {
+            await c.query(
+              `INSERT INTO row_high_water (scope, max_count) VALUES ($1, $2)
+               ON CONFLICT (scope) DO UPDATE SET max_count = GREATEST(row_high_water.max_count, $2),
+               observed_at = now()`,
+              [scope, n]
+            );
+          }
         }
       }
     }
@@ -855,7 +863,7 @@ async function saveAll(data) {
         await c.query('DELETE FROM accounts WHERE id != ALL($1::text[])', [keepAccountIds]);
       }
     }
-    if (Array.isArray(data.employees)) {
+    if (Array.isArray(data.employees) && !_skipEmployeeSave) {
       for (const e of data.employees) {
         const md = _strip(e, ['id','buildingId','accountId','name','email','phone','group','employmentType','hourlyRate','hireDate','inactive','notifEmail','notifSMS','terminationLog','licenseNumber','licenseExpiresAt','licenseState']);
         await c.query(`INSERT INTO employees (id, building_id, account_id, name, email, phone, "group",
