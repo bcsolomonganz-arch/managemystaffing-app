@@ -778,6 +778,94 @@ function toast(msg, kind) {
   toast._t = setTimeout(() => el.classList.remove('show'), 2400);
 }
 
+// ── Offline mutation queue (IndexedDB-backed) ──────────────────
+// Queues POST/PUT/DELETE requests when offline so they replay when
+// connectivity returns. Critical for punch clock and shift edits.
+const OfflineQueue = (() => {
+  const DB_NAME = 'mms-offline-queue';
+  const STORE = 'mutations';
+  let _db = null;
+  function openDB() {
+    if (_db) return Promise.resolve(_db);
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(STORE))
+          db.createObjectStore(STORE, { keyPath: 'id', autoIncrement: true });
+      };
+      req.onsuccess = () => { _db = req.result; resolve(_db); };
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function enqueue(url, opts) {
+    const db = await openDB();
+    const entry = {
+      url,
+      method: opts.method || 'POST',
+      headers: opts.headers || {},
+      body: opts.body || null,
+      ts: Date.now(),
+    };
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).add(entry);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+  async function getAll() {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readonly');
+      const req = tx.objectStore(STORE).getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function remove(id) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+  let _replaying = false;
+  async function replay() {
+    if (_replaying || !navigator.onLine) return;
+    _replaying = true;
+    try {
+      const items = await getAll();
+      if (!items.length) return;
+      let ok = 0, fail = 0;
+      for (const item of items) {
+        try {
+          const r = await fetch(item.url, {
+            method: item.method,
+            headers: item.headers,
+            body: item.body,
+            credentials: 'include',
+          });
+          if (r.status === 401) { fail++; continue; } // auth expired — keep in queue
+          await remove(item.id);
+          ok++;
+        } catch { fail++; break; } // network still flaky — stop
+      }
+      if (ok > 0) toast(`Synced ${ok} offline change${ok > 1 ? 's' : ''}`, 'ok');
+      if (fail > 0) toast(`${fail} change${fail > 1 ? 's' : ''} pending sync`, 'warn');
+    } finally { _replaying = false; }
+  }
+  // Queueable URL patterns — only mutations that are safe to retry
+  const QUEUEABLE = ['/api/timeclock/', '/api/shifts', '/api/data'];
+  function isQueueable(url, method) {
+    if (method === 'GET' || method === 'HEAD') return false;
+    return QUEUEABLE.some(p => url.startsWith(p));
+  }
+  return { enqueue, replay, isQueueable, getAll };
+})();
+
 async function apiFetch(url, opts = {}) {
   opts.credentials = opts.credentials || 'include';
   opts.headers = Object.assign({
@@ -798,6 +886,13 @@ async function apiFetch(url, opts = {}) {
     }
     return r;
   } catch (e) {
+    // Queue mutation for later replay if offline and queueable
+    const method = (opts.method || 'GET').toUpperCase();
+    if (!navigator.onLine && OfflineQueue.isQueueable(url, method)) {
+      await OfflineQueue.enqueue(url, opts).catch(() => {});
+      toast('Saved offline — will sync when connected', 'warn');
+      return new Response('{"queued":true}', { status: 202, headers: { 'Content-Type': 'application/json' } });
+    }
     if (!navigator.onLine) toast('You\u2019re offline', 'warn');
     throw e;
   }
@@ -3546,7 +3641,8 @@ function refreshOnline() {
 }
 window.addEventListener('online',  () => {
   refreshOnline();
-  // Pull a fresh data snapshot when we come back
+  // Replay any queued offline mutations, then pull fresh data
+  OfflineQueue.replay().catch(() => {});
   if (State.user) apiFetch('/api/data').then(r => r.json()).then(d => { State.data = d; render(); }).catch(()=>{});
 });
 window.addEventListener('offline', refreshOnline);

@@ -1881,32 +1881,204 @@ app.get('/.well-known/apple-app-site-association', (_req, res) => {
   }));
 });
 
-// ── Placeholder screenshots for manifest (PWA store listing) ────────
-// Generates branded placeholder PNGs using inline SVG rendered to PNG.
-// Replace with real captures once the store build pipeline is set up.
-function screenshotSvg(w, h, title, subtitle) {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">
-    <rect width="${w}" height="${h}" fill="#F0F7F3"/>
-    <rect width="${w}" height="${Math.round(h * 0.12)}" fill="#1B5E3B"/>
-    <text x="${w/2}" y="${Math.round(h * 0.075)}" text-anchor="middle" font-family="sans-serif" font-size="${Math.round(h * 0.03)}" font-weight="bold" fill="white">ManageMyStaffing</text>
-    <text x="${w/2}" y="${h/2}" text-anchor="middle" font-family="sans-serif" font-size="${Math.round(h * 0.045)}" font-weight="bold" fill="#1B5E3B">${title}</text>
-    <text x="${w/2}" y="${h/2 + Math.round(h * 0.06)}" text-anchor="middle" font-family="sans-serif" font-size="${Math.round(h * 0.025)}" fill="#475569">${subtitle}</text>
+// ── App Store screenshots for manifest (PWA store listing) ──────────
+// Generates realistic app UI mockup SVGs that reflect the actual app layout.
+// Uses the same brand colours and UI patterns as app.html.
+function screenshotWide() {
+  // 1280×720 dashboard view — schedule grid with sidebar
+  const days = ['Mon 5/12','Tue 5/13','Wed 5/14','Thu 5/15','Fri 5/16','Sat 5/17','Sun 5/18'];
+  const groups = ['CNA','CMA','LPN','RN'];
+  const names = [
+    ['S. Johnson','M. Williams','T. Brown','K. Davis','R. Garcia'],
+    ['A. Martinez','L. Robinson','J. Clark','D. Lewis'],
+    ['P. Walker','N. Hall','C. Allen'],
+    ['E. Young','B. King'],
+  ];
+  const shifts = ['7a-3p','3p-11p','11p-7a','7a-3p','3p-11p'];
+  const colours = ['#1B5E3B','#0E7490','#7C3AED','#B45309'];
+  const lightBg = ['#E8F5EF','#E0F2FE','#EDE9FE','#FEF3C7'];
+  let cells = '';
+  const colW = 128, rowH = 32, startX = 230, startY = 140;
+  // Column headers
+  days.forEach((d, i) => {
+    cells += `<text x="${startX + i * colW + colW/2}" y="${startY - 8}" text-anchor="middle" font-size="11" font-weight="600" fill="#334155">${d}</text>`;
+    cells += `<line x1="${startX + i * colW}" y1="${startY}" x2="${startX + i * colW}" y2="${startY + 14 * rowH}" stroke="#E2E8F0" stroke-width="1"/>`;
+  });
+  // Group rows
+  let row = 0;
+  groups.forEach((g, gi) => {
+    const y = startY + row * rowH;
+    cells += `<rect x="0" y="${y}" width="1280" height="${rowH}" fill="${lightBg[gi]}" opacity="0.5"/>`;
+    cells += `<text x="16" y="${y + 21}" font-size="13" font-weight="800" fill="${colours[gi]}">${g}</text>`;
+    row++;
+    names[gi].forEach((n, ni) => {
+      const ry = startY + row * rowH;
+      if (row % 2 === 0) cells += `<rect x="0" y="${ry}" width="1280" height="${rowH}" fill="#F8FAFC"/>`;
+      cells += `<text x="32" y="${ry + 21}" font-size="11" fill="#0F172A">${n}</text>`;
+      days.forEach((_, di) => {
+        const sh = shifts[(ni + di) % shifts.length];
+        cells += `<rect x="${startX + di * colW + 4}" y="${ry + 4}" width="${colW - 8}" height="${rowH - 8}" rx="4" fill="${colours[gi]}" opacity="0.12"/>`;
+        cells += `<text x="${startX + di * colW + colW/2}" y="${ry + 21}" text-anchor="middle" font-size="10" fill="${colours[gi]}">${sh}</text>`;
+      });
+      row++;
+    });
+  });
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+    <rect width="1280" height="720" fill="#F8FAFC"/>
+    <!-- Header -->
+    <rect width="1280" height="56" fill="#1B5E3B"/>
+    <text x="60" y="35" font-size="18" font-weight="800" fill="white">ManageMyStaffing</text>
+    <circle cx="1220" cy="28" r="16" fill="none" stroke="white" stroke-width="1.5" opacity="0.7"/>
+    <text x="1220" y="33" text-anchor="middle" font-size="12" fill="white" opacity="0.8">JD</text>
+    <!-- Tabs -->
+    <rect width="1280" height="40" y="56" fill="white"/>
+    <line x1="0" y1="96" x2="1280" y2="96" stroke="#E2E8F0" stroke-width="1"/>
+    <text x="60" y="82" font-size="13" font-weight="700" fill="#1B5E3B">Schedule</text>
+    <rect x="40" y="91" width="60" height="3" rx="1.5" fill="#1B5E3B"/>
+    <text x="160" y="82" font-size="13" fill="#64748B">Messages</text>
+    <!-- Week nav -->
+    <rect x="16" y="104" width="1248" height="30" rx="6" fill="white"/>
+    <text x="640" y="124" text-anchor="middle" font-size="13" font-weight="600" fill="#0F172A">May 12 – 18, 2026</text>
+    <text x="40" y="124" font-size="14" fill="#64748B">‹</text>
+    <text x="1240" y="124" text-anchor="end" font-size="14" fill="#64748B">›</text>
+    <!-- Grid -->
+    ${cells}
+    <!-- Status bar mockup -->
+    <rect x="0" y="690" width="1280" height="30" fill="white"/>
+    <text x="640" y="708" text-anchor="middle" font-size="10" fill="#94A3B8">14 employees · 3 open shifts · Sunrise Senior Living</text>
   </svg>`;
 }
+
+function screenshotSchedule() {
+  // 390×844 mobile schedule view
+  const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const dates = [12,13,14,15,16,17,18];
+  const empShifts = [
+    { name: 'Sarah Johnson', role: 'CNA', shift: '7:00a – 3:00p', color: '#1B5E3B' },
+    { name: 'Maria Williams', role: 'CNA', shift: '3:00p – 11:00p', color: '#1B5E3B' },
+    { name: 'Tom Brown', role: 'CMA', shift: '7:00a – 3:00p', color: '#0E7490' },
+    { name: 'Karen Davis', role: 'LPN', shift: '11:00p – 7:00a', color: '#7C3AED' },
+    { name: 'Robert Garcia', role: 'CNA', shift: '7:00a – 3:00p', color: '#1B5E3B' },
+    { name: 'Lisa Robinson', role: 'RN', shift: '3:00p – 11:00p', color: '#B45309' },
+    { name: 'James Clark', role: 'CMA', shift: '7:00a – 3:00p', color: '#0E7490' },
+  ];
+  let dayTabs = '', shiftCards = '';
+  days.forEach((d, i) => {
+    const isActive = i === 2; // Wed selected
+    dayTabs += `<g>
+      ${isActive ? `<rect x="${10 + i * 54}" y="148" width="48" height="52" rx="12" fill="#1B5E3B"/>` : ''}
+      <text x="${34 + i * 54}" y="170" text-anchor="middle" font-size="10" fill="${isActive ? 'white' : '#64748B'}">${d}</text>
+      <text x="${34 + i * 54}" y="190" text-anchor="middle" font-size="16" font-weight="700" fill="${isActive ? 'white' : '#0F172A'}">${dates[i]}</text>
+    </g>`;
+  });
+  empShifts.forEach((s, i) => {
+    const y = 220 + i * 78;
+    shiftCards += `
+      <rect x="16" y="${y}" width="358" height="68" rx="12" fill="white" stroke="#E2E8F0" stroke-width="1"/>
+      <circle cx="44" cy="${y + 34}" r="18" fill="${s.color}" opacity="0.15"/>
+      <text x="44" y="${y + 38}" text-anchor="middle" font-size="11" font-weight="700" fill="${s.color}">${s.name.charAt(0)}${s.name.split(' ')[1].charAt(0)}</text>
+      <text x="72" y="${y + 24}" font-size="14" font-weight="600" fill="#0F172A">${s.name}</text>
+      <text x="72" y="${y + 42}" font-size="12" fill="#64748B">${s.role} · ${s.shift}</text>
+      <rect x="72" y="${y + 50}" width="80" height="4" rx="2" fill="${s.color}" opacity="0.2"/>
+      <rect x="72" y="${y + 50}" width="${30 + (i * 7) % 50}" height="4" rx="2" fill="${s.color}" opacity="0.6"/>
+    `;
+  });
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+    <rect width="390" height="844" fill="#F8FAFC"/>
+    <!-- Status bar -->
+    <rect width="390" height="48" fill="#1B5E3B"/>
+    <text x="20" y="32" font-size="12" fill="white" opacity="0.7">9:41</text>
+    <text x="370" y="32" text-anchor="end" font-size="11" fill="white" opacity="0.7">●●●● WiFi</text>
+    <!-- Header -->
+    <rect width="390" height="52" y="48" fill="#1B5E3B"/>
+    <text x="20" y="82" font-size="17" font-weight="800" fill="white">ManageMyStaffing</text>
+    <circle cx="350" cy="74" r="16" fill="none" stroke="white" stroke-width="1.5" opacity="0.7"/>
+    <text x="350" y="79" text-anchor="middle" font-size="11" fill="white">JD</text>
+    <!-- Tabs -->
+    <rect width="390" height="38" y="100" fill="white"/>
+    <text x="80" y="124" text-anchor="middle" font-size="13" font-weight="700" fill="#1B5E3B">Schedule</text>
+    <rect x="50" y="134" width="60" height="3" rx="1.5" fill="#1B5E3B"/>
+    <text x="220" y="124" text-anchor="middle" font-size="13" fill="#64748B">Messages</text>
+    <line x1="0" y1="138" x2="390" y2="138" stroke="#E2E8F0" stroke-width="1"/>
+    <!-- Day selector -->
+    <text x="195" y="162" text-anchor="middle" font-size="10" fill="#94A3B8">May 2026</text>
+    ${dayTabs}
+    <!-- Shift cards -->
+    ${shiftCards}
+    <!-- FAB -->
+    <circle cx="348" cy="800" r="26" fill="#1B5E3B"/>
+    <text x="348" y="807" text-anchor="middle" font-size="24" fill="white">+</text>
+  </svg>`;
+}
+
+function screenshotMessages() {
+  // 390×844 mobile messages / thread view
+  const threads = [
+    { name: 'Sarah Johnson', preview: 'Can you cover my shift on Thursday?', time: '2:34 PM', unread: 2, color: '#1B5E3B' },
+    { name: 'All Staff — Sunrise', preview: 'Schedule for next week is posted!', time: '1:15 PM', unread: 0, color: '#0E7490' },
+    { name: 'Maria Williams', preview: 'Thanks for the update!', time: '12:08 PM', unread: 0, color: '#7C3AED' },
+    { name: 'Tom Brown', preview: 'I need to swap shifts next Friday', time: '11:42 AM', unread: 1, color: '#B45309' },
+    { name: 'Nursing Team', preview: 'Reminder: training session tomorrow at 9am', time: 'Yesterday', unread: 0, color: '#1B5E3B' },
+    { name: 'Karen Davis', preview: 'Got it, see you then!', time: 'Yesterday', unread: 0, color: '#0E7490' },
+    { name: 'HR Announcements', preview: 'New PTO policy effective June 1st...', time: 'May 8', unread: 0, color: '#7C3AED' },
+  ];
+  let threadRows = '';
+  threads.forEach((t, i) => {
+    const y = 164 + i * 76;
+    const bold = t.unread > 0;
+    threadRows += `
+      <rect x="0" y="${y}" width="390" height="76" fill="${i === 0 ? '#E8F5EF' : 'white'}"/>
+      <line x1="72" y1="${y + 75}" x2="374" y2="${y + 75}" stroke="#F1F5F9" stroke-width="1"/>
+      <circle cx="40" cy="${y + 38}" r="21" fill="${t.color}" opacity="0.15"/>
+      <text x="40" y="${y + 43}" text-anchor="middle" font-size="14" font-weight="700" fill="${t.color}">${t.name.charAt(0)}${t.name.split(/[ —]/)[1]?.charAt(0) || ''}</text>
+      <text x="72" y="${y + 28}" font-size="14" font-weight="${bold ? '700' : '500'}" fill="#0F172A">${t.name}</text>
+      <text x="374" y="${y + 28}" text-anchor="end" font-size="11" fill="${bold ? '#1B5E3B' : '#94A3B8'}">${t.time}</text>
+      <text x="72" y="${y + 50}" font-size="12" fill="${bold ? '#0F172A' : '#64748B'}" font-weight="${bold ? '600' : '400'}">${t.preview.length > 38 ? t.preview.slice(0, 38) + '…' : t.preview}</text>
+      ${t.unread > 0 ? `<rect x="354" y="${y + 40}" width="20" height="20" rx="10" fill="#1B5E3B"/><text x="364" y="${y + 54}" text-anchor="middle" font-size="10" font-weight="800" fill="white">${t.unread}</text>` : ''}
+    `;
+  });
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+    <rect width="390" height="844" fill="white"/>
+    <!-- Status bar -->
+    <rect width="390" height="48" fill="#1B5E3B"/>
+    <text x="20" y="32" font-size="12" fill="white" opacity="0.7">9:41</text>
+    <text x="370" y="32" text-anchor="end" font-size="11" fill="white" opacity="0.7">●●●● WiFi</text>
+    <!-- Header -->
+    <rect width="390" height="52" y="48" fill="#1B5E3B"/>
+    <text x="20" y="82" font-size="17" font-weight="800" fill="white">ManageMyStaffing</text>
+    <circle cx="350" cy="74" r="16" fill="none" stroke="white" stroke-width="1.5" opacity="0.7"/>
+    <text x="350" y="79" text-anchor="middle" font-size="11" fill="white">JD</text>
+    <!-- Tabs -->
+    <rect width="390" height="38" y="100" fill="white"/>
+    <text x="80" y="124" text-anchor="middle" font-size="13" fill="#64748B">Schedule</text>
+    <text x="220" y="124" text-anchor="middle" font-size="13" font-weight="700" fill="#1B5E3B">Messages</text>
+    <rect x="190" y="134" width="60" height="3" rx="1.5" fill="#1B5E3B"/>
+    <line x1="0" y1="138" x2="390" y2="138" stroke="#E2E8F0" stroke-width="1"/>
+    <!-- Search bar -->
+    <rect x="16" y="146" width="358" height="36" rx="10" fill="#F1F5F9"/>
+    <text x="40" y="169" font-size="13" fill="#94A3B8">Search messages…</text>
+    <!-- Thread list -->
+    ${threadRows}
+    <!-- Compose FAB -->
+    <circle cx="348" cy="800" r="26" fill="#1B5E3B"/>
+    <text x="348" y="806" text-anchor="middle" font-size="18" fill="white">✎</text>
+  </svg>`;
+}
+
 app.get('/app/screenshot-wide.png', (_req, res) => {
   res.setHeader('Content-Type', 'image/svg+xml');
   res.setHeader('Cache-Control', 'public, max-age=604800');
-  res.send(screenshotSvg(1280, 720, 'Schedule Dashboard', 'Manage shifts, teams, and facilities at a glance'));
+  res.send(screenshotWide());
 });
 app.get('/app/screenshot-schedule.png', (_req, res) => {
   res.setHeader('Content-Type', 'image/svg+xml');
   res.setHeader('Cache-Control', 'public, max-age=604800');
-  res.send(screenshotSvg(390, 844, 'Shift Schedule', 'View and manage employee shifts'));
+  res.send(screenshotSchedule());
 });
 app.get('/app/screenshot-messages.png', (_req, res) => {
   res.setHeader('Content-Type', 'image/svg+xml');
   res.setHeader('Cache-Control', 'public, max-age=604800');
-  res.send(screenshotSvg(390, 844, 'Team Messages', 'Direct messaging between staff and managers'));
+  res.send(screenshotMessages());
 });
 
 // Inline SVG app icon — exact same medical-house artwork as the main site's

@@ -1,0 +1,48 @@
+{
+  "packageId": "com.managemystaffing.app",
+  "host": "www.managemystaffing.com",
+  "name": "ManageMyStaffing",
+  "launcherName": "MMS",
+  "display": "standalone",
+  "themeColor": "#1B5E3B",
+  "navigationColor": "#0F3D24",
+  "navigationColorDark": "#0F3D24",
+  "navigationDividerColor": "#0F3D24",
+  "navigationDividerColorDark": "#0F3D24",
+  "backgroundColor": "#1B5E3B",
+  "enableNotifications": true,
+  "startUrl": "/app",
+  "iconUrl": "https://www.managemystaffing.com/app/icon-512.png",
+  "maskableIconUrl": "https://www.managemystaffing.com/app/icon-maskable-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "./mms-keystore.jks",
+    "alias": "mms"
+  },
+  "appVersionName": "1.0.0",
+  "appVersionCode": 1,
+  "shortcuts": [
+    {
+      "name": "Schedule",
+      "shortName": "Schedule",
+      "url": "/app?tab=schedule",
+      "chosenIconUrl": "https://www.managemystaffing.com/app/icon-192.png"
+    },
+    {
+      "name": "Messages",
+      "shortName": "Messages",
+      "url": "/app?tab=messages",
+      "chosenIconUrl": "https://www.managemystaffing.com/app/icon-192.png"
+    }
+  ],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://www.managemystaffing.com/app/manifest.webmanifest",
+  "fallbackType": "customtabs",
+  "enableSiteSettingsShortcut": false,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://www.managemystaffing.com/",
+  "minSdkVersion": 23,
+  "orientation": "any",
+  "fingerprints": []
+}
