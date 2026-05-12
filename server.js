@@ -89,8 +89,8 @@ const APP_URL    = process.env.APP_URL || 'https://managemystaffing.com';
 //     can't access PHI, so we relax those for usability.
 const JWT_TTL_SECONDS              = 60 * 60 * 2;              // 2h — admin/SA hard cap
 const IDLE_TIMEOUT_SECONDS         = 60 * 60 * 2;              // 2h idle — admin/SA
-const EMPLOYEE_JWT_TTL_SECONDS     = 60 * 60 * 24 * 365;       // 1y — employee, effectively no expiry
-const EMPLOYEE_IDLE_TIMEOUT_SECONDS = 60 * 60 * 24 * 365;      // never auto-logout employees
+const EMPLOYEE_JWT_TTL_SECONDS     = 60 * 60 * 24 * 30;        // 30d — employees re-auth monthly
+const EMPLOYEE_IDLE_TIMEOUT_SECONDS = 60 * 60 * 24 * 7;        // 7d idle — auto-logout after a week inactive
 const MAX_FAILED_ATTEMPTS  = 5;
 const LOCKOUT_MS           = 30 * 60 * 1000;     // 30 min
 const PASSWORD_MIN_LENGTH          = 12;          // admin/SA
@@ -293,7 +293,7 @@ function verifyIndeedSignature(rawBody, sigHeader) {
 // Marketplace certification — Indeed surfaces disposition data back to job
 // seekers and other ATS partners.
 async function pushIndeedDisposition(applyId, status, occurredAtMillis = Date.now()) {
-  if (!applyId) return { ok: false, reason: 'no_apply_id' };
+  if (!applyId || typeof applyId !== 'string') return { ok: false, reason: 'no_apply_id' };
   if (!INDEED_API_CLIENT_ID) return { ok: false, reason: 'not_configured' };
   // Map our internal statuses to Indeed's controlled vocabulary.
   const map = {
@@ -304,7 +304,11 @@ async function pushIndeedDisposition(applyId, status, occurredAtMillis = Date.no
     hired:      'HIRED',
     rejected:   'REJECTED',
   };
-  const indeedStatus = map[status] || 'IN_REVIEW';
+  const indeedStatus = map[status];
+  if (!indeedStatus) {
+    logger.warn('indeed_disposition_unmapped_status', { status, applyId });
+    return { ok: false, reason: 'unmapped_status' };
+  }
   try {
     const token = await getIndeedToken();
     const ctrl = new AbortController();
@@ -350,6 +354,182 @@ async function pushIndeedDisposition(applyId, status, occurredAtMillis = Date.no
     logger.error('indeed_disposition_error', { msg: e.message, applyId });
     return { ok: false, reason: 'network' };
   }
+}
+
+// ── PAYCOM CONFIG ──────────────────────────────────────────────────────────────
+const PAYCOM_CLIENT_ID     = process.env.PAYCOM_CLIENT_ID     || null;
+const PAYCOM_CLIENT_SECRET = process.env.PAYCOM_CLIENT_SECRET || null;
+const PAYCOM_COMPANY_CODE  = process.env.PAYCOM_COMPANY_CODE  || null;
+const PAYCOM_API_BASE      = process.env.PAYCOM_API_BASE || 'https://api.paycom.com';
+const PAYCOM_AUTH_BASE     = process.env.PAYCOM_AUTH_BASE || 'https://api.paycom.com/v4/oauth/token';
+
+let _paycomToken = null, _paycomTokenExpiry = 0, _paycomTokenInflight = null;
+
+async function getPaycomToken({ forceRefresh = false } = {}) {
+  if (!PAYCOM_CLIENT_ID || !PAYCOM_CLIENT_SECRET) throw new Error('Paycom credentials not configured');
+  if (!forceRefresh && _paycomToken && Date.now() < _paycomTokenExpiry) return _paycomToken;
+  if (_paycomTokenInflight) return _paycomTokenInflight;
+  _paycomTokenInflight = (async () => {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 10000);
+      let resp;
+      try {
+        resp = await fetch(PAYCOM_AUTH_BASE, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'client_credentials',
+            client_id: PAYCOM_CLIENT_ID,
+            client_secret: PAYCOM_CLIENT_SECRET,
+          }).toString(),
+          signal: ctrl.signal,
+        });
+      } finally { clearTimeout(t); }
+      if (!resp.ok) throw new Error(`Paycom auth failed: ${resp.status}`);
+      const body = await resp.json().catch(() => null);
+      if (!body || !body.access_token) throw new Error('Paycom auth: malformed response');
+      _paycomToken = body.access_token;
+      _paycomTokenExpiry = Date.now() + ((typeof body.expires_in === 'number' && body.expires_in > 0 ? body.expires_in : 3600) - 60) * 1000;
+      return _paycomToken;
+    } finally { _paycomTokenInflight = null; }
+  })();
+  return _paycomTokenInflight;
+}
+
+// Hardened Paycom fetch with timeout, 401 retry, 429 backoff, 5xx retry.
+async function paycomFetch(url, { method = 'GET', body = null, timeoutMs = 15000, maxRetries = 3 } = {}) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const token = await getPaycomToken({ forceRefresh: attempt > 1 });
+      const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' };
+      if (body) headers['Content-Type'] = 'application/json';
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), timeoutMs);
+      let resp;
+      try {
+        resp = await fetch(url, {
+          method, headers,
+          body: body ? JSON.stringify(body) : undefined,
+          signal: ctrl.signal,
+        });
+      } finally { clearTimeout(t); }
+      if (resp.status === 401 && attempt === 1) { _paycomToken = null; continue; }
+      if (resp.status === 429) {
+        const ra = resp.headers.get('Retry-After');
+        const waitMs = ra ? (isNaN(Number(ra)) ? Math.max(0, new Date(ra).getTime() - Date.now()) : Number(ra) * 1000) : 1000 * attempt;
+        if (attempt >= maxRetries) return { ok: false, status: 429, body: null };
+        await new Promise(r => setTimeout(r, Math.min(waitMs, 30000)));
+        continue;
+      }
+      if (resp.status >= 500 && attempt < maxRetries) { await new Promise(r => setTimeout(r, 50 * Math.pow(2, attempt))); continue; }
+      const respBody = await resp.json().catch(() => null);
+      return { ok: resp.ok, status: resp.status, body: respBody };
+    } catch (e) {
+      if (attempt >= maxRetries) return { ok: false, status: 0, body: null, error: e.message };
+    }
+  }
+  return { ok: false, status: 0, body: null };
+}
+
+// ── ADP WORKFORCE NOW CONFIG ──────────────────────────────────────────────────
+// ADP uses OAuth2 client_credentials with mutual TLS (mTLS). The client cert
+// and key must be set via env vars or file paths. In Azure App Service, store
+// them in /mounts/data/adp/ or use Key Vault references.
+const ADP_CLIENT_ID       = process.env.ADP_CLIENT_ID       || null;
+const ADP_CLIENT_SECRET   = process.env.ADP_CLIENT_SECRET   || null;
+const ADP_ORG_OID         = process.env.ADP_ORG_OID         || null;
+const ADP_CERT_PATH       = process.env.ADP_CERT_PATH       || null;  // PEM cert file
+const ADP_KEY_PATH        = process.env.ADP_KEY_PATH        || null;  // PEM key file
+const ADP_API_BASE        = process.env.ADP_API_BASE || 'https://api.adp.com';
+const ADP_AUTH_BASE       = process.env.ADP_AUTH_BASE || 'https://accounts.adp.com/auth/oauth/v2/token';
+
+let _adpToken = null, _adpTokenExpiry = 0, _adpTokenInflight = null;
+let _adpTlsAgent = null;
+
+function _getAdpTlsAgent() {
+  if (_adpTlsAgent) return _adpTlsAgent;
+  if (!ADP_CERT_PATH || !ADP_KEY_PATH) return null;
+  try {
+    const https = require('https');
+    const fs = require('fs');
+    _adpTlsAgent = new https.Agent({
+      cert: fs.readFileSync(ADP_CERT_PATH),
+      key:  fs.readFileSync(ADP_KEY_PATH),
+      rejectUnauthorized: true,
+    });
+    return _adpTlsAgent;
+  } catch (e) {
+    logger.error('adp_mtls_agent_failed', { msg: e.message });
+    return null;
+  }
+}
+
+async function getAdpToken({ forceRefresh = false } = {}) {
+  if (!ADP_CLIENT_ID || !ADP_CLIENT_SECRET) throw new Error('ADP credentials not configured');
+  if (!forceRefresh && _adpToken && Date.now() < _adpTokenExpiry) return _adpToken;
+  if (_adpTokenInflight) return _adpTokenInflight;
+  _adpTokenInflight = (async () => {
+    try {
+      const agent = _getAdpTlsAgent();
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 10000);
+      const fetchOpts = {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Authorization': `Basic ${Buffer.from(`${ADP_CLIENT_ID}:${ADP_CLIENT_SECRET}`).toString('base64')}`,
+        },
+        body: new URLSearchParams({ grant_type: 'client_credentials' }).toString(),
+        signal: ctrl.signal,
+      };
+      if (agent) fetchOpts.agent = agent;
+      let resp;
+      try { resp = await fetch(ADP_AUTH_BASE, fetchOpts); }
+      finally { clearTimeout(t); }
+      if (!resp.ok) throw new Error(`ADP auth failed: ${resp.status}`);
+      const body = await resp.json().catch(() => null);
+      if (!body || !body.access_token) throw new Error('ADP auth: malformed response');
+      _adpToken = body.access_token;
+      _adpTokenExpiry = Date.now() + ((typeof body.expires_in === 'number' && body.expires_in > 0 ? body.expires_in : 3600) - 60) * 1000;
+      return _adpToken;
+    } finally { _adpTokenInflight = null; }
+  })();
+  return _adpTokenInflight;
+}
+
+// Hardened ADP fetch with mTLS, timeout, 401 retry, 429 backoff, 5xx retry.
+async function adpFetch(url, { method = 'GET', body = null, timeoutMs = 15000, maxRetries = 3 } = {}) {
+  const agent = _getAdpTlsAgent();
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const token = await getAdpToken({ forceRefresh: attempt > 1 });
+      const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' };
+      if (body) headers['Content-Type'] = 'application/json';
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), timeoutMs);
+      const fetchOpts = { method, headers, signal: ctrl.signal };
+      if (body) fetchOpts.body = JSON.stringify(body);
+      if (agent) fetchOpts.agent = agent;
+      let resp;
+      try { resp = await fetch(url, fetchOpts); }
+      finally { clearTimeout(t); }
+      if (resp.status === 401 && attempt === 1) { _adpToken = null; continue; }
+      if (resp.status === 429) {
+        const ra = resp.headers.get('Retry-After');
+        const waitMs = ra ? (isNaN(Number(ra)) ? Math.max(0, new Date(ra).getTime() - Date.now()) : Number(ra) * 1000) : 1000 * attempt;
+        if (attempt >= maxRetries) return { ok: false, status: 429, body: null };
+        await new Promise(r => setTimeout(r, Math.min(waitMs, 30000)));
+        continue;
+      }
+      if (resp.status >= 500 && attempt < maxRetries) { await new Promise(r => setTimeout(r, 50 * Math.pow(2, attempt))); continue; }
+      const respBody = await resp.json().catch(() => null);
+      return { ok: resp.ok, status: resp.status, body: respBody };
+    } catch (e) {
+      if (attempt >= maxRetries) return { ok: false, status: 0, body: null, error: e.message };
+    }
+  }
+  return { ok: false, status: 0, body: null };
 }
 
 // Promise-serialized token fetch — prevents stampede when N concurrent
@@ -955,13 +1135,15 @@ async function applyMigrations(data) {
       sa.totpSecret = null;
       sa.failedAttempts = 0;
       sa.lockedUntil = null;
+      delete sa.passwordResetTokenHash;
+      delete sa.passwordResetExpiry;
       sa.inviteToken = crypto.randomBytes(24).toString('hex');
       sa.inviteExpiry = Date.now() + 24 * 60 * 60 * 1000; // 24h
       dirty = true;
-      console.log('\n=================================================================');
-      console.log('SA password reset. Use the link below within 24h to set password:');
-      console.log(`${process.env.APP_URL || 'http://localhost:3002'}/?invite=${sa.inviteToken}`);
-      console.log('=================================================================\n');
+      auditLog('SA_PASSWORD_RESET_VIA_ENV', { id: sa.id, email: sa.email, role: 'superadmin' }, {
+        method: 'RESET_SA_PASSWORD env var', resetAt: new Date().toISOString(),
+      });
+      logger.warn('SA_PASSWORD_RESET', { accountId: sa.id, inviteExpiry: sa.inviteExpiry });
     }
   }
 
@@ -1641,7 +1823,7 @@ app.use('/api/', requireCSRFHeader);
 
 // ── HEALTH ────────────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, env: NODE_ENV });
+  res.json({ ok: true });
 });
 
 // Deep readiness probe — checks dependencies. Use for load-balancer health.
@@ -1784,6 +1966,34 @@ app.get('/api/healthz/deep', (req, res) => {
       timeout: '15s default, 10s on auth endpoint',
       logsScrubbed: 'status-only; no body / no URL with secrets',
     },
+    paycomIntegration: {
+      configured: !!(PAYCOM_CLIENT_ID && PAYCOM_CLIENT_SECRET),
+      companyCode: !!PAYCOM_COMPANY_CODE,
+      tokenSerialized: true,
+      retryOn401: true,
+      retryOn429: 'honors Retry-After',
+      retryOn5xx: 'exponential backoff up to 3 attempts',
+      timeout: '15s default, 10s on auth endpoint',
+      credentialsServerSideOnly: true,
+    },
+    adpIntegration: {
+      configured: !!(ADP_CLIENT_ID && ADP_CLIENT_SECRET),
+      mtlsConfigured: !!(ADP_CERT_PATH && ADP_KEY_PATH),
+      orgOid: !!ADP_ORG_OID,
+      tokenSerialized: true,
+      retryOn401: true,
+      retryOn429: 'honors Retry-After',
+      retryOn5xx: 'exponential backoff up to 3 attempts',
+      timeout: '15s default, 10s on auth endpoint',
+      credentialsServerSideOnly: true,
+    },
+    indeedIntegration: {
+      configured: !!(INDEED_PARTNER_SECRET),
+      apiConfigured: !!(INDEED_API_CLIENT_ID && INDEED_API_CLIENT_SECRET),
+      webhookSignatureVerification: 'HMAC-SHA256 with timingSafeEqual',
+      dispositionSync: 'automated on status change',
+      webhookRateLimited: true,
+    },
     requiredEnv: {
       JWT_SECRET: ok(process.env.JWT_SECRET) && (process.env.JWT_SECRET || '').length >= 32,
       DATA_ENCRYPTION_KEY: ok(process.env.DATA_ENCRYPTION_KEY),
@@ -1797,6 +2007,9 @@ app.get('/api/healthz/deep', (req, res) => {
       { name: 'Microsoft Azure (App Service, Postgres, Storage, Key Vault, Application Insights)', baaRequired: true, role: 'compute / storage / observability' },
       { name: 'Azure Communication Services',                                                       baaRequired: true, role: 'email + SMS delivery (covered by Microsoft master BAA)' },
       { name: 'PointClickCare (when configured)',                                                   baaRequired: true, role: 'EHR data source — partnership BAA' },
+      { name: 'Paycom (when configured)',                                                            baaRequired: false, role: 'payroll — hire push, period sync, time import' },
+      { name: 'ADP Workforce Now (when configured)',                                                 baaRequired: false, role: 'payroll — hire push, period sync, time import (mTLS)' },
+      { name: 'Indeed (when configured)',                                                            baaRequired: false, role: 'hiring — inbound applications, disposition sync' },
     ],
     deviations: [],   // populated below if any check fails
   };
@@ -3103,8 +3316,13 @@ app.post('/api/recruiting/onboard', requireAuth, requireAdmin, async (req, res) 
 // INDEED_PARTNER_SECRET. We require the X-Indeed-Signature header and
 // verify it constant-time before parsing JSON.
 
+// Rate limiter for Indeed webhooks — generous for legitimate traffic,
+// prevents abuse if endpoint URL leaks without the HMAC secret.
+const indeedWebhookLimiter = rateLimit({ windowMs: 60 * 1000, max: 60, message: { error: 'Too many requests' } });
+
 // POST /api/indeed/apply — receives a new application from Indeed Apply
 app.post('/api/indeed/apply',
+  indeedWebhookLimiter,
   express.raw({ type: 'application/json', limit: '5mb' }),
   async (req, res) => {
     if (!INDEED_PARTNER_SECRET) {
@@ -3156,7 +3374,7 @@ app.post('/api/indeed/apply',
       dupe.indeedApplyId = indeedApplyId || dupe.indeedApplyId;
       dupe.appliedAt = new Date().toISOString();
       if (apply.questions && apply.questions.length) dupe.questions = apply.questions;
-      if (apply.resume?.url) dupe.resumeUrl = apply.resume.url;
+      if (apply.resume?.url && /^https?:\/\//i.test(apply.resume.url)) dupe.resumeUrl = String(apply.resume.url).slice(0, 2048);
       prospect = dupe;
     } else {
       prospect = {
@@ -3173,7 +3391,7 @@ app.post('/api/indeed/apply',
         status: 'new',
         notes: [],
         questions: Array.isArray(apply.questions) ? apply.questions.slice(0, 50) : [],
-        resumeUrl: apply.resume?.url || null,
+        resumeUrl: (apply.resume?.url && /^https?:\/\//i.test(apply.resume.url)) ? String(apply.resume.url).slice(0, 2048) : null,
         coverLetter: apply.coverLetter?.text ? String(apply.coverLetter.text).slice(0, 5000) : null,
       };
       data.prospects.push(prospect);
@@ -3192,6 +3410,7 @@ app.post('/api/indeed/apply',
 // POST /api/indeed/event — receives status events from Indeed (applicant
 // withdrew, Indeed flagged duplicate, etc.). Same signature scheme.
 app.post('/api/indeed/event',
+  indeedWebhookLimiter,
   express.raw({ type: 'application/json', limit: '256kb' }),
   async (req, res) => {
     if (!INDEED_PARTNER_SECRET) return res.status(503).json({ error: 'not configured' });
@@ -3216,7 +3435,8 @@ app.post('/api/indeed/event',
     if (!Array.isArray(p.notes)) p.notes = [];
 
     if (eventType === 'WITHDRAWN' || eventType === 'withdrawn' || eventType === 'CANDIDATE_WITHDREW') {
-      p.status = 'rejected';
+      // Don't overwrite terminal statuses — a late WITHDRAWN event shouldn't revert a hire
+      if (p.status !== 'hired' && p.status !== 'onboarding') p.status = 'rejected';
       p.notes.push({ at: new Date().toISOString(), kind: 'indeed_event', text: 'Candidate withdrew via Indeed.' });
     } else if (eventType === 'DUPLICATE' || eventType === 'duplicate') {
       p.notes.push({ at: new Date().toISOString(), kind: 'indeed_event', text: 'Indeed flagged as duplicate application.' });
@@ -3403,7 +3623,7 @@ app.get('/api/admin/probe-pg', requireAuth, requireSuperAdmin, async (_req, res)
   const { Client } = require('pg');
   const c = new Client({
     connectionString: process.env.PG_CONN,
-    ssl: { rejectUnauthorized: false },
+    ssl: { rejectUnauthorized: IS_PROD },
     connectionTimeoutMillis: 10000,
   });
   try {
@@ -3641,7 +3861,7 @@ app.get('/api/admin/data-integrity', requireAuth, requireAdmin, async (req, res)
     const pgLib = require('pg');
     const client = new pgLib.Client({
       connectionString: process.env.PG_CONN,
-      ssl: { rejectUnauthorized: false },
+      ssl: { rejectUnauthorized: IS_PROD },
     });
     await client.connect();
     try {
@@ -3721,7 +3941,7 @@ app.post('/api/admin/recover-shifts-from-history', requireAuth, requireAdmin, as
   if (!liveConn) return res.status(503).json({ error: 'PG_CONN not set' });
   const client = new pgLib.Client({
     connectionString: liveConn,
-    ssl: { rejectUnauthorized: false },
+    ssl: { rejectUnauthorized: IS_PROD },
     connectionTimeoutMillis: 10000,
     statement_timeout: 60000,
   });
@@ -3830,7 +4050,7 @@ app.post('/api/admin/recover-from-history', requireAuth, requireAdmin, async (re
   catch (e) { return res.status(500).json({ error: 'Cannot parse PG_CONN' }); }
   const client = new pgLib.Client({
     connectionString: liveConn,
-    ssl: { rejectUnauthorized: false },
+    ssl: { rejectUnauthorized: IS_PROD },
     connectionTimeoutMillis: 10000,
     statement_timeout: 60000,
   });
@@ -3971,7 +4191,7 @@ app.post('/api/admin/recover-from-pitr', requireAuth, requireAdmin, async (req, 
     user: decodeURIComponent(url.username),
     password: decodeURIComponent(url.password),
     database: url.pathname.replace(/^\//, '') || 'mms',
-    ssl: { rejectUnauthorized: false },
+    ssl: { rejectUnauthorized: IS_PROD },
     connectionTimeoutMillis: 10000,
     statement_timeout: 30000,
   });
@@ -4203,7 +4423,10 @@ app.delete('/api/buildings/:id/provision-sms', requireAuth, requireSuperAdmin, a
 //   3. Bridge from existing physical clocks via signed webhook
 // Plus admin correction via PATCH on individual records.
 
-const TIMECLOCK_KIOSK_SECRET = process.env.TIMECLOCK_KIOSK_SECRET || JWT_SECRET;
+const TIMECLOCK_KIOSK_SECRET = process.env.TIMECLOCK_KIOSK_SECRET || (() => {
+  if (IS_PROD) logger.warn('TIMECLOCK_KIOSK_SECRET not set — generating ephemeral key (kiosk tokens will not survive restarts)');
+  return crypto.randomBytes(32).toString('hex');
+})();
 
 // Distance helper (Haversine, meters) for geofence checks.
 function _haversineMeters(lat1, lng1, lat2, lng2) {
@@ -6465,7 +6688,7 @@ app.post('/api/recruiting/push-to-roster', requireAuth, requireAdmin, async (req
   // Push disposition to Indeed if this prospect came from there
   if (p.indeedApplyId && INDEED_API_CLIENT_ID) {
     pushIndeedDisposition(p.indeedApplyId, 'hired')
-      .catch(e => logger.error('indeed_disposition_hire_failed', { msg: e.message }));
+      .catch(e => logger.error('indeed_disposition_hire_failed', { msg: e.message, prospectId: p.id }));
   }
   res.json({ ok: true, employee: newEmp });
 });
@@ -8154,6 +8377,221 @@ app.post('/api/onboarding/complete', requireAuth, async (req, res) => {
     hrEmployeeId: emp.id, employeeId: newEmpId, name: emp.name,
   });
   res.json({ ok: true, employeeId: newEmpId });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PAYROLL INTEGRATION ROUTES — Paycom & ADP
+// ══════════════════════════════════════════════════════════════════════════════
+
+// GET /api/payroll/status — returns config status for all providers
+app.get('/api/payroll/status', requireAuth, requireAdmin, (_req, res) => {
+  res.json({
+    paycom: {
+      configured: !!(PAYCOM_CLIENT_ID && PAYCOM_CLIENT_SECRET),
+      companyCode: PAYCOM_COMPANY_CODE || null,
+    },
+    adp: {
+      configured: !!(ADP_CLIENT_ID && ADP_CLIENT_SECRET),
+      orgOid: ADP_ORG_OID ? `${ADP_ORG_OID.slice(0, 8)}…` : null,
+      mtlsConfigured: !!(ADP_CERT_PATH && ADP_KEY_PATH),
+    },
+  });
+});
+
+// POST /api/payroll/:provider/test — test connection by fetching an OAuth token
+app.post('/api/payroll/:provider/test', requireAuth, requireAdmin, async (req, res) => {
+  const provider = req.params.provider;
+  try {
+    if (provider === 'paycom') {
+      if (!PAYCOM_CLIENT_ID || !PAYCOM_CLIENT_SECRET) return res.status(503).json({ error: 'Paycom not configured — set PAYCOM_CLIENT_ID and PAYCOM_CLIENT_SECRET' });
+      await getPaycomToken({ forceRefresh: true });
+      auditLog('PAYCOM_CONNECTION_TEST', req.user, { result: 'ok' });
+      return res.json({ ok: true, provider: 'paycom', mode: PAYCOM_API_BASE.includes('sandbox') ? 'sandbox' : 'production' });
+    }
+    if (provider === 'adp') {
+      if (!ADP_CLIENT_ID || !ADP_CLIENT_SECRET) return res.status(503).json({ error: 'ADP not configured — set ADP_CLIENT_ID and ADP_CLIENT_SECRET' });
+      await getAdpToken({ forceRefresh: true });
+      auditLog('ADP_CONNECTION_TEST', req.user, { result: 'ok' });
+      return res.json({ ok: true, provider: 'adp', mode: ADP_API_BASE.includes('sandbox') ? 'sandbox' : 'production' });
+    }
+    return res.status(400).json({ error: 'Unknown provider' });
+  } catch (e) {
+    logger.error(`${provider}_connection_test_failed`, { msg: e.message });
+    auditLog(`${provider.toUpperCase()}_CONNECTION_TEST`, req.user, { result: 'error', msg: e.message });
+    return res.status(502).json({ error: `${provider} authentication failed: ${e.message}` });
+  }
+});
+
+// POST /api/payroll/:provider/hire — push a single employee to payroll
+app.post('/api/payroll/:provider/hire', requireAuth, requireAdmin, async (req, res) => {
+  const provider = req.params.provider;
+  const { empId, payload } = req.body || {};
+  if (!empId || !payload) return res.status(400).json({ error: 'empId and payload required' });
+
+  const data = await loadData();
+  const emp = (data.employees || []).find(e => e.id === empId);
+  if (!emp) return res.status(404).json({ error: 'Employee not found' });
+  if (emp.payrollIds?.[provider]) return res.json({ ok: true, alreadyPushed: true, externalId: emp.payrollIds[provider] });
+
+  let r;
+  if (provider === 'paycom') {
+    if (!PAYCOM_CLIENT_ID) return res.status(503).json({ error: 'Paycom not configured' });
+    const companyCode = PAYCOM_COMPANY_CODE || payload.clientCode;
+    if (!companyCode) return res.status(400).json({ error: 'Paycom company code required' });
+    r = await paycomFetch(`${PAYCOM_API_BASE}/v4/companies/${encodeURIComponent(companyCode)}/employees`, {
+      method: 'POST', body: payload,
+    });
+  } else if (provider === 'adp') {
+    if (!ADP_CLIENT_ID) return res.status(503).json({ error: 'ADP not configured' });
+    r = await adpFetch(`${ADP_API_BASE}/events/hr/v1/worker.hire`, {
+      method: 'POST', body: payload,
+    });
+  } else {
+    return res.status(400).json({ error: 'Unknown provider' });
+  }
+
+  if (!r.ok) {
+    logger.error(`${provider}_hire_failed`, { status: r.status, empId });
+    auditLog(`${provider.toUpperCase()}_HIRE_FAILED`, req.user, { empId, status: r.status });
+    return res.status(502).json({ error: `${provider} hire push failed (status ${r.status})`, detail: r.body });
+  }
+
+  // Extract external ID from provider response
+  let externalId = null;
+  if (provider === 'paycom') {
+    externalId = r.body?.employeeId || r.body?.data?.employeeId || r.body?.id || null;
+  } else if (provider === 'adp') {
+    const ev = (r.body?.events || [])[0];
+    externalId = ev?.data?.output?.worker?.workerID?.idValue || ev?.data?.output?.worker?.associateOID || r.body?.associateOID || null;
+  }
+  // Fall back to a timestamped reference if provider didn't return an ID
+  if (!externalId) externalId = `${provider.toUpperCase()}-${Date.now()}`;
+
+  if (!emp.payrollIds) emp.payrollIds = {};
+  emp.payrollIds[provider] = externalId;
+  emp.payrollSyncedAt = new Date().toISOString();
+  markDirty();
+  auditLog(`${provider.toUpperCase()}_HIRE_PUSHED`, req.user, { empId, externalId, name: emp.name });
+  res.json({ ok: true, externalId });
+});
+
+// POST /api/payroll/:provider/sync — push payroll period totals
+app.post('/api/payroll/:provider/sync', requireAuth, requireAdmin, async (req, res) => {
+  const provider = req.params.provider;
+  const { periodStart, periodEnd, rows } = req.body || {};
+  if (!periodStart || !periodEnd || !Array.isArray(rows) || !rows.length) {
+    return res.status(400).json({ error: 'periodStart, periodEnd, and rows[] required' });
+  }
+
+  let r;
+  if (provider === 'paycom') {
+    if (!PAYCOM_CLIENT_ID) return res.status(503).json({ error: 'Paycom not configured' });
+    const companyCode = PAYCOM_COMPANY_CODE || req.body.companyCode;
+    r = await paycomFetch(`${PAYCOM_API_BASE}/v4/companies/${encodeURIComponent(companyCode || '')}/payroll-batches`, {
+      method: 'POST',
+      body: { periodStart, periodEnd, entries: rows },
+    });
+  } else if (provider === 'adp') {
+    if (!ADP_CLIENT_ID) return res.status(503).json({ error: 'ADP not configured' });
+    r = await adpFetch(`${ADP_API_BASE}/payroll/v1/payroll-output`, {
+      method: 'POST',
+      body: { payPeriod: { startDate: periodStart, endDate: periodEnd }, entries: rows },
+    });
+  } else {
+    return res.status(400).json({ error: 'Unknown provider' });
+  }
+
+  if (!r.ok) {
+    logger.error(`${provider}_payroll_sync_failed`, { status: r.status });
+    auditLog(`${provider.toUpperCase()}_PAYROLL_SYNC_FAILED`, req.user, { periodStart, periodEnd, status: r.status });
+    return res.status(502).json({ error: `${provider} payroll sync failed (status ${r.status})`, detail: r.body });
+  }
+
+  auditLog(`${provider.toUpperCase()}_PAYROLL_SYNCED`, req.user, { periodStart, periodEnd, empCount: rows.length });
+  res.json({ ok: true, synced: rows.length });
+});
+
+// POST /api/payroll/:provider/time-pull — pull time records from provider
+app.post('/api/payroll/:provider/time-pull', requireAuth, requireAdmin, async (req, res) => {
+  const provider = req.params.provider;
+  const { startDate, endDate, employeeIds } = req.body || {};
+  if (!startDate || !endDate) return res.status(400).json({ error: 'startDate and endDate required' });
+
+  let r;
+  if (provider === 'paycom') {
+    if (!PAYCOM_CLIENT_ID) return res.status(503).json({ error: 'Paycom not configured' });
+    const companyCode = PAYCOM_COMPANY_CODE || req.body.companyCode;
+    r = await paycomFetch(`${PAYCOM_API_BASE}/v4/companies/${encodeURIComponent(companyCode || '')}/time-records?startDate=${startDate}&endDate=${endDate}`);
+  } else if (provider === 'adp') {
+    if (!ADP_CLIENT_ID) return res.status(503).json({ error: 'ADP not configured' });
+    r = await adpFetch(`${ADP_API_BASE}/time/v2/workers/time-cards?$filter=timePeriod/startDate ge '${startDate}' and timePeriod/endDate le '${endDate}'`);
+  } else {
+    return res.status(400).json({ error: 'Unknown provider' });
+  }
+
+  if (!r.ok) {
+    logger.error(`${provider}_time_pull_failed`, { status: r.status });
+    return res.status(502).json({ error: `${provider} time pull failed (status ${r.status})`, detail: r.body });
+  }
+
+  // Normalize provider response into a common punch format
+  let punches = [];
+  if (provider === 'paycom') {
+    const records = r.body?.data || r.body?.timeRecords || r.body || [];
+    punches = (Array.isArray(records) ? records : []).map(tr => ({
+      externalId: tr.id || tr.recordId,
+      empExtId: tr.employeeId || tr.employeeNumber,
+      date: tr.date || tr.workDate,
+      hours: parseFloat(tr.totalHours || tr.hours || 0) || 0,
+      punchIn: tr.startTime || tr.punchIn || null,
+      punchOut: tr.endTime || tr.punchOut || null,
+    }));
+  } else if (provider === 'adp') {
+    const cards = r.body?.timeCards || r.body?.data || r.body || [];
+    punches = (Array.isArray(cards) ? cards : []).map(tc => ({
+      externalId: tc.timeCardID || tc.itemID,
+      empExtId: tc.associateOID || tc.workerID?.idValue,
+      date: tc.timePeriod?.startDate || tc.date,
+      hours: parseFloat(tc.totalHours?.hoursQuantity || tc.hours || 0) || 0,
+      punchIn: tc.startDateTime || null,
+      punchOut: tc.endDateTime || null,
+    }));
+  }
+
+  // Match to internal employees by payrollIds
+  const data = await loadData();
+  const empMap = new Map();
+  for (const e of (data.employees || [])) {
+    if (e.payrollIds?.[provider]) empMap.set(e.payrollIds[provider], e);
+  }
+
+  if (!Array.isArray(data.hrTimeClock)) data.hrTimeClock = [];
+  const existing = new Set(data.hrTimeClock.map(r => `${r.empId}|${r.date}|${r.source || 'manual'}`));
+  let added = 0, skipped = 0, unmatched = 0;
+  for (const p of punches) {
+    const emp = empMap.get(p.empExtId);
+    if (!emp) { unmatched++; continue; }
+    if (employeeIds && !employeeIds.includes(emp.id)) continue;
+    const key = `${emp.id}|${p.date}|${provider}`;
+    if (existing.has(key)) { skipped++; continue; }
+    data.hrTimeClock.push({
+      id: `tc_${provider}_${emp.id}_${p.date}`,
+      empId: emp.id,
+      date: p.date,
+      hours: p.hours,
+      punchIn: p.punchIn,
+      punchOut: p.punchOut,
+      source: provider,
+      externalId: p.externalId,
+      importedAt: new Date().toISOString(),
+    });
+    existing.add(key);
+    added++;
+  }
+
+  if (added > 0) markDirty();
+  auditLog(`${provider.toUpperCase()}_TIME_PULLED`, req.user, { startDate, endDate, added, skipped, unmatched });
+  res.json({ ok: true, added, skipped, unmatched, total: punches.length });
 });
 
 // ── DELETE /api/accounts/:id ──────────────────────────────────────────────────

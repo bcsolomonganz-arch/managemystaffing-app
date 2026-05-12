@@ -11085,7 +11085,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       <div class="form-group">
         <label>Client Secret</label>
         <input type="password" id="pc-client-secret" value="${sanitize(d.clientSecret||'')}" placeholder="OAuth2 client secret" autocomplete="new-password" spellcheck="false">
-        <div style="font-size:11px;color:var(--g500);margin-top:3px">Stored encrypted in browser localStorage. Production deployments should set ${ctx.provider.toUpperCase()}_CLIENT_SECRET in Azure App Settings instead.</div>
+        <div style="font-size:11px;color:var(--g500);margin-top:3px">Credentials are sent to the server for authentication — never stored in the browser. Set ${ctx.provider.toUpperCase()}_CLIENT_ID and ${ctx.provider.toUpperCase()}_CLIENT_SECRET in Azure App Settings.</div>
       </div>
       ${extras}
       <div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:8px;padding:12px 14px;margin:8px 0 4px;font-size:12px;color:var(--g700);line-height:1.5">
@@ -11139,44 +11139,39 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     return this._testPayrollConnection(provider, /*silent*/ false);
   },
 
-  // Internal connection test. In real deployment this would POST to
-  //   Paycom: /v4/oauth/token  (grant_type=client_credentials)
-  //   ADP:    /auth/oauth/v2/token  (grant_type=client_credentials, mTLS)
-  // For now we simulate: any non-empty creds + matching credentials length
-  // pattern succeed in sandbox, anything missing fails.
   async _testPayrollConnection(provider, silent) {
     const i = this._payrollState(provider);
     const info = this.payrollProviderInfo(provider);
-    if (!i.configured || !i.clientId || !i.clientSecret) {
-      i.status = 'error'; i.lastError = 'Credentials not configured';
-      this._logPayroll(provider, 'connect', false, 'Missing credentials');
-      if (!silent) this.showToast(info.name + ' is not configured', 'warn');
+    try {
+      const r = await fetch(`/api/payroll/${provider}/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        i.status = 'error';
+        i.lastError = data.error || `Connection failed (${r.status})`;
+        this._logPayroll(provider, 'connect', false, i.lastError);
+        if (!silent) this.showToast(i.lastError, 'warn');
+        if (this.S.hrPage === 'integrations') this.renderHRMain();
+        return false;
+      }
+      i.status = 'connected';
+      i.lastError = null;
+      i.mode = data.mode || i.mode;
+      this._logPayroll(provider, 'connect', true, `Authenticated to ${info.name} (${i.mode})`);
+      if (!silent) this.showToast(info.name + ' connection OK');
+      if (this.S.hrPage === 'integrations') this.renderHRMain();
+      return true;
+    } catch (e) {
+      i.status = 'error';
+      i.lastError = 'Network error — could not reach server';
+      this._logPayroll(provider, 'connect', false, i.lastError);
+      if (!silent) this.showToast(i.lastError, 'error');
       if (this.S.hrPage === 'integrations') this.renderHRMain();
       return false;
     }
-    // Provider-specific extra-field validation
-    if (provider === 'paycom' && !i.companyCode) {
-      i.status = 'error'; i.lastError = 'Paycom Client Code is required';
-      this._logPayroll(provider, 'connect', false, 'Missing Client Code');
-      if (!silent) this.showToast('Paycom Client Code is required', 'warn');
-      if (this.S.hrPage === 'integrations') this.renderHRMain();
-      return false;
-    }
-    if (provider === 'adp' && !i.oid && i.mode === 'production') {
-      i.status = 'error'; i.lastError = 'ADP Organization OID required for production mode';
-      this._logPayroll(provider, 'connect', false, 'Missing Organization OID');
-      if (!silent) this.showToast('ADP Organization OID is required in production mode', 'warn');
-      if (this.S.hrPage === 'integrations') this.renderHRMain();
-      return false;
-    }
-    // Simulated handshake — small delay so the user sees activity
-    await new Promise(r => setTimeout(r, 400));
-    i.status = 'connected';
-    i.lastError = null;
-    this._logPayroll(provider, 'connect', true, `Authenticated to ${info.name} (${i.mode})`);
-    if (!silent) this.showToast(info.name + ' connection OK');
-    if (this.S.hrPage === 'integrations') this.renderHRMain();
-    return true;
   },
 
   async disconnectPayrollProvider(provider) {
@@ -11207,7 +11202,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   async pushHireToPayroll(empId, provider) {
     const i = this._payrollState(provider);
     const info = this.payrollProviderInfo(provider);
-    if (!i.configured || i.status !== 'connected') {
+    if (i.status !== 'connected') {
       this.showToast(`${info.name} is not connected`, 'warn');
       return false;
     }
@@ -11217,9 +11212,6 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       this.showToast(`${emp.name} is already in ${info.name} (ID ${emp.payrollIds[provider]})`, 'warn');
       return false;
     }
-    // Pay must be set on whichever model the employee uses. Honor the
-    // declared payType even when the underlying value is missing — that's
-    // how we know which message to surface ("set salary" vs "set rate").
     const declaredSalaried = emp.payType === 'salaried';
     const hasPay = declaredSalaried
       ? (parseFloat(emp.annualSalary) || 0) > 0
@@ -11229,19 +11221,32 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       this.showToast(`Set ${what} for ${emp.name} before pushing to payroll`, 'warn');
       return false;
     }
-    // Build payload (logged to history for debugging — not transmitted in demo)
     const payload = this._buildHirePayload(provider, emp);
-    await new Promise(r => setTimeout(r, 350));
-    // Simulate provider-assigned ID
-    const extId = (provider === 'paycom' ? 'PYC-' : 'ADP-') +
-                  Math.floor(100000 + Math.random()*900000);
-    if (!emp.payrollIds) emp.payrollIds = {};
-    emp.payrollIds[provider] = extId;
-    emp.payrollSyncedAt = new Date().toISOString();
-    this._logPayroll(provider, 'hire', true, `Pushed ${emp.name} → ${extId}`,
-      { empId: emp.id, externalId: extId, payloadSize: JSON.stringify(payload).length });
-    this.showToast(`${emp.name} pushed to ${info.name} (${extId})`);
-    return true;
+    try {
+      const r = await fetch(`/api/payroll/${provider}/hire`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ empId: emp.id, payload }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        this._logPayroll(provider, 'hire', false, `Failed: ${data.error || r.status}`, { empId: emp.id });
+        this.showToast(data.error || `${info.name} hire push failed`, 'error');
+        return false;
+      }
+      const extId = data.externalId;
+      if (!emp.payrollIds) emp.payrollIds = {};
+      emp.payrollIds[provider] = extId;
+      emp.payrollSyncedAt = new Date().toISOString();
+      this._logPayroll(provider, 'hire', true, `Pushed ${emp.name} → ${extId}`,
+        { empId: emp.id, externalId: extId });
+      this.showToast(`${emp.name} pushed to ${info.name} (${extId})`);
+      return true;
+    } catch (e) {
+      this._logPayroll(provider, 'hire', false, 'Network error', { empId: emp.id });
+      this.showToast('Network error — hire not pushed', 'error');
+      return false;
+    }
   },
 
   // Bulk hire push with progress toast.
@@ -11344,7 +11349,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   async syncPayrollToProvider(provider) {
     const i = this._payrollState(provider);
     const info = this.payrollProviderInfo(provider);
-    if (!i.configured || i.status !== 'connected') {
+    if (i.status !== 'connected') {
       this.showToast(`${info.name} is not connected`, 'warn');
       return;
     }
@@ -11375,15 +11380,43 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const syncedRows = report.rows.filter(r => {
       const emp = (this.S.employees||[]).find(e=>e.id===r.empId);
       return emp && emp.payrollIds && emp.payrollIds[provider];
-    });
-    await new Promise(r => setTimeout(r, 600));
-    const summary = `${p.periodStart}–${p.periodEnd} · ${syncedRows.length} employees · $${report.totalGross.toFixed(2)} gross${unsyncedCount?` · ${unsyncedCount} skipped`:''}`;
-    this._logPayroll(provider, 'payroll', true, summary, {
-      period: { start: p.periodStart, end: p.periodEnd },
-      empCount: syncedRows.length,
-      regHrs: report.regHrs, otHrs: report.otHrs, totalGross: report.totalGross,
-    });
-    this.showToast(`Payroll synced to ${info.name}: ${syncedRows.length} employees`);
+    }).map(r => ({
+      empId: r.empId,
+      externalId: ((this.S.employees||[]).find(e=>e.id===r.empId))?.payrollIds?.[provider],
+      name: r.name,
+      regHours: r.regHours,
+      otHours: r.otHours,
+      rate: r.rate,
+      gross: r.gross,
+    }));
+
+    try {
+      const resp = await fetch(`/api/payroll/${provider}/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ periodStart: p.periodStart, periodEnd: p.periodEnd, rows: syncedRows }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        this._logPayroll(provider, 'payroll', false, data.error || `Sync failed (${resp.status})`, {
+          period: { start: p.periodStart, end: p.periodEnd },
+        });
+        this.showToast(data.error || `${info.name} payroll sync failed`, 'error');
+        return;
+      }
+      const summary = `${p.periodStart}–${p.periodEnd} · ${syncedRows.length} employees · $${report.totalGross.toFixed(2)} gross${unsyncedCount?` · ${unsyncedCount} skipped`:''}`;
+      this._logPayroll(provider, 'payroll', true, summary, {
+        period: { start: p.periodStart, end: p.periodEnd },
+        empCount: syncedRows.length,
+        regHrs: report.regHrs, otHrs: report.otHrs, totalGross: report.totalGross,
+      });
+      this.showToast(`Payroll synced to ${info.name}: ${syncedRows.length} employees`);
+    } catch (e) {
+      this._logPayroll(provider, 'payroll', false, 'Network error', {
+        period: { start: p.periodStart, end: p.periodEnd },
+      });
+      this.showToast('Network error — payroll not synced', 'error');
+    }
     if (this.S.hrPage === 'integrations') this.renderHRMain();
   },
 
@@ -11393,11 +11426,10 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   async syncTimeFromProvider(provider) {
     const i = this._payrollState(provider);
     const info = this.payrollProviderInfo(provider);
-    if (!i.configured || i.status !== 'connected') {
+    if (i.status !== 'connected') {
       this.showToast(`${info.name} is not connected`, 'warn');
       return;
     }
-    if (!Array.isArray(this.S.hrTimeClock)) this.S.hrTimeClock = [];
     // Pull window: last 14 days
     const end = new Date();
     const start = new Date(); start.setDate(start.getDate() - 14);
@@ -11417,46 +11449,36 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     });
     if (!okPull) return;
 
-    await new Promise(r => setTimeout(r, 700));
-    // Generate a plausible synthetic batch — in real deployment this would be
-    // the provider's punch list response. Deterministic per (empId, date,
-    // provider) so re-pulling the same window yields the SAME records, which
-    // is the contract real APIs honor (and which our dedup relies on).
-    let added = 0, skipped = 0;
-    const existing = new Set(this.S.hrTimeClock.map(r => `${r.empId}|${r.date}|${r.source||'manual'}`));
-    const hash32 = (s) => { let h = 2166136261 >>> 0; for (let i=0;i<s.length;i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
-    for (const emp of eligible) {
-      for (let dayOff = 0; dayOff < 14; dayOff++) {
-        const d = new Date(start); d.setDate(start.getDate() + dayOff);
-        const date = d.toISOString().slice(0,10);
-        const seed = hash32(`${emp.id}|${date}|${provider}`);
-        // ~65% of days produce a punch; weekends ~40%.
-        const dow = d.getDay();
-        const isWeekend = (dow === 0 || dow === 6);
-        const threshold = isWeekend ? 0.40 : 0.65;
-        if ((seed % 1000) / 1000 >= threshold) continue;
-        const sourceKey = `${emp.id}|${date}|${provider}`;
-        if (existing.has(sourceKey)) { skipped++; continue; }
-        const hours = +(7.5 + ((seed >>> 10) % 100) / 100).toFixed(2); // 7.50-8.49
-        this.S.hrTimeClock.push({
-          id: 'tc_' + provider + '_' + emp.id + '_' + date,
-          empId: emp.id,
-          date,
-          hours,
-          punchIn:  '07:00',
-          punchOut: hours >= 8 ? '15:30' : '15:00',
-          source: provider,
-          importedAt: new Date().toISOString(),
-        });
-        existing.add(sourceKey);
-        added++;
+    try {
+      const resp = await fetch(`/api/payroll/${provider}/time-pull`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          startDate: isoStart,
+          endDate: isoEnd,
+          employeeIds: eligible.map(e => e.id),
+        }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        this._logPayroll(provider, 'time_pull', false, data.error || `Pull failed (${resp.status})`,
+          { window: { start: isoStart, end: isoEnd } });
+        this.showToast(data.error || `${info.name} time pull failed`, 'error');
+        if (this.S.hrPage === 'integrations') this.renderHRMain();
+        return;
       }
+      const { added = 0, skipped = 0, unmatched = 0 } = data;
+      this._logPayroll(provider, 'time_pull', true,
+        `${added} punches imported · ${skipped} duplicates skipped · ${isoStart}→${isoEnd}`,
+        { added, skipped, unmatched, window: { start: isoStart, end: isoEnd }, employees: eligible.length });
+      // Refresh data to pick up the new time clock records
+      await this.fetchData();
+      this.showToast(`Imported ${added} punch${added === 1 ? '' : 'es'} from ${info.name}`);
+    } catch (e) {
+      this._logPayroll(provider, 'time_pull', false, 'Network error',
+        { window: { start: isoStart, end: isoEnd } });
+      this.showToast('Network error — time pull failed', 'error');
     }
-    this._logPayroll(provider, 'time_pull', true,
-      `${added} punches imported · ${skipped} duplicates skipped · ${isoStart}→${isoEnd}`,
-      { added, skipped, window:{start:isoStart, end:isoEnd}, employees:eligible.length });
-    this.persistData();
-    this.showToast(`Imported ${added} punch${added===1?'':'es'} from ${info.name}`);
     if (this.S.hrPage === 'integrations') this.renderHRMain();
   },
 
