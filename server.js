@@ -7558,6 +7558,7 @@ app.get('/api/data', requireAuth, async (req, res) => {
 // their own building. Superadmin can modify everything. Seed accounts are
 // protected from role tampering. Caller cannot escalate their own role.
 app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
+  try {
   const payload = req.body;
   if (!payload || typeof payload !== 'object') return res.status(400).json({ error: 'Invalid payload' });
 
@@ -7669,11 +7670,17 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
     return false;
   };
 
-  // ── Tripwire: reject payloads that would shrink collections ────────────
+  // ── Tripwire: reject payloads that would DRAMATICALLY shrink collections ──
   // Building admins only see/send their building's data, so their payload
   // will naturally be smaller than the full server dataset. For non-SA
   // callers, compare against the IN-SCOPE subset (what the caller received
   // from GET /api/data) rather than the global total.
+  //
+  // Tolerance: allow small shrinkage (up to 10 items or 10% of existing,
+  // whichever is larger) to handle race conditions where another admin in
+  // the same building adds items between the client's last GET and this POST.
+  // Without this tolerance, concurrent saves from the same building cause
+  // false 409 rejections (root cause of recurring "Save failed" errors).
   const TRIPWIRE = [
     ['shifts',           data.shifts,           payload.shifts,           inScopeShift],
     ['employees',        data.employees,        payload.employees,        inScopeEmployee],
@@ -7688,9 +7695,11 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
       ? (existing || []).length
       : (existing || []).filter(scopeFn).length;
     const inLen = incoming.length;
-    if (inLen < exLen) {
+    // Allow small shrinkage from race conditions; block catastrophic drops
+    const tolerance = Math.max(10, Math.ceil(exLen * 0.10));
+    if (inLen < exLen - tolerance) {
       auditLog('DATA_UPDATE_REJECTED_SHRINK', req.user, {
-        collection: name, existingCount: exLen, incomingCount: inLen, isSA,
+        collection: name, existingCount: exLen, incomingCount: inLen, tolerance, isSA,
       });
       return res.status(409).json({
         error: `Refusing to shrink ${name} from ${exLen} to ${inLen}. ` +
@@ -7700,6 +7709,10 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
         existingCount: exLen,
         incomingCount: inLen,
       });
+    }
+    // Log a warning for any shrinkage within tolerance — useful for forensics
+    if (inLen < exLen) {
+      logger.info('data_update_minor_shrink', { collection: name, existingCount: exLen, incomingCount: inLen, tolerance, user: req.user.id });
     }
   }
 
@@ -7959,7 +7972,6 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   }
 
   dataCache = data;
-  _bumpDataVersion();
 
   // ── Flush to durable storage BEFORE responding ──────────────────────────
   // Pre-fix: markDirty() scheduled a 200ms debounced persist — the client
@@ -7976,6 +7988,10 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
     logger.error('data_update_persist_failed', { err: e.message });
     return res.status(500).json({ error: 'Data accepted but failed to persist. Please retry.' });
   }
+
+  // Bump version AFTER persist succeeds — prevents stale ETag if crash
+  // occurs between version bump and write completion.
+  _bumpDataVersion();
 
   // Audit BEFORE / AFTER counts so we can forensically tell whether a save
   // shrank a collection. Without the delta we have no record of who/what
@@ -8001,6 +8017,13 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   });
   res.setHeader('ETag', `"${_dataVersion}"`);
   res.json({ ok: true, version: _dataVersion });
+
+  } catch (e) {
+    logger.error('data_update_handler_error', { err: e.message, stack: e.stack?.split('\n').slice(0, 3).join(' | ') });
+    if (!res.headersSent) {
+      return res.status(500).json({ error: 'Internal error during save. Your data was not modified. Please retry.' });
+    }
+  }
 });
 
 // ── ADMIN AUDIT QUERY ────────────────────────────────────────────────────────

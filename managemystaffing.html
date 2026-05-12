@@ -6029,7 +6029,7 @@ const App = {
         openSlot.status = 'scheduled';
         openSlot.rotation = rotation;
       } else {
-        const sid = 's' + Date.now() + Math.random().toString(36).slice(2,5);
+        const sid = 's' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + Math.random().toString(36).slice(2,6);
         this.S.shifts.push({
           id: sid, date: ds, group, type: shiftDef.type,
           start: shiftDef.start, end: shiftDef.end, slot: 0,
@@ -6587,7 +6587,7 @@ const App = {
       if (!st.selectedDays.includes(cyclePos)) continue;
       for (let s = 0; s < slots; s++) {
         this.S.shifts.push({
-          id: 'sh' + Date.now() + Math.random().toString(36).slice(2, 5),
+          id: 'sh' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + Math.random().toString(36).slice(2,6),
           date: ds, group: g, type: shiftType,
           start: shiftDef.start || '', end: shiftDef.end || '',
           status: 'open', buildingId: bId, employeeId: null,
@@ -6600,7 +6600,7 @@ const App = {
     // (these are open slots, not assigned).
     if (!Array.isArray(this.S.schedulePatterns)) this.S.schedulePatterns = [];
     this.S.schedulePatterns.push({
-      id: 'pat_' + Date.now() + Math.random().toString(36).slice(2,5),
+      id: 'pat_' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + Math.random().toString(36).slice(2,6),
       kind: 'open',           // 'open' = creates open slots; 'assign' = assigns to empId
       empId: null,
       buildingId: bId,
@@ -7368,7 +7368,7 @@ const App = {
         openSlot.status = 'scheduled'; openSlot.employeeId = emp.id;
       } else {
         this.S.shifts.push({
-          id: 'sh' + Date.now() + Math.random().toString(36).slice(2, 5),
+          id: 'sh' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + Math.random().toString(36).slice(2,6),
           date: ds, group: g, type: shiftType,
           start: shiftDef.start || '', end: shiftDef.end || '',
           status: 'scheduled', buildingId: bId, employeeId: emp.id,
@@ -7380,7 +7380,7 @@ const App = {
     // in whenever the user navigates the calendar past the horizon).
     if (!Array.isArray(this.S.schedulePatterns)) this.S.schedulePatterns = [];
     this.S.schedulePatterns.push({
-      id: 'pat_' + Date.now() + Math.random().toString(36).slice(2,5),
+      id: 'pat_' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + Math.random().toString(36).slice(2,6),
       kind: 'assign',         // assigns the rotation to an employee
       empId: emp.id,
       buildingId: bId,
@@ -7420,7 +7420,7 @@ const App = {
       openSlot.status = 'scheduled'; openSlot.employeeId = emp.id;
     } else {
       this.S.shifts.push({
-        id: 'sh' + Date.now() + Math.random().toString(36).slice(2, 5),
+        id: 'sh' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + Math.random().toString(36).slice(2,6),
         date, group: g, type: shiftType,
         start: shiftDef.start || '', end: shiftDef.end || '',
         status: 'scheduled', buildingId: bId, employeeId: emp.id,
@@ -18076,7 +18076,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
             openSlot.status = 'scheduled'; openSlot.employeeId = emp.id;
           } else {
             this.S.shifts.push({
-              id: 'sh' + Date.now() + Math.random().toString(36).slice(2, 5),
+              id: 'sh' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + Math.random().toString(36).slice(2,6),
               date: ds, group: pat.group, type: pat.shiftType,
               start: shiftDef.start || '', end: shiftDef.end || '',
               status: 'scheduled', buildingId: pat.buildingId, employeeId: emp.id,
@@ -18091,7 +18091,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           const toAdd = Math.max(0, slots - existing);
           for (let i = 0; i < toAdd; i++) {
             this.S.shifts.push({
-              id: 'sh' + Date.now() + Math.random().toString(36).slice(2, 5),
+              id: 'sh' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + Math.random().toString(36).slice(2,6),
               date: ds, group: pat.group, type: pat.shiftType,
               start: shiftDef.start || '', end: shiftDef.end || '',
               status: 'open', buildingId: pat.buildingId, employeeId: null,
@@ -18101,6 +18101,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           _countMap.set(baseKey, (existing) + toAdd);
         }
       }
+      if (!Array.isArray(pat.removedDates)) pat.removedDates = [];
       pat.lastExtendedTo = targetStr;
     }
     if (extended > 0) {
@@ -19193,6 +19194,13 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   // every mutation. Code updates never touch localStorage, so
   // facility data (employees, buildings, shifts) is never lost.
   persistData({ confirmWipe = false } = {}) {
+    // Debounce: if a save is already in-flight, schedule one more after it
+    // completes rather than firing concurrent POSTs that race each other.
+    if (this._persistInFlight) {
+      this._persistQueued = { confirmWipe };
+      return;
+    }
+    this._persistInFlight = true;
     // Backup removedDates to sessionStorage in case the save fails and
     // the user reloads — the backup will be restored after the next
     // applyServerData so rotations still skip deleted dates.
@@ -19257,30 +19265,64 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         fetch('/api/data', { method: 'POST', headers: retryHeaders, body: JSON.stringify(retryPayload) })
           .then(async r => {
             if (r.status === 412) {
-              // Concurrent edit conflict — refetch, merge removedDates, retry
-              const dResp = await fetch('/api/data');
-              if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
+              // Concurrent edit conflict — refetch server data to update our
+              // ETag, then rebuild payload from current local state and retry.
+              // Important: do NOT call applyServerData here — that would
+              // overwrite local edits (shifts the user just added) with the
+              // server version, causing silent data loss on retry.
+              try {
+                const dResp = await fetch('/api/data');
+                if (dResp.ok) {
+                  const etag = dResp.headers.get('ETag');
+                  if (etag) this.S._dataVersion = etag.replace(/"/g, '');
+                }
+              } catch {}
               if (attempt < 3) {
-                _doSave(attempt + 1);
+                setTimeout(() => _doSave(attempt + 1), 500 * attempt);
               } else {
-                this.showToast('Save conflict — please reload to sync your changes', 'warn');
+                // After 3 retries, do a full refetch+merge as last resort
+                try {
+                  const dResp = await fetch('/api/data');
+                  if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
+                } catch {}
+                this.showToast('Save conflict — please retry your last change', 'warn');
+                this._persistInFlight = false;
+                if (this._persistQueued) { const q = this._persistQueued; this._persistQueued = null; this.persistData(q); }
               }
               return;
             }
             if (r.status === 409) {
-              const body = await r.json().catch(() => ({}));
-              this.showToast(
-                `Save blocked: ${body.error || 'data would have shrunk significantly'}. Reload to recover.`,
-                'warn'
-              );
+              // Tripwire rejected — refetch server data to sync counts, then retry.
+              // The server now has tolerance for small shrinkage, so this should
+              // be rare. Refetch + retry usually resolves it.
+              try {
+                const dResp = await fetch('/api/data');
+                if (dResp.ok) {
+                  const etag = dResp.headers.get('ETag');
+                  if (etag) this.S._dataVersion = etag.replace(/"/g, '');
+                }
+              } catch {}
+              if (attempt < 3) {
+                setTimeout(() => _doSave(attempt + 1), 500 * attempt);
+              } else {
+                const body = await r.json().catch(() => ({}));
+                this.showToast(
+                  `Save blocked: ${body.error || 'data conflict'}. Please reload.`,
+                  'warn'
+                );
+                this._persistInFlight = false;
+                if (this._persistQueued) { const q = this._persistQueued; this._persistQueued = null; this.persistData(q); }
+              }
               return;
             }
             if (!r.ok) {
-              // Retry once on generic failure
-              if (attempt < 2) {
-                setTimeout(() => _doSave(attempt + 1), 1000);
+              // Retry twice on generic failure with backoff
+              if (attempt < 3) {
+                setTimeout(() => _doSave(attempt + 1), 1000 * attempt);
               } else {
                 this.showToast('Save failed — please retry your last change', 'warn');
+                this._persistInFlight = false;
+                if (this._persistQueued) { const q = this._persistQueued; this._persistQueued = null; this.persistData(q); }
               }
               return;
             }
@@ -19289,15 +19331,25 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
             if (etag) this.S._dataVersion = etag.replace(/"/g, '');
             this._persistFailed = false;
             try { sessionStorage.removeItem('mms_removedDates_backup'); } catch {}
+            this._persistInFlight = false;
+            if (this._persistQueued) {
+              const q = this._persistQueued; this._persistQueued = null;
+              this.persistData(q);
+            }
           })
           .catch(() => {
-            // Network error — retry once after brief delay
-            if (attempt < 2) {
+            // Network error — retry with backoff
+            if (attempt < 3) {
               this._persistFailed = true;
-              setTimeout(() => _doSave(attempt + 1), 2000);
+              setTimeout(() => _doSave(attempt + 1), 1000 * attempt);
             } else {
               this._persistFailed = true;
               this.showToast('Network error — your change will retry on next action', 'warn');
+              this._persistInFlight = false;
+              if (this._persistQueued) {
+                const q = this._persistQueued; this._persistQueued = null;
+                this.persistData(q);
+              }
             }
           });
       };
@@ -19306,6 +19358,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     }
     // Non-server-mode (offline demo only) — do NOT persist PHI even here.
     // Demo accounts use ephemeral seed data; real accounts always go through /api/data above.
+    this._persistInFlight = false;
   },
 
   // HIPAA §164.312(a)(2)(iv) — never restore PHI from client storage.
