@@ -1422,6 +1422,29 @@ function getDataForUser(user, fullData) {
   // Apply this filter to every role's response below.
   const dmsForMe = (m) => m.fromId === user.id || m.toId === user.id;
 
+  // HR candidate: only their own hrEmployee + onboarding config for their building
+  if (user.role === 'hrcandidate') {
+    const myAcct = (scrubbed.accounts || []).find(a => a.id === user.id);
+    const hrEmp = myAcct?.hrEmployeeId
+      ? (fullData.hrEmployees || []).find(e => e.id === myAcct.hrEmployeeId)
+      : (fullData.hrEmployees || []).find(e => e.email === user.email);
+    const bId = user.buildingId;
+    const bld = bId ? (fullData.buildings || []).find(b => b.id === bId) : null;
+    const minBld = bld ? { id: bld.id, name: bld.name, state: bld.state, color: bld.color, companyId: bld.companyId } : null;
+    return {
+      buildings:        minBld ? [minBld] : [],
+      employees:        [],
+      shifts:           [],
+      schedulePatterns: [],
+      accounts:         myAcct ? [myAcct] : [],
+      hrEmployees:      hrEmp ? [hrEmp] : [],
+      hrOnboarding:     fullData.hrOnboarding || {},
+      directMessages:   [],
+      companies:        (fullData.companies || []),
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, buildingId: bId },
+    };
+  }
+
   // Employees get a heavily restricted view
   if (user.role === 'employee') return _employeeView(user, scrubbed);
 
@@ -7931,7 +7954,7 @@ app.post('/api/invite/onboard', requireAuth, requireAdmin, async (req, res) => {
     id:           'acc_' + Date.now(),
     name:         name.trim(),
     email:        emailNorm,
-    role:         'employee',
+    role:         'hrcandidate',
     buildingId:   targetBuilding || null,
     ph:           null,
     schedulerOnly: false,
@@ -7975,13 +7998,14 @@ app.post('/api/invite/onboard', requireAuth, requireAdmin, async (req, res) => {
   const escB    = escapeHtml(bName);
   const safePlainName = String(name.trim()).replace(/[\r\n]/g, ' ');
   const safePlainB    = String(bName).replace(/[\r\n]/g, ' ');
+  const onboardFromEmail = building?.hrFromEmail || 'onboarding@managemystaffing.com';
 
   if (ACS_CONNECTION_STRING) {
     try {
       const { EmailClient } = require('@azure/communication-email');
       const ec     = new EmailClient(ACS_CONNECTION_STRING);
       const poller = await ec.beginSend({
-        senderAddress: ACS_FROM_EMAIL,
+        senderAddress: onboardFromEmail,
         recipients: { to: [{ address: emailNorm, displayName: name.trim() }] },
         content: {
           subject: `Complete your onboarding — ${safePlainB}`,
@@ -8013,6 +8037,107 @@ app.post('/api/invite/onboard', requireAuth, requireAdmin, async (req, res) => {
 
   auditLog('ONBOARD_INVITE_SENT', req.user, { to: emailNorm, role: group, buildingId: targetBuilding, inviteType });
   res.json({ ok: true, accountId: newAccount.id, hrEmployeeId, inviteLink: link });
+});
+
+// ── POST /api/onboarding/step ─────────────────────────────────────────────
+// Candidate saves a single onboarding step. Bypasses requireAdmin —
+// only hrcandidate role can call this, and it only writes to their own
+// hrEmployee.docs and related fields.
+app.post('/api/onboarding/step', requireAuth, async (req, res) => {
+  if (req.user.role !== 'hrcandidate') {
+    return res.status(403).json({ error: 'Only onboarding candidates can use this endpoint' });
+  }
+  const { stepId, stepData, empUpdates } = req.body || {};
+  if (!stepId || !stepData) return res.status(400).json({ error: 'stepId and stepData required' });
+
+  const data = await loadData();
+  const acct = (data.accounts || []).find(a => a.id === req.user.id);
+  if (!acct?.hrEmployeeId) return res.status(404).json({ error: 'No linked onboarding record' });
+
+  const emp = (data.hrEmployees || []).find(e => e.id === acct.hrEmployeeId);
+  if (!emp) return res.status(404).json({ error: 'Onboarding record not found' });
+
+  // Write step doc
+  if (!emp.docs) emp.docs = {};
+  emp.docs[stepId] = stepData;
+
+  // Allow specific safe field updates (phone, smsConsent, notifSMS, status, progress)
+  const SAFE_FIELDS = ['phone', 'notifSMS', 'smsConsent', 'status', 'progress'];
+  if (empUpdates && typeof empUpdates === 'object') {
+    for (const k of SAFE_FIELDS) {
+      if (k in empUpdates) emp[k] = empUpdates[k];
+    }
+  }
+
+  markDirty();
+  auditLog('ONBOARDING_STEP_COMPLETED', req.user, {
+    hrEmployeeId: emp.id, stepId, status: emp.status,
+  });
+  res.json({ ok: true, status: emp.status, progress: emp.progress });
+});
+
+// ── POST /api/onboarding/complete ───────────────────────────────────────────
+// Called automatically when a candidate finishes all onboarding steps.
+// Creates an inactive employee record and links it to the hrEmployee.
+// Admin approval via pushHrToRoster activates them and sets hourly rate.
+app.post('/api/onboarding/complete', requireAuth, async (req, res) => {
+  if (req.user.role !== 'hrcandidate') {
+    return res.status(403).json({ error: 'Only onboarding candidates can use this endpoint' });
+  }
+  const data = await loadData();
+  const acct = (data.accounts || []).find(a => a.id === req.user.id);
+  if (!acct?.hrEmployeeId) return res.status(404).json({ error: 'No linked onboarding record' });
+
+  const emp = (data.hrEmployees || []).find(e => e.id === acct.hrEmployeeId);
+  if (!emp) return res.status(404).json({ error: 'Onboarding record not found' });
+  if (emp.status !== 'review') return res.status(400).json({ error: 'Onboarding not complete' });
+  if (emp.employeeId) return res.json({ ok: true, alreadyCreated: true, employeeId: emp.employeeId });
+
+  // Create employee record (inactive until admin approves)
+  const newEmpId = 'e' + Date.now() + '_' + crypto.randomBytes(2).toString('hex');
+  const initials = String(emp.name || '').split(' ').map(w => (w[0] || '')).join('').slice(0, 2).toUpperCase();
+  const newEmployee = {
+    id: newEmpId,
+    name: emp.name,
+    initials,
+    group: emp.role || 'CNA',
+    email: emp.email || '',
+    phone: emp.phone || '',
+    buildingId: emp.facilityId || acct.buildingId || null,
+    employmentType: 'full-time',
+    hireDate: new Date().toISOString().slice(0, 10),
+    hourlyRate: emp.hourlyRate || null,
+    dob: emp.dob || null,
+    inactive: true,
+    pendingReview: true,
+    notifEmail: !!emp.email,
+    notifSMS: !!emp.phone,
+    notifPrefs: ['immediate', 'day'],
+    notifChannels: {
+      immediate: { email: !!emp.email, sms: !!emp.phone },
+      day:       { email: !!emp.email, sms: false },
+      week:      { email: !!emp.email, sms: false },
+      daily:     { email: false, sms: false },
+    },
+    onboardedAt: new Date().toISOString(),
+    onboardingHrId: emp.id,
+    terminationLog: [],
+  };
+  data.employees = data.employees || [];
+  data.employees.push(newEmployee);
+
+  // Link hrEmployee → employee
+  emp.employeeId = newEmpId;
+
+  // Transition account role from hrcandidate to employee
+  acct.role = 'employee';
+  await persistAccountNow(acct);
+
+  markDirty();
+  auditLog('ONBOARDING_EMPLOYEE_CREATED', req.user, {
+    hrEmployeeId: emp.id, employeeId: newEmpId, name: emp.name,
+  });
+  res.json({ ok: true, employeeId: newEmpId });
 });
 
 // ── DELETE /api/accounts/:id ──────────────────────────────────────────────────

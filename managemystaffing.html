@@ -3599,6 +3599,16 @@ const App = {
           <input type="text" id="ebld-ccn" value="${sanitize(b.ccn||'')}" maxlength="6" placeholder="e.g. 455123">
         </div>
 
+        <div class="section-label">HR / Onboarding Email</div>
+        <div class="form-group"><label>From Email <span style="font-size:11px;color:var(--g600);font-weight:400">(must be a verified sender on your ACS domain)</span></label>
+          <input type="email" id="ebld-hr-email" value="${sanitize(b.hrFromEmail||'')}" maxlength="200" placeholder="e.g. hr@managemystaffing.com">
+        </div>
+        <div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:6px;padding:10px 12px;font-size:11px;color:var(--g700);margin-bottom:14px">
+          Onboarding invite emails will be sent from this address instead of the system default.
+          The address must be added and verified as a MailFrom sender in your Azure Communication Services Email resource.
+          Leave blank to use the system default.
+        </div>
+
         <div class="section-label">Mobile Punch Geofence</div>
         <div class="grid-2">
           <div class="form-group"><label>Latitude</label><input type="number" id="ebld-lat" value="${b.lat ?? ''}" step="0.000001" placeholder="36.0526"></div>
@@ -3631,6 +3641,7 @@ const App = {
     if (ccn && !/^\d{6}$/.test(ccn)) { this.showToast('CCN must be 6 digits','warn'); return; }
     const lat = parseFloat(get('ebld-lat')); const lng = parseFloat(get('ebld-lng'));
     const fence = parseInt(get('ebld-fence'),10) || 200;
+    const hrEmail = get('ebld-hr-email');
     Object.assign(b, {
       name:    get('ebld-name') || b.name,
       address: get('ebld-addr'),
@@ -3640,6 +3651,7 @@ const App = {
       stateCode: get('ebld-state') || b.stateCode,
       zip:     get('ebld-zip'),
       ccn,
+      hrFromEmail: hrEmail || null,
       geofenceRadiusM: fence,
     });
     if (Number.isFinite(lat)) b.lat = lat; else delete b.lat;
@@ -8698,7 +8710,7 @@ const App = {
   renderCandidatePortal() {
     const u = this.S.user;
     // Find hrEmployee record linked to this account
-    const acct = this.S.accounts.find(a => a.email === u.email && a.role === 'hrcandidate');
+    const acct = this.S.accounts.find(a => a.id === u.id);
     const emp = acct?.hrEmployeeId
       ? this.S.hrEmployees.find(e => e.id === acct.hrEmployeeId)
       : this.S.hrEmployees.find(e => e.email === u.email);
@@ -8731,7 +8743,18 @@ const App = {
     const docs = emp.docs || {};
     const activeIdx = this.S._candidateStep ?? steps.findIndex(s => !docs[s.id]?.completedAt) ?? 0;
     const step = steps[activeIdx];
-    if (!step) { document.getElementById('main').innerHTML = '<div style="padding:40px;text-align:center;font-size:18px;font-weight:700;color:var(--green)">✓ All steps complete!</div>'; return; }
+    if (!step) {
+      document.getElementById('main').innerHTML = `
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:70vh;text-align:center;padding:20px">
+          <div style="font-size:48px;margin-bottom:16px">🎉</div>
+          <div style="font-size:22px;font-weight:700;color:var(--green);margin-bottom:8px">Onboarding Complete!</div>
+          <div style="font-size:14px;color:var(--g600);max-width:400px;line-height:1.6">
+            All steps have been submitted. Your facility administrator will review your paperwork.
+            You'll receive access to the full app once approved.
+          </div>
+        </div>`;
+      return;
+    }
 
     const completedCount = steps.filter(s => docs[s.id]?.completedAt).length;
 
@@ -8945,20 +8968,27 @@ const App = {
     if (canvas) { canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height); this._sigData = null; }
   },
 
-  completeOnboardingStep(stepIdx) {
+  async completeOnboardingStep(stepIdx) {
     const u = this.S.user;
-    const acct = this.S.accounts.find(a => a.email === u.email && a.role === 'hrcandidate');
+    const acct = this.S.accounts.find(a => a.id === u.id);
     const emp = acct?.hrEmployeeId
       ? this.S.hrEmployees.find(e => e.id === acct.hrEmployeeId)
       : this.S.hrEmployees.find(e => e.email === u.email);
     if (!emp) return;
 
-    const state = emp.onboardingState || 'TX';
-    const empBld2 = (this.S.buildings || []).find(b => b.id === (this.S.user?.buildingId || this.S.activeBuildingId));
-    const empCoId2 = empBld2?.companyId || Object.keys(this.S.hrOnboarding || {})[0] || 'co_skyblue';
-    const empPkg2 = ((this.S.hrOnboarding || {})[empCoId2] || {})[state] || null;
-    if (empPkg2) this._ensureSmsConsentStep(empPkg2);
-    const step = empPkg2?.steps[stepIdx];
+    // Resolve package using same path as renderCandidatePortal
+    const empBld = (this.S.buildings || []).find(b => b.id === (this.S.user?.buildingId || this.S.activeBuildingId));
+    const effFlow = empBld ? this._getEffectiveBuildingFlow(empBld.id) : null;
+    let pkg = null;
+    if (effFlow && effFlow.steps?.length) {
+      pkg = { name: effFlow.name, steps: effFlow.steps };
+    } else {
+      const state = emp.onboardingState || empBld?.state || 'TX';
+      const empCoId = empBld?.companyId || Object.keys(this.S.hrOnboarding || {})[0] || 'co_skyblue';
+      pkg = ((this.S.hrOnboarding || {})[empCoId] || {})[state] || null;
+    }
+    if (pkg) this._ensureSmsConsentStep(pkg);
+    const step = pkg?.steps[stepIdx];
     if (!step) return;
 
     if (!emp.docs) emp.docs = {};
@@ -9022,7 +9052,7 @@ const App = {
     }
 
     // Update overall status
-    const totalSteps = empPkg2?.steps.length || 0;
+    const totalSteps = pkg?.steps.length || 0;
     const doneCount = Object.values(emp.docs).filter(d => d.completedAt).length;
     if (doneCount >= totalSteps) {
       emp.status = 'review';
@@ -9032,8 +9062,48 @@ const App = {
       emp.progress = `${doneCount}/${totalSteps} steps complete`;
     }
 
-    this.persistData();
+    // Build payload for the dedicated onboarding endpoint
+    const stepPayload = { stepId: step.id, stepData: emp.docs[step.id] };
+    if (step.type === 'sms_consent') {
+      stepPayload.empUpdates = {
+        phone: emp.phone,
+        notifSMS: emp.notifSMS,
+        smsConsent: emp.smsConsent,
+        status: emp.status,
+        progress: emp.progress,
+      };
+    } else {
+      stepPayload.empUpdates = { status: emp.status, progress: emp.progress };
+    }
+
+    try {
+      const r = await fetch('/api/onboarding/step', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(stepPayload),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        this.showToast(err.error || 'Could not save step', 'error');
+        return;
+      }
+    } catch (e) {
+      this.showToast('Network error — your progress was not saved', 'error');
+      return;
+    }
+
     this.showToast(step.type === 'sms_consent' ? 'SMS consent recorded — onboarding complete!' : `Step ${stepIdx+1} completed`);
+
+    // Auto-create employee when all onboarding steps complete
+    if (emp.status === 'review') {
+      try {
+        await fetch('/api/onboarding/complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+      } catch (e) { /* admin can still push manually */ }
+    }
 
     const nextIdx = stepIdx + 1;
     this.S._candidateStep = nextIdx < totalSteps ? nextIdx : stepIdx;
