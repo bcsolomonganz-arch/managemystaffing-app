@@ -1810,10 +1810,7 @@ const App = {
       paycom: {
         configured: false,
         mode: 'sandbox',        // 'sandbox' | 'production'
-        clientId: '',
-        clientSecret: '',
-        companyCode: '',        // Paycom: 4-letter "Client Code"
-        username: '',           // Paycom: API username (separate from web login)
+        // Credentials are server-side only (env vars) — never stored in client state
         status: 'disconnected', // 'disconnected' | 'connected' | 'error'
         lastError: null,
         lastConnectAt: null,
@@ -1828,10 +1825,7 @@ const App = {
       adp: {
         configured: false,
         mode: 'sandbox',        // 'sandbox' | 'production'
-        clientId: '',
-        clientSecret: '',
-        certThumbprint: '',     // ADP requires mutual-TLS cert
-        oid: '',                // ADP organization ID (orgOid)
+        // Credentials are server-side only (env vars) — never stored in client state
         status: 'disconnected',
         lastError: null,
         lastConnectAt: null,
@@ -2529,8 +2523,13 @@ const App = {
     localStorage.removeItem(SEC.SESSION_KEY);
     sessionStorage.removeItem(SEC.SESSION_KEY+'_demo');
     sessionStorage.removeItem('mms_lock_hash');
+    // Clear all sensitive in-memory state
     this.S.user = null; this.S.panelOpen = false; this._sessionLocked = false;
     this.S.appMode = 'schedule'; this.S.hrPage = 'dashboard'; this.S.activeBuildingId = null;
+    this.S.integrations = {};
+    this.S.employees = []; this.S.shifts = []; this.S.accounts = [];
+    this.S.hrEmployees = []; this.S.buildings = []; this.S.directMessages = [];
+    this.S.schedulePatterns = []; this.S.companies = [];
     document.getElementById('lock-screen').classList.remove('active');
     document.getElementById('session-warning').style.display = 'none';
     const demoBanner = document.getElementById('demo-mode-banner');
@@ -9178,12 +9177,21 @@ const App = {
   previewStepFile(state, stepIdx, fileIdx) {
     const f = this._obPkg(state).steps[stepIdx].files[fileIdx];
     if (!f?.dataUrl) return;
-    const w = window.open('', '_blank');
     if (f.name?.endsWith('.pdf') || f.type === 'application/pdf') {
-      w.document.write(`<html><body style="margin:0"><iframe src="${f.dataUrl}" style="width:100%;height:100vh;border:none"></iframe></body></html>`);
+      // Convert data URL to blob and open via blob URL — avoids document.write XSS
+      try {
+        const parts = f.dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+        if (!parts) return;
+        const byteStr = atob(parts[2]);
+        const bytes = new Uint8Array(byteStr.length);
+        for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i);
+        const blob = new Blob([bytes], { type: 'application/pdf' });
+        const blobUrl = URL.createObjectURL(blob);
+        window.open(blobUrl, '_blank');
+      } catch (e) { console.error('PDF preview failed', e); }
     } else {
-      const a = w.document.createElement('a');
-      a.href = f.dataUrl; a.download = f.name; a.click(); w.close();
+      const a = document.createElement('a');
+      a.href = f.dataUrl; a.download = f.name || 'download'; a.click();
     }
   },
 
@@ -10991,15 +10999,19 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (!this.S.integrations) this.S.integrations = {};
     if (!this.S.integrations[provider]) {
       this.S.integrations[provider] = {
-        configured:false, mode:'sandbox', clientId:'', clientSecret:'',
-        companyCode:'', username:'', oid:'', certThumbprint:'',
+        configured:false, mode:'sandbox',
+        // Credentials are NEVER stored client-side — all auth is server-side via env vars
         status:'disconnected', lastError:null,
         lastConnectAt:null, lastHireSyncAt:null, lastPayrollSyncAt:null, lastTimeSyncAt:null,
         lastSyncResult:null, history:[],
         autoPushHires:true, autoSyncPayroll:false,
       };
     }
-    return this.S.integrations[provider];
+    // Strip any legacy credential fields that may have been persisted
+    const s = this.S.integrations[provider];
+    delete s.clientId; delete s.clientSecret; delete s.companyCode;
+    delete s.username; delete s.oid; delete s.certThumbprint;
+    return s;
   },
 
   // Returns approved/active employees who have NOT yet been pushed to this
@@ -11056,10 +11068,9 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const host = document.getElementById('payroll-config-body');
     if (!host) return;
     const extras = (info.credExtras || []).map(f => `
-      <div class="form-group">
+      <div class="form-group" style="opacity:0.7">
         <label>${f.label}</label>
-        <input type="text" id="pc-extra-${f.key}" value="${sanitize(d[f.key]||'')}" placeholder="${sanitize(f.placeholder||'')}" autocomplete="off" spellcheck="false">
-        ${f.help ? `<div style="font-size:11px;color:var(--g500);margin-top:3px">${f.help}</div>` : ''}
+        <div style="font-size:12px;color:var(--g500);padding:6px 0">Set via <code>${ctx.provider.toUpperCase()}_${f.key.replace(/([A-Z])/g,'_$1').toUpperCase()}</code> in Azure App Settings. ${f.help || ''}</div>
       </div>
     `).join('');
     host.innerHTML = `
@@ -11078,14 +11089,9 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         </select>
         <div style="font-size:11px;color:var(--g500);margin-top:3px">Sandbox uses ${info.name}’s test environment — no real records are created or modified.</div>
       </div>
-      <div class="form-group">
-        <label>Client ID</label>
-        <input type="text" id="pc-client-id" value="${sanitize(d.clientId||'')}" placeholder="OAuth2 client ID" autocomplete="off" spellcheck="false">
-      </div>
-      <div class="form-group">
-        <label>Client Secret</label>
-        <input type="password" id="pc-client-secret" value="${sanitize(d.clientSecret||'')}" placeholder="OAuth2 client secret" autocomplete="new-password" spellcheck="false">
-        <div style="font-size:11px;color:var(--g500);margin-top:3px">Credentials are sent to the server for authentication — never stored in the browser. Set ${ctx.provider.toUpperCase()}_CLIENT_ID and ${ctx.provider.toUpperCase()}_CLIENT_SECRET in Azure App Settings.</div>
+      <div style="background:var(--amber-l,#fff8e1);border:1px solid var(--amber-m,#ffe082);border-radius:8px;padding:12px 14px;margin:8px 0;font-size:12px;color:var(--g700);line-height:1.5">
+        <strong>Credentials are configured server-side.</strong><br>
+        Set <code>${ctx.provider.toUpperCase()}_CLIENT_ID</code> and <code>${ctx.provider.toUpperCase()}_CLIENT_SECRET</code> in Azure App Settings (Configuration &rarr; Application settings). Credentials are never sent to or stored in the browser. Click "Save &amp; Test" to verify the server-side configuration.
       </div>
       ${extras}
       <div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:8px;padding:12px 14px;margin:8px 0 4px;font-size:12px;color:var(--g700);line-height:1.5">
@@ -11107,21 +11113,11 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const info = this.payrollProviderInfo(ctx.provider);
     const $ = id => document.getElementById(id);
 
-    const mode         = $('pc-mode')?.value || 'sandbox';
-    const clientId     = $('pc-client-id')?.value?.trim() || '';
-    const clientSecret = $('pc-client-secret')?.value?.trim() || '';
-    if (!clientId || !clientSecret) {
-      this.showToast('Client ID and Client Secret are required', 'warn');
-      return;
-    }
+    const mode = $('pc-mode')?.value || 'sandbox';
     i.mode = mode;
-    i.clientId = clientId;
-    i.clientSecret = clientSecret;
-    for (const f of (info.credExtras || [])) {
-      i[f.key] = $('pc-extra-' + f.key)?.value?.trim() || '';
-    }
+    // Credentials are configured server-side via env vars — NOT stored in client state.
+    // The connection test verifies server-side configuration is correct.
     i.configured = true;
-    this.persistData();
 
     // Run a connection test against (simulated) provider auth endpoint
     const ok = await this._testPayrollConnection(ctx.provider, /*silent*/ true);
@@ -11186,8 +11182,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const i = this._payrollState(provider);
     i.configured = false;
     i.status = 'disconnected';
-    i.clientId = ''; i.clientSecret = ''; i.companyCode = ''; i.username = '';
-    i.oid = ''; i.certThumbprint = '';
+    // Credentials are server-side only — just reset connection state
     i.lastError = null;
     this._logPayroll(provider, 'connect', true, 'Disconnected');
     this.showToast(info.name + ' disconnected');
@@ -11294,7 +11289,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         ? { rate: emp.annualSalary, payFrequency: 'salary',  currency: 'USD' }
         : { rate: emp.hourlyRate,   payFrequency: 'hourly',  currency: 'USD' };
       return {
-        clientCode: i.companyCode,
+        // clientCode is resolved server-side from PAYCOM_COMPANY_CODE env var
         employeeNumber: emp.id,
         firstName: first || '',
         lastName: last || '',

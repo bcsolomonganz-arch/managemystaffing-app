@@ -23,7 +23,7 @@ function init() {
   if (_pool || !process.env.PG_CONN) return _pool;
   _pool = new Pool({
     connectionString: process.env.PG_CONN,
-    ssl: { rejectUnauthorized: false },
+    ssl: { rejectUnauthorized: process.env.NODE_ENV === 'production' },
     max: 10,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,

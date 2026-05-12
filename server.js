@@ -450,19 +450,16 @@ let _adpTlsAgent = null;
 function _getAdpTlsAgent() {
   if (_adpTlsAgent) return _adpTlsAgent;
   if (!ADP_CERT_PATH || !ADP_KEY_PATH) return null;
-  try {
-    const https = require('https');
-    const fs = require('fs');
-    _adpTlsAgent = new https.Agent({
-      cert: fs.readFileSync(ADP_CERT_PATH),
-      key:  fs.readFileSync(ADP_KEY_PATH),
-      rejectUnauthorized: true,
-    });
-    return _adpTlsAgent;
-  } catch (e) {
-    logger.error('adp_mtls_agent_failed', { msg: e.message });
-    return null;
-  }
+  const https = require('https');
+  const fs = require('fs');
+  // Fail fast — if cert/key files are configured but unreadable, throw immediately
+  // rather than silently falling back to non-mTLS requests
+  _adpTlsAgent = new https.Agent({
+    cert: fs.readFileSync(ADP_CERT_PATH),
+    key:  fs.readFileSync(ADP_KEY_PATH),
+    rejectUnauthorized: true,
+  });
+  return _adpTlsAgent;
 }
 
 async function getAdpToken({ forceRefresh = false } = {}) {
@@ -1153,10 +1150,11 @@ async function applyMigrations(data) {
     sa.inviteToken = crypto.randomBytes(24).toString('hex');
     sa.inviteExpiry = Date.now() + 7 * 24 * 60 * 60 * 1000;
     dirty = true;
-    console.log('\n=================================================================');
-    console.log('First-time bootstrap. Use the link below within 7 days to set SA password:');
-    console.log(`${process.env.APP_URL || 'http://localhost:3002'}/?invite=${sa.inviteToken}`);
-    console.log('=================================================================\n');
+    logger.warn('BOOTSTRAP_SA_INVITE', {
+      msg: 'First-time bootstrap — SA invite token generated (expires in 7 days)',
+      url: `${process.env.APP_URL || 'http://localhost:3002'}/?invite=<REDACTED>`,
+      hint: 'Retrieve invite token from data file accounts[].inviteToken for the SA account',
+    });
   }
 
   // ── Ensure seed accounts always exist with correct immutable fields ─────────
@@ -1402,7 +1400,7 @@ async function requireAuth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Missing token' });
   try {
     if (await revokedTokens.has(token)) return res.status(401).json({ error: 'Token revoked' });
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
     // Idle timeout: 2h for admin/SA on the desktop site (HIPAA §164.312
     // (a)(2)(iii)). Effectively disabled for employees and for any
     // session tagged surface='pwa' at issue time. See effectiveIdleTtl
@@ -1729,13 +1727,31 @@ app.use(helmet({
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
   crossOriginOpenerPolicy: { policy: 'same-origin' },
   crossOriginResourcePolicy: { policy: 'same-origin' },
+  permissionsPolicy: {
+    features: {
+      camera:           [],
+      microphone:       [],
+      geolocation:      [],
+      payment:          [],
+      usb:              [],
+      magnetometer:     [],
+      gyroscope:        [],
+      accelerometer:    [],
+    },
+  },
 }));
 
-// Force HTTPS in production
+// Force HTTPS in production — validate Host header to prevent header injection
 if (IS_PROD) {
+  const _allowedHost = APP_URL ? new URL(APP_URL).host : null;
   app.use((req, res, next) => {
     if (req.secure || req.headers['x-forwarded-proto'] === 'https') return next();
-    return res.redirect(308, `https://${req.headers.host}${req.url}`);
+    const host = req.headers.host || '';
+    // Only redirect if host matches the configured APP_URL to prevent open-redirect / header injection
+    if (_allowedHost && host !== _allowedHost) {
+      return res.status(400).end('Invalid Host header');
+    }
+    return res.redirect(308, `https://${_allowedHost || host}${req.url}`);
   });
 }
 
@@ -1792,7 +1808,7 @@ function signDeviceTrust(acct) {
 function verifyDeviceTrust(token, acct) {
   if (!token || !acct) return false;
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
     if (decoded.kind !== 'device_trust') return false;
     if (decoded.acctId !== acct.id)      return false;
     if ((decoded.epoch || 0) !== (acct.deviceTrustEpoch || 0)) return false;
@@ -4550,7 +4566,7 @@ app.post('/api/timeclock/kiosk-punch', async (req, res) => {
   const { kioskToken, pin, action } = req.body || {};
   if (!kioskToken || !pin || !action) return res.status(400).json({ error: 'kioskToken, pin, action required' });
   let decoded;
-  try { decoded = jwt.verify(kioskToken, TIMECLOCK_KIOSK_SECRET); }
+  try { decoded = jwt.verify(kioskToken, TIMECLOCK_KIOSK_SECRET, { algorithms: ['HS256'] }); }
   catch { return res.status(401).json({ error: 'Invalid or expired kiosk token' }); }
   if (decoded.kind !== 'kiosk' || !decoded.buildingId) return res.status(401).json({ error: 'Bad kiosk token' });
   const kioskId = decoded.kioskId || decoded.buildingId;
@@ -6020,7 +6036,8 @@ app.get('/api/pbj/quarterly', requireAuth, requireAdmin, async (req, res) => {
   }
 
   if (format === 'xml') {
-    const fileName = `pbj_${result.summary.ccn || buildingId}_${year}Q${quarter}.xml`;
+    const rawName = `pbj_${result.summary.ccn || buildingId}_${year}Q${quarter}.xml`;
+    const fileName = rawName.replace(/[^a-zA-Z0-9._-]/g, '_');
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     return res.send(result.xml);
@@ -6108,7 +6125,7 @@ app.get('/api/pbj/archive/download', requireAuth, requireAdmin, async (req, res)
     }
     const buf = await block.downloadToBuffer();
     auditLog('PBJ_ARCHIVE_DOWNLOADED', req.user, { blobName, buildingId: bId });
-    const fname = blobName.split('/').pop() || 'pbj.xml';
+    const fname = (blobName.split('/').pop() || 'pbj.xml').replace(/[^a-zA-Z0-9._-]/g, '_');
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
     res.send(buf);
@@ -7363,7 +7380,8 @@ async function _generateRecoveryCodes(n = 10) {
 }
 
 // Confirm TOTP enrollment (user scanned QR + entered first code)
-app.post('/api/auth/totp/enroll', async (req, res) => {
+const totpEnrollLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: { error: 'Too many TOTP enrollment attempts' } });
+app.post('/api/auth/totp/enroll', totpEnrollLimiter, async (req, res) => {
   const { sessionId, totp } = req.body || {};
   if (!sessionId || !totp) return res.status(400).json({ error: 'sessionId and totp are required' });
   const pend = _totpPending.get(sessionId);
@@ -8427,6 +8445,17 @@ app.post('/api/payroll/:provider/hire', requireAuth, requireAdmin, async (req, r
   const provider = req.params.provider;
   const { empId, payload } = req.body || {};
   if (!empId || !payload) return res.status(400).json({ error: 'empId and payload required' });
+  if (typeof payload !== 'object' || Array.isArray(payload)) return res.status(400).json({ error: 'payload must be an object' });
+
+  // Whitelist allowed hire payload fields to prevent injection of unexpected data
+  const HIRE_ALLOWED = ['firstName', 'lastName', 'middleName', 'ssn', 'dateOfBirth', 'email', 'phone',
+    'address', 'city', 'state', 'zip', 'hireDate', 'jobTitle', 'department', 'payRate', 'payFrequency',
+    'employmentType', 'taxFilingStatus', 'clientCode', 'workerType', 'legalName', 'legalAddress',
+    'communication', 'governmentIDs', 'birthDate'];
+  const sanitizedPayload = {};
+  for (const k of Object.keys(payload)) {
+    if (HIRE_ALLOWED.includes(k)) sanitizedPayload[k] = payload[k];
+  }
 
   const data = await loadData();
   const emp = (data.employees || []).find(e => e.id === empId);
@@ -8436,15 +8465,14 @@ app.post('/api/payroll/:provider/hire', requireAuth, requireAdmin, async (req, r
   let r;
   if (provider === 'paycom') {
     if (!PAYCOM_CLIENT_ID) return res.status(503).json({ error: 'Paycom not configured' });
-    const companyCode = PAYCOM_COMPANY_CODE || payload.clientCode;
-    if (!companyCode) return res.status(400).json({ error: 'Paycom company code required' });
-    r = await paycomFetch(`${PAYCOM_API_BASE}/v4/companies/${encodeURIComponent(companyCode)}/employees`, {
-      method: 'POST', body: payload,
+    if (!PAYCOM_COMPANY_CODE) return res.status(503).json({ error: 'Paycom company code not configured on server' });
+    r = await paycomFetch(`${PAYCOM_API_BASE}/v4/companies/${encodeURIComponent(PAYCOM_COMPANY_CODE)}/employees`, {
+      method: 'POST', body: sanitizedPayload,
     });
   } else if (provider === 'adp') {
     if (!ADP_CLIENT_ID) return res.status(503).json({ error: 'ADP not configured' });
     r = await adpFetch(`${ADP_API_BASE}/events/hr/v1/worker.hire`, {
-      method: 'POST', body: payload,
+      method: 'POST', body: sanitizedPayload,
     });
   } else {
     return res.status(400).json({ error: 'Unknown provider' });
@@ -8453,7 +8481,7 @@ app.post('/api/payroll/:provider/hire', requireAuth, requireAdmin, async (req, r
   if (!r.ok) {
     logger.error(`${provider}_hire_failed`, { status: r.status, empId });
     auditLog(`${provider.toUpperCase()}_HIRE_FAILED`, req.user, { empId, status: r.status });
-    return res.status(502).json({ error: `${provider} hire push failed (status ${r.status})`, detail: r.body });
+    return res.status(502).json({ error: `${provider} hire push failed (status ${r.status})` });
   }
 
   // Extract external ID from provider response
@@ -8475,6 +8503,13 @@ app.post('/api/payroll/:provider/hire', requireAuth, requireAdmin, async (req, r
   res.json({ ok: true, externalId });
 });
 
+// Idempotency tracking for payroll sync — prevents double-submit within 10 minutes
+const _payrollSyncKeys = new Map();
+setInterval(() => {
+  const cutoff = Date.now() - 10 * 60 * 1000;
+  for (const [k, t] of _payrollSyncKeys) { if (t < cutoff) _payrollSyncKeys.delete(k); }
+}, 60 * 1000);
+
 // POST /api/payroll/:provider/sync — push payroll period totals
 app.post('/api/payroll/:provider/sync', requireAuth, requireAdmin, async (req, res) => {
   const provider = req.params.provider;
@@ -8482,12 +8517,23 @@ app.post('/api/payroll/:provider/sync', requireAuth, requireAdmin, async (req, r
   if (!periodStart || !periodEnd || !Array.isArray(rows) || !rows.length) {
     return res.status(400).json({ error: 'periodStart, periodEnd, and rows[] required' });
   }
+  // Validate date format
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRe.test(periodStart) || !dateRe.test(periodEnd)) {
+    return res.status(400).json({ error: 'periodStart and periodEnd must be YYYY-MM-DD format' });
+  }
+  // Idempotency check — prevent duplicate submission of same period+provider
+  const dedupKey = `${provider}:${periodStart}:${periodEnd}:${rows.length}`;
+  if (_payrollSyncKeys.has(dedupKey)) {
+    return res.status(409).json({ error: 'Duplicate sync — this period was already submitted. Wait 10 minutes to resubmit.' });
+  }
+  _payrollSyncKeys.set(dedupKey, Date.now());
 
   let r;
   if (provider === 'paycom') {
     if (!PAYCOM_CLIENT_ID) return res.status(503).json({ error: 'Paycom not configured' });
-    const companyCode = PAYCOM_COMPANY_CODE || req.body.companyCode;
-    r = await paycomFetch(`${PAYCOM_API_BASE}/v4/companies/${encodeURIComponent(companyCode || '')}/payroll-batches`, {
+    if (!PAYCOM_COMPANY_CODE) return res.status(503).json({ error: 'Paycom company code not configured on server' });
+    r = await paycomFetch(`${PAYCOM_API_BASE}/v4/companies/${encodeURIComponent(PAYCOM_COMPANY_CODE)}/payroll-batches`, {
       method: 'POST',
       body: { periodStart, periodEnd, entries: rows },
     });
@@ -8504,7 +8550,7 @@ app.post('/api/payroll/:provider/sync', requireAuth, requireAdmin, async (req, r
   if (!r.ok) {
     logger.error(`${provider}_payroll_sync_failed`, { status: r.status });
     auditLog(`${provider.toUpperCase()}_PAYROLL_SYNC_FAILED`, req.user, { periodStart, periodEnd, status: r.status });
-    return res.status(502).json({ error: `${provider} payroll sync failed (status ${r.status})`, detail: r.body });
+    return res.status(502).json({ error: `${provider} payroll sync failed (status ${r.status})` });
   }
 
   auditLog(`${provider.toUpperCase()}_PAYROLL_SYNCED`, req.user, { periodStart, periodEnd, empCount: rows.length });
@@ -8516,12 +8562,17 @@ app.post('/api/payroll/:provider/time-pull', requireAuth, requireAdmin, async (r
   const provider = req.params.provider;
   const { startDate, endDate, employeeIds } = req.body || {};
   if (!startDate || !endDate) return res.status(400).json({ error: 'startDate and endDate required' });
+  // Validate date format to prevent OData / query-string injection
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRe.test(startDate) || !dateRe.test(endDate)) {
+    return res.status(400).json({ error: 'startDate and endDate must be YYYY-MM-DD format' });
+  }
 
   let r;
   if (provider === 'paycom') {
     if (!PAYCOM_CLIENT_ID) return res.status(503).json({ error: 'Paycom not configured' });
-    const companyCode = PAYCOM_COMPANY_CODE || req.body.companyCode;
-    r = await paycomFetch(`${PAYCOM_API_BASE}/v4/companies/${encodeURIComponent(companyCode || '')}/time-records?startDate=${startDate}&endDate=${endDate}`);
+    if (!PAYCOM_COMPANY_CODE) return res.status(503).json({ error: 'Paycom company code not configured on server' });
+    r = await paycomFetch(`${PAYCOM_API_BASE}/v4/companies/${encodeURIComponent(PAYCOM_COMPANY_CODE)}/time-records?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`);
   } else if (provider === 'adp') {
     if (!ADP_CLIENT_ID) return res.status(503).json({ error: 'ADP not configured' });
     r = await adpFetch(`${ADP_API_BASE}/time/v2/workers/time-cards?$filter=timePeriod/startDate ge '${startDate}' and timePeriod/endDate le '${endDate}'`);
@@ -8531,7 +8582,7 @@ app.post('/api/payroll/:provider/time-pull', requireAuth, requireAdmin, async (r
 
   if (!r.ok) {
     logger.error(`${provider}_time_pull_failed`, { status: r.status });
-    return res.status(502).json({ error: `${provider} time pull failed (status ${r.status})`, detail: r.body });
+    return res.status(502).json({ error: `${provider} time pull failed (status ${r.status})` });
   }
 
   // Normalize provider response into a common punch format
