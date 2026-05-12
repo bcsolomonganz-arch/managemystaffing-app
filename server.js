@@ -7630,18 +7630,26 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   const callerBIds = new Set([callerBId, ...(req.user.buildingIds||[])].filter(Boolean));
 
   // ── Per-collection merge with authz scoping ────────────────────────────────
+  // The caller sends their full local state for their building(s). We must:
+  //   1. Accept all in-scope items from the incoming payload (caller's edits win)
+  //   2. Preserve ALL existing items NOT in the incoming payload — both
+  //      out-of-scope items (other buildings) AND in-scope items that another
+  //      admin added concurrently (the caller never saw them, so they're not
+  //      in the payload, but they must not be dropped).
   const mergeScoped = (existing = [], incoming = [], scopeOk) => {
     if (isSA) return Array.isArray(incoming) ? incoming : existing;
     if (!Array.isArray(incoming)) return existing;
     const result = [];
     const seen = new Set();
-    // Take incoming items that are in caller's scope
+    // Take incoming items that are in caller's scope (caller's version wins)
     for (const item of incoming) {
       if (scopeOk(item)) { result.push(item); seen.add(item.id); }
     }
-    // Preserve existing items that are OUT of scope (caller can't touch them)
+    // Preserve ALL existing items not already in the result — this includes
+    // both out-of-scope items AND in-scope items added by other admins
+    // that the caller didn't have in their payload.
     for (const item of existing) {
-      if (!scopeOk(item) && !seen.has(item.id)) result.push(item);
+      if (!seen.has(item.id)) result.push(item);
     }
     return result;
   };
