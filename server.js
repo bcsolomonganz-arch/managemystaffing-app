@@ -7941,38 +7941,54 @@ app.post('/api/invite/onboard', requireAuth, requireAdmin, async (req, res) => {
   }
 
   const data = await loadData();
-  if ((data.accounts || []).find(a => a.email.toLowerCase() === emailNorm)) {
-    return res.status(409).json({ error: 'An account with this email already exists' });
-  }
-
   const inviteToken = crypto.randomBytes(24).toString('hex');
   const nowIso      = new Date().toISOString();
   const hrEmployeeId = 'hre_' + Date.now() + '_' + crypto.randomBytes(2).toString('hex');
-
-  // Create the account (role = employee; password set via invite link)
-  const newAccount = {
-    id:           'acc_' + Date.now(),
-    name:         name.trim(),
-    email:        emailNorm,
-    role:         'hrcandidate',
-    buildingId:   targetBuilding || null,
-    ph:           null,
-    schedulerOnly: false,
-    inviteToken,
-    inviteExpiry: Date.now() + 7 * 24 * 60 * 60 * 1000,
-    invitedBy:    req.user.email,
-    invitedAt:    nowIso,
-    hrEmployeeId,
-    inviteType:   inviteType || 'full',
-  };
-  data.accounts = data.accounts || [];
-  data.accounts.push(newAccount);
-  await persistAccountNow(newAccount);
-
-  // Create matching hrEmployee record
   const building = (data.buildings || []).find(b => b.id === targetBuilding);
   const state    = building?.state || 'TX';
   const initials = name.trim().split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+
+  // Check for existing account — allow re-invite by resetting the account
+  const existingAcct = (data.accounts || []).find(a => a.email.toLowerCase() === emailNorm);
+  let newAccount;
+  if (existingAcct) {
+    // Reset the existing account for a fresh onboarding cycle
+    existingAcct.name         = name.trim();
+    existingAcct.role         = 'hrcandidate';
+    existingAcct.buildingId   = targetBuilding || null;
+    existingAcct.ph           = null;
+    existingAcct.inviteToken  = inviteToken;
+    existingAcct.inviteExpiry = Date.now() + 7 * 24 * 60 * 60 * 1000;
+    existingAcct.invitedBy    = req.user.email;
+    existingAcct.invitedAt    = nowIso;
+    existingAcct.hrEmployeeId = hrEmployeeId;
+    existingAcct.inviteType   = inviteType || 'full';
+    existingAcct.activatedAt  = undefined;
+    await persistAccountNow(existingAcct);
+    newAccount = existingAcct;
+    auditLog('ONBOARD_REINVITE', req.user, { accountId: existingAcct.id, email: emailNorm });
+  } else {
+    newAccount = {
+      id:           'acc_' + Date.now(),
+      name:         name.trim(),
+      email:        emailNorm,
+      role:         'hrcandidate',
+      buildingId:   targetBuilding || null,
+      ph:           null,
+      schedulerOnly: false,
+      inviteToken,
+      inviteExpiry: Date.now() + 7 * 24 * 60 * 60 * 1000,
+      invitedBy:    req.user.email,
+      invitedAt:    nowIso,
+      hrEmployeeId,
+      inviteType:   inviteType || 'full',
+    };
+    data.accounts = data.accounts || [];
+    data.accounts.push(newAccount);
+    await persistAccountNow(newAccount);
+  }
+
+  // Create a new hrEmployee record for this onboarding cycle
   const hrEmployee = {
     id:              hrEmployeeId,
     initials,
