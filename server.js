@@ -4043,6 +4043,99 @@ app.post('/api/admin/recover-shifts-from-history', requireAuth, requireAdmin, as
   }
 });
 
+// ── RESTORE SHIFT ASSIGNMENTS FROM HISTORY ───────────────────────────────────
+// For shifts that exist in the live table but lost their employee assignment
+// (e.g. SA stale save overwrote assigned→open), this endpoint finds the most
+// recent history record where each shift HAD an employee_id and restores it.
+// Only affects shifts currently in status='open' with no employee_id.
+app.post('/api/admin/restore-shift-assignments', requireAuth, requireAdmin, async (req, res) => {
+  if (!_useDB) return res.status(503).json({ error: 'Endpoint requires postgres backend' });
+  const buildingId = String(req.body?.buildingId || '').trim();
+  const dryRun     = !!req.body?.dryRun;
+  if (!buildingId) return res.status(400).json({ error: 'buildingId required' });
+  const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds || [])].filter(Boolean));
+  if (req.user.role !== 'superadmin' && !callerBIds.has(buildingId)) {
+    return res.status(403).json({ error: 'Out of scope' });
+  }
+
+  const pgLib = require('pg');
+  const liveConn = process.env.PG_CONN;
+  if (!liveConn) return res.status(503).json({ error: 'PG_CONN not set' });
+  const client = new pgLib.Client({
+    connectionString: liveConn,
+    ssl: { rejectUnauthorized: IS_PROD },
+    connectionTimeoutMillis: 10000,
+    statement_timeout: 60000,
+  });
+
+  let restored = 0;
+  try {
+    await client.connect();
+
+    // Find live open shifts that had an employee assignment in their history.
+    // For each open shift, get the most recent history record where employee_id
+    // was set — that's the assignment we want to restore.
+    const r = await client.query(`
+      WITH open_shifts AS (
+        SELECT id FROM shifts
+        WHERE building_id = $1
+          AND (employee_id IS NULL OR employee_id = '')
+          AND (status = 'open' OR status IS NULL)
+      ),
+      last_assigned AS (
+        SELECT DISTINCT ON (h.shift_id)
+               h.shift_id,
+               h.after_row->>'employee_id' AS emp_id,
+               h.after_row->>'status' AS status,
+               h.ts
+        FROM shift_history h
+        INNER JOIN open_shifts os ON os.id = h.shift_id
+        WHERE h.building_id = $1
+          AND h.after_row->>'employee_id' IS NOT NULL
+          AND h.after_row->>'employee_id' != ''
+          AND h.op IN ('insert','update')
+        ORDER BY h.shift_id, h.ts DESC
+      )
+      SELECT la.shift_id, la.emp_id, la.status
+      FROM last_assigned la
+    `, [buildingId]);
+
+    if (dryRun) {
+      await client.end();
+      return res.json({
+        ok: true, dryRun: true,
+        wouldRestore: r.rows.length,
+        sample: r.rows.slice(0, 10).map(x => ({
+          shiftId: x.shift_id,
+          employeeId: x.emp_id,
+          status: x.status,
+        })),
+      });
+    }
+
+    for (const row of r.rows) {
+      // Verify employee still exists
+      const ex = await client.query(`SELECT id FROM employees WHERE id = $1`, [row.emp_id]);
+      if (!ex.rows.length) continue;
+      await client.query(
+        `UPDATE shifts SET employee_id = $1, status = $2 WHERE id = $3`,
+        [row.emp_id, row.status || 'scheduled', row.shift_id]
+      );
+      restored++;
+    }
+
+    dataCache = await dbRepo.loadAll();
+    _bumpDataVersion();
+    auditLog('SHIFT_ASSIGNMENT_RECOVERY', req.user, { buildingId, restored });
+    res.json({ ok: true, restored });
+  } catch (e) {
+    auditLog('SHIFT_ASSIGNMENT_RECOVERY_FAILED', req.user, { buildingId, err: e.message });
+    res.status(500).json({ error: e.message });
+  } finally {
+    try { await client.end(); } catch {};
+  }
+});
+
 // ── RECOVER EMPLOYEES FROM HISTORY LOG ───────────────────────────────────────
 // Reads employee_history (append-only audit log) and replays the most-recent
 // state of every employee that was ever in the building, restoring them all.
