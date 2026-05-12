@@ -7573,7 +7573,9 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
                       'demos','billingData','shiftTemplates','staffingSlots',
                       'buildingShiftTypes','hrOnboarding',
                       // already-handled scoped collections
-                      'staffEvents','prospects','ppdDailyCensus'];
+                      'staffEvents','prospects','ppdDailyCensus',
+                      // messaging / trade collections (were silently discarded before)
+                      'shiftTrades','directMessages'];
   const present = KNOWN_KEYS.filter(k => k in payload);
   if (present.length === 0) {
     auditLog('DATA_UPDATE_REJECTED_EMPTY', req.user, { keys: Object.keys(payload) });
@@ -7637,13 +7639,16 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   //      admin added concurrently (the caller never saw them, so they're not
   //      in the payload, but they must not be dropped).
   const mergeScoped = (existing = [], incoming = [], scopeOk) => {
-    if (isSA) return Array.isArray(incoming) ? incoming : existing;
     if (!Array.isArray(incoming)) return existing;
     const result = [];
     const seen = new Set();
-    // Take incoming items that are in caller's scope (caller's version wins)
+    // Take incoming items that are in caller's scope (caller's version wins).
+    // For SA users scopeOk matches everything, so all incoming items are
+    // accepted — but server-side items NOT in the payload are still preserved
+    // below. This prevents stale SA saves from overwriting concurrent edits
+    // by other admins (root cause of repeated Kirkland data loss).
     for (const item of incoming) {
-      if (scopeOk(item)) { result.push(item); seen.add(item.id); }
+      if (isSA || scopeOk(item)) { result.push(item); seen.add(item.id); }
     }
     // Preserve ALL existing items not already in the result — this includes
     // both out-of-scope items AND in-scope items added by other admins

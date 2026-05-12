@@ -6029,7 +6029,7 @@ const App = {
         openSlot.status = 'scheduled';
         openSlot.rotation = rotation;
       } else {
-        const sid = 's' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + Math.random().toString(36).slice(2,6);
+        const sid = 'sh' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + Math.random().toString(36).slice(2,6);
         this.S.shifts.push({
           id: sid, date: ds, group, type: shiftDef.type,
           start: shiftDef.start, end: shiftDef.end, slot: 0,
@@ -17826,7 +17826,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           existing.patternGenerated = true;
         } else {
           this.S.shifts.push({
-            id:`pat_${empId}_${dateStr}_${shiftType}`,
+            id:'sh' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + Math.random().toString(36).slice(2,6),
             date:dateStr, group:emp.group, type:shiftType,
             start:shiftDef.start, end:shiftDef.end,
             slot:0, employeeId:empId, status:'scheduled',
@@ -18387,7 +18387,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       // Create a new shift record
       const shiftDef = SHIFT_TYPES(group).find(s => s.type === shiftType);
       shift = {
-        id: 'sh_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+        id: 'sh' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + Math.random().toString(36).slice(2,6),
         date, group, type: shiftType, status: 'scheduled',
         employeeId: empId, buildingId: bId,
         start: shiftDef?.start || '', end: shiftDef?.end || '',
