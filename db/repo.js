@@ -626,7 +626,7 @@ async function saveScopedData(data) {
             updated_at=now()`,
           [e.id, e.buildingId, e.accountId || null, e.name, e.email || null, e.phone || null, e.group,
            e.employmentType || null, e.hourlyRate || null, e.hireDate || null,
-           !!e.inactive, e.notifEmail !== false, !!e.notifSMS,
+           !!e.inactive, e.notifEmail !== false, e.phone ? (e.notifSMS !== false) : !!e.notifSMS,
            JSON.stringify(md), JSON.stringify(e.terminationLog || []),
            e.licenseNumber || null, e.licenseExpiresAt || null, e.licenseState || null]);
       }
@@ -885,7 +885,7 @@ async function saveAll(data) {
             updated_at=now()`,
           [e.id, e.buildingId, e.accountId || null, e.name, e.email || null, e.phone || null, e.group,
            e.employmentType || null, e.hourlyRate || null, e.hireDate || null,
-           !!e.inactive, e.notifEmail !== false, !!e.notifSMS,
+           !!e.inactive, e.notifEmail !== false, e.phone ? (e.notifSMS !== false) : !!e.notifSMS,
            JSON.stringify(md), JSON.stringify(e.terminationLog || []),
            e.licenseNumber || null, e.licenseExpiresAt || null, e.licenseState || null]);
       }
