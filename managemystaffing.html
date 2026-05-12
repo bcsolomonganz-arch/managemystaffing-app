@@ -1315,8 +1315,7 @@ if (IS_PROD_HOST) {
 }
 
 // HIPAA §164.312(a)(2)(iv) — JWT lives in httpOnly cookie set by the server.
-// JS cannot read or write it.
-let _authToken = null;
+// JS cannot read or write it; fetch() sends it automatically via credentials.
 // Purge any legacy JWT that older builds put in localStorage
 try { localStorage.removeItem('mms_token'); sessionStorage.removeItem('mms_demo_token'); } catch(e) {}
 
@@ -2524,7 +2523,6 @@ const App = {
 
   // ── LOGOUT ───────────────────────────────────────────────
   logout() {
-    _authToken = null;
     localStorage.removeItem('mms_token');
     Audit.log('LOGOUT', 'User logged out', this.S.user?.id, 'low');
     this._clearSessionTimers();
@@ -3234,7 +3232,7 @@ const App = {
     try {
       const r = await fetch('/api/alert', {
         method:'POST',
-        headers:{'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},
+        headers:{'Content-Type':'application/json'},
         body: JSON.stringify({
           groups: [], message: body,
           subject: `Your ManageMyStaffing Demo — ${dateStr}`,
@@ -3277,7 +3275,7 @@ const App = {
     try {
       const r = await fetch('/api/demo/message', {
         method:'POST',
-        headers:{'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},
+        headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ to: d.email, name: d.prospectName, subject, message: body }),
       });
       if (r.ok) {
@@ -3778,7 +3776,7 @@ const App = {
     try {
       const r = await fetch(`/api/buildings/${buildingId}/provision-sms`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_authToken}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       const data = await r.json();
@@ -3787,7 +3785,7 @@ const App = {
         return;
       }
       // Refresh /api/data so the building's new fields show up.
-      const dResp = await fetch('/api/data', { headers: { 'Authorization': `Bearer ${_authToken}` } });
+      const dResp = await fetch('/api/data', {});
       if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
       this.showToast(`SMS number ${data.phoneNumber} active for ${b.name}`);
       this.render();
@@ -3809,11 +3807,10 @@ const App = {
     try {
       const r = await fetch(`/api/buildings/${buildingId}/provision-sms`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${_authToken}` },
       });
       const data = await r.json();
       if (!r.ok) { this.showToast(data.error || 'Release failed', 'warn'); return; }
-      const dResp = await fetch('/api/data', { headers: { 'Authorization': `Bearer ${_authToken}` } });
+      const dResp = await fetch('/api/data', {});
       if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
       this.showToast('SMS number released');
       this.render();
@@ -8174,7 +8171,7 @@ const App = {
     try {
       const resp = await fetch('/api/sms', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + _authToken },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ to: phone, message, buildingId }),
       });
       const data = await resp.json().catch(() => ({}));
@@ -9456,7 +9453,7 @@ const App = {
     try {
       const r = await fetch('/api/invite/resend', {
         method: 'POST',
-        headers: {'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},
+        headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ accountId }),
       });
       const data = await r.json();
@@ -9475,7 +9472,7 @@ const App = {
       this.closeModal('modal-manage-admin');
       // Refresh data so the Pending tag appears
       if (IS_SERVER_MODE) {
-        const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${_authToken}`}});
+        const dResp = await fetch('/api/data', {});
         if (dResp.ok) { this.applyServerData(await dResp.json()); this.render(); }
       }
     } catch(e) {
@@ -9536,7 +9533,7 @@ const App = {
     try {
       const r = await fetch('/api/invite', {
         method: 'POST',
-        headers: {'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},
+        headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ name, email, role, buildingId: bId, schedulerOnly }),
       });
       const data = await r.json();
@@ -9554,7 +9551,7 @@ const App = {
       }
       // Refresh platform view so new account shows
       if (IS_SERVER_MODE) {
-        const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${_authToken}`}});
+        const dResp = await fetch('/api/data', {});
         if (dResp.ok) { this.applyServerData(await dResp.json()); this.render(); }
       }
     } catch(e) {
@@ -9599,14 +9596,14 @@ const App = {
       try {
         const r = await fetch('/api/invite', {
           method: 'POST',
-          headers: {'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},
+          headers: {'Content-Type':'application/json'},
           body: JSON.stringify({ name, email, role: 'regionaladmin', buildingIds }),
         });
         const data = await r.json();
         if (!r.ok) { showErr(data.error || 'Failed to create account.'); if(btn){btn.disabled=false;btn.textContent='Send Invitation';} return; }
         this.closeModal('modal-regional-admin');
         this.showToast(data.emailWarning ? 'Account created — email failed, share invite manually.' : `Invitation sent to ${email}`, data.emailWarning ? 'warn' : undefined);
-        const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${_authToken}`}});
+        const dResp = await fetch('/api/data', {});
         if (dResp.ok) { this.applyServerData(await dResp.json()); this.render(); }
       } catch(e) { showErr('Connection error. Please try again.'); if(btn){btn.disabled=false;btn.textContent='Send Invitation';} }
     } else {
@@ -9626,7 +9623,7 @@ const App = {
   async _fetchPCCStatus() {
     if (!IS_SERVER_MODE) return;
     try {
-      const r = await fetch('/api/pcc/status', { headers: { 'Authorization': `Bearer ${_authToken}` } });
+      const r = await fetch('/api/pcc/status', {});
       if (r.ok) { this.S.pccStatus = await r.json(); }
     } catch(e) { /* silent */ }
   },
@@ -9640,9 +9637,7 @@ const App = {
     if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin">↻</span> Syncing…'; }
 
     try {
-      const r = await fetch(`/api/pcc/census?date=${date}`, {
-        headers: { 'Authorization': `Bearer ${_authToken}` }
-      });
+      const r = await fetch(`/api/pcc/census?date=${date}`);
       const data = await r.json();
       if (!r.ok || data.error) {
         this.showToast(data.error || 'PCC sync failed', 'warn');
@@ -9675,9 +9670,7 @@ const App = {
     const btn  = document.getElementById('pcc-staffing-btn');
     if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin">↻</span> Syncing…'; }
     try {
-      const r = await fetch(`/api/pcc/staffing?date=${date}`, {
-        headers: { 'Authorization': `Bearer ${_authToken}` },
-      });
+      const r = await fetch(`/api/pcc/staffing?date=${date}`);
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || 'PCC error');
       const { hours, rn24 } = data;
@@ -9708,9 +9701,7 @@ const App = {
     const btn   = document.getElementById('pcc-monthly-btn');
     if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin">↻</span> Loading…'; }
     try {
-      const r = await fetch(`/api/pcc/staffing/range?start=${start}&end=${end}`, {
-        headers: { 'Authorization': `Bearer ${_authToken}` },
-      });
+      const r = await fetch(`/api/pcc/staffing/range?start=${start}&end=${end}`);
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || 'PCC error');
       const { avgDaily, rn24Days, daysInPeriod } = data;
@@ -9736,7 +9727,7 @@ const App = {
   async _loadJobPostings() {
     if (!IS_SERVER_MODE) return;
     try {
-      const r = await fetch('/api/data', { headers: { 'Authorization': `Bearer ${_authToken}` } });
+      const r = await fetch('/api/data', {});
       if (r.ok) {
         const d = await r.json();
         if (Array.isArray(d.jobPostings)) {
@@ -10620,7 +10611,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     try {
       const r = await fetch('/api/sms', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_authToken}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ to: p.phone, message: body }),
       });
       if (!r.ok) {
@@ -10663,7 +10654,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     try {
       const r = await fetch('/api/recruiting/onboard', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_authToken}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prospectId: p.id }),
       });
       if (!r.ok) {
@@ -12918,7 +12909,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       try {
         const r = await fetch('/api/invite/onboard', {
           method: 'POST',
-          headers: {'Content-Type':'application/json','Authorization':`Bearer ${_authToken}`},
+          headers: {'Content-Type':'application/json'},
           body: JSON.stringify({ name, email, group: role, buildingId, inviteType }),
         });
         const result = await r.json();
@@ -12930,7 +12921,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           ? `Invite created for ${name} — email may not have sent. Share link manually.`
           : `Onboarding invite sent to ${name} at ${email}`);
         // Refetch server data to sync hrEmployee + account
-        const dResp = await fetch('/api/data', {headers:{'Authorization':`Bearer ${_authToken}`}});
+        const dResp = await fetch('/api/data', {});
         if (dResp.ok) this.applyServerData(await dResp.json());
       } catch(e) {
         this.showToast(`Failed to send invite — ${e.message}`, 'warn');
@@ -15863,9 +15854,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.S.ppdCalLoading = true;
     this.render();
     try {
-      const r = await fetch(`/api/pcc/census/range?start=${start}&end=${end}`, {
-        headers: { 'Authorization': `Bearer ${_authToken}` }
-      });
+      const r = await fetch(`/api/pcc/census/range?start=${start}&end=${end}`);
       if (!r.ok) {
         const data = await r.json().catch(() => ({}));
         this.showToast(data.error || 'PCC sync failed','warn');
@@ -18822,7 +18811,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     try {
       const r = await fetch(`/api/buildings/${buildingId}/provision-sms`, {
         method:'POST',
-        headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${_authToken}` },
+        headers: { 'Content-Type':'application/json' },
         body: JSON.stringify({
           autoProvision: true,
           areaCode: areaCode || null,
@@ -18839,7 +18828,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       }
       const data = await r.json();
       // Refresh /api/data to pick up smsFromPhone on the building record
-      const dResp = await fetch('/api/data', { headers: { 'Authorization': `Bearer ${_authToken}` } });
+      const dResp = await fetch('/api/data', {});
       if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
       this.showToast(`Local number ${data.phoneNumber} assigned to ${sanitize(b.name)}`);
       Audit.log('SMS_PROVISION_AUTO',
@@ -18882,7 +18871,6 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       try {
         const r = await fetch(`/api/buildings/${buildingId}/provision-sms`, {
           method:'DELETE',
-          headers: { 'Authorization': `Bearer ${_authToken}` },
         });
         if (!r.ok) {
           const data = await r.json().catch(()=>({}));
@@ -18969,7 +18957,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if(sendBtn){sendBtn.disabled=true;sendBtn.innerHTML='<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation:spin 1s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Sending…';}
     try {
       if(IS_SERVER_MODE){
-        const resp=await fetch('/api/alert',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+_authToken},body:JSON.stringify({groups:actualGroups,viaSMS,viaEmail,message,subject,buildingId:this.S.user.buildingId||'b1'})});
+        const resp=await fetch('/api/alert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({groups:actualGroups,viaSMS,viaEmail,message,subject,buildingId:this.S.user.buildingId||'b1'})});
         const r=await resp.json();
         this.closeModal('modal-alert');
         const parts=[];
