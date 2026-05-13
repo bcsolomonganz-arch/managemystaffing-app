@@ -14603,7 +14603,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       !e.inactive && e.buildingId === bId && e.id !== me);
     const accounts = (this.S.accounts || []).filter(a =>
       a.id !== me && a.buildingId === bId &&
-      ['admin','hradmin','scheduler','superadmin','regionaladmin'].includes(a.role));
+      ['admin','hradmin','superadmin','regionaladmin'].includes(a.role));
     // De-dupe: an admin who's also an employee shows up once (employee record wins).
     const empIds = new Set(employees.map(e => e.id));
     const people = [

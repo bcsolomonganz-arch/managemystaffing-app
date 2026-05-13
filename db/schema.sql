@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   id                              TEXT PRIMARY KEY,        -- prefer UUIDs in new code
   email                           CITEXT UNIQUE NOT NULL,  -- case-insensitive
   name                            TEXT NOT NULL,
-  role                            TEXT NOT NULL CHECK (role IN ('superadmin','admin','regionaladmin','employee')),
+  role                            TEXT NOT NULL CHECK (role IN ('superadmin','admin','regionaladmin','hradmin','employee','hrcandidate')),
   building_id                     TEXT REFERENCES buildings(id) ON DELETE SET NULL,
   building_ids                    TEXT[] NOT NULL DEFAULT '{}',   -- multi-building access
   "group"                         TEXT,

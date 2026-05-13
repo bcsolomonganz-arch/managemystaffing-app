@@ -1553,7 +1553,7 @@ function escapeCsv(s) {
 function _canAccessHR(user) {
   if (!user) return false;
   if (user.role === 'superadmin') return true;
-  if (user.role === 'hr' || user.hrAccess === true) return true;
+  if (user.role === 'hradmin' || user.hrAccess === true) return true;
   return false;
 }
 
@@ -5617,7 +5617,7 @@ app.post('/api/shifts/:id/claim', requireAuth, async (req, res) => {
   // Push to building admins so they can approve from the app
   try {
     const adminAccts = (data.accounts || []).filter(a =>
-      ['admin','hradmin','scheduler','superadmin','regionaladmin'].includes(a.role) &&
+      ['admin','hradmin','superadmin','regionaladmin'].includes(a.role) &&
       (a.role === 'superadmin' ||
        a.buildingId === shift.buildingId ||
        (Array.isArray(a.buildingIds) && a.buildingIds.includes(shift.buildingId))));
@@ -8426,12 +8426,16 @@ app.get('/api/admin/audit', requireAuth, requireAdmin, async (req, res) => {
 
 // ── POST /api/invite ──────────────────────────────────────────────────────────
 app.post('/api/invite', requireAuth, requireAdmin, async (req, res) => {
-  const { name, email, role, buildingId, schedulerOnly } = req.body || {};
+  const { name, email, role, buildingId, buildingIds, schedulerOnly } = req.body || {};
   if (!name || !email) return res.status(400).json({ error: 'name and email are required' });
   const emailNorm = email.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNorm)) return res.status(400).json({ error: 'Invalid email address' });
 
-  const acctRole       = ['admin','employee'].includes(role) ? role : 'admin';
+  // Only superadmin can create regionaladmin accounts.
+  if (role === 'regionaladmin' && req.user.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Only superadmin can create regional admin accounts' });
+  }
+  const acctRole       = ['admin','employee','regionaladmin'].includes(role) ? role : 'admin';
   const callerBId      = req.user.buildingId;
   const targetBuilding = buildingId || callerBId;
   if (req.user.role === 'admin' && targetBuilding !== callerBId) {
@@ -8450,6 +8454,7 @@ app.post('/api/invite', requireAuth, requireAdmin, async (req, res) => {
     email:        emailNorm,
     role:         acctRole,
     buildingId:   targetBuilding || null,
+    buildingIds:  acctRole === 'regionaladmin' && Array.isArray(buildingIds) ? buildingIds.filter(Boolean) : [],
     ph:           null,
     schedulerOnly: acctRole === 'admin' ? !!schedulerOnly : false,
     inviteToken,

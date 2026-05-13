@@ -55,6 +55,17 @@ async function ensureSchema() {
   await c.query(`ALTER TABLE schedule_patterns ALTER COLUMN building_id DROP NOT NULL`).catch(() => {});
   await c.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS scheduler_only BOOLEAN NOT NULL DEFAULT false`);
   await c.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS device_trust_epoch BIGINT NOT NULL DEFAULT 0`);
+  // Add 'hradmin' to the accounts role CHECK constraint. The original constraint
+  // only allowed superadmin/admin/regionaladmin/employee. HR Admins need their own
+  // role so punch corrections route through an approval workflow.
+  await c.query(`
+    DO $$ BEGIN
+      ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_role_check;
+      ALTER TABLE accounts ADD CONSTRAINT accounts_role_check
+        CHECK (role IN ('superadmin','admin','regionaladmin','hradmin','employee','hrcandidate'));
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END $$
+  `);
   // Nursing license tracking. The expiry date drives a visible countdown
   // on the roster card and an automatic flag on every scheduled shift
   // where the assigned employee's license has lapsed.
@@ -354,7 +365,7 @@ async function withTx(fn) {
 }
 
 // Valid roles that can be set in the RLS context
-const VALID_ROLES = new Set(['superadmin', 'admin', 'regionaladmin', 'employee', 'hradmin']);
+const VALID_ROLES = new Set(['superadmin', 'admin', 'regionaladmin', 'employee', 'hradmin', 'hrcandidate']);
 const BUILDING_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
 // Set RLS context for queries on a given client connection
