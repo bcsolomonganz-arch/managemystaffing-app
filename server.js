@@ -4474,6 +4474,79 @@ app.post('/api/admin/recover-from-pitr', requireAuth, requireAdmin, async (req, 
   }
 });
 
+// ── POST /api/admin/fix-salaried-rates ────────────────────────────────────
+// One-off fix: 76 salaried employees had weekly pay stored as hourlyRate.
+// This endpoint converts them to correct effective hourly rates.
+// Superadmin only. Pass { dryRun: true } (default) to preview without saving.
+// DELETE THIS ENDPOINT after the fix is applied.
+app.post('/api/admin/fix-salaried-rates', requireAuth, requireSuperAdmin, async (req, res) => {
+  const dryRun = req.body?.dryRun !== false; // default true
+  const FIXES = {
+    'e_p200229': 40,    'e_p250618': 34,    'e_p120010': 38.35,
+    'e_p140101': 27,    'e_p200055': 21.73, 'e_p280002': 44.23,
+    'e_p260121': 62.5,  'e_p210046': 22.92, 'e_p360386': 52,
+    'e_p280005': 31,    'e_p200478': 47.98, 'e_p270056': 18.5,
+    'e_p210115': 48.08, 'e_p180989': 24.04, 'e_p200170': 25.25,
+    'e_p200038': 45.67, 'e_p170672': 46.88, 'e_p270007': 40,
+    'e_p260007': 45.67, 'e_p360388': 39.42, 'e_p220059': 42,
+    'e_p290010': 60.1,  'e_p350055': 52.88, 'e_p360029': 40.86,
+    'e_p140018': 47.76, 'e_p240195': 41.11, 'e_p210052': 44.27,
+    'e_p360051': 52.88, 'e_p140181': 50.48, 'e_p150392': 46.15,
+    'e_p210022': 46.37, 'e_p280027': 21.1,  'e_p340253': 40,
+    'e_p270123': 45.67, 'e_p290097': 43.27, 'e_p260039': 24,
+    'e_p150364': 45.67, 'e_p170060': 33.85, 'e_p250290': 43.27,
+    'e_p340316': 52.88, 'e_p170619': 43,    'e_p120365': 56.49,
+    'e_p170638': 43.27, 'e_p160262': 36.06, 'e_p220028': 52.88,
+    'e_p260074': 43,    'e_p120046': 42,    'e_p290043': 43.31,
+    'e_p250593': 27.88, 'e_p000116': 28,    'e_p200050': 40.87,
+    'e_p210031': 37.92, 'e_p270047': 57.69, 'e_p140212': 33.23,
+    'e_p120389': 55.29, 'e_p160071': 24,    'e_p280051': 57.69,
+    'e_p240094': 31,    'e_p000214': 38.46, 'e_p150345': 52,
+    'e_p240134': 54.81, 'e_p340260': 48.08, 'e_p290052': 27.46,
+    'e_p240261': 67.71, 'e_p140163': 55.29, 'e_p160052': 43.27,
+    'e_p220047': 44.23, 'e_p000053': 34.62, 'e_p360122': 38,
+    'e_p250624': 51.68, 'e_p180905': 44.71, 'e_p000118': 31.25,
+    'e_p250291': 27,    'e_p290064': 45,    'e_p160292': 43,
+    'e_p120338': 36.06,
+  };
+
+  const data = await loadData();
+  const employees = data.employees || [];
+  const results = [];
+  let fixed = 0, notFound = 0, alreadyCorrect = 0;
+
+  for (const [empId, correctRate] of Object.entries(FIXES)) {
+    const emp = employees.find(e => e.id === empId);
+    if (!emp) {
+      results.push({ id: empId, status: 'not_found' });
+      notFound++;
+      continue;
+    }
+    const oldRate = emp.hourlyRate;
+    if (oldRate === correctRate) {
+      results.push({ id: empId, name: emp.name, status: 'already_correct', rate: correctRate });
+      alreadyCorrect++;
+      continue;
+    }
+    results.push({ id: empId, name: emp.name, status: 'fixed', oldRate, newRate: correctRate });
+    if (!dryRun) {
+      emp.hourlyRate = correctRate;
+    }
+    fixed++;
+  }
+
+  if (!dryRun && fixed > 0) {
+    markDirty();
+    auditLog('SALARIED_RATES_FIXED', req.user, { fixed, notFound, alreadyCorrect });
+  }
+
+  res.json({
+    ok: true, dryRun, fixed, notFound, alreadyCorrect,
+    total: Object.keys(FIXES).length,
+    results,
+  });
+});
+
 // POST /api/buildings/:id/provision-sms
 //   Body (optional): { areaCode: "918" }   — overrides ZIP-derived area code
 // Returns: { ok, phoneNumber, monthlyCost, areaCode } on success.
