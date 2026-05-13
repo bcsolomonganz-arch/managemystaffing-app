@@ -8444,7 +8444,7 @@ app.post('/api/invite/onboard', requireAuth, requireAdmin, async (req, res) => {
   const escB    = escapeHtml(bName);
   const safePlainName = String(name.trim()).replace(/[\r\n]/g, ' ');
   const safePlainB    = String(bName).replace(/[\r\n]/g, ' ');
-  const onboardFromEmail = building?.hrFromEmail || ACS_FROM_EMAIL;
+  const onboardFromEmail = building?.hrFromEmail || process.env.ACS_ONBOARD_FROM_EMAIL || 'onboarding@managemystaffing.com';
 
   if (ACS_CONNECTION_STRING) {
     try {
