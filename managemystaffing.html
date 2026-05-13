@@ -3097,6 +3097,17 @@ const App = {
             <button class="btn btn-primary btn-sm" onclick="App.recoverDeletedEmployees(false)" id="rcv-emp-go" disabled>Recover</button>
           </div>
         </div>
+
+        <!-- Fix Salaried Rates -->
+        <div style="background:#fff;border:1.5px solid var(--amber-50,#fffbeb);border-radius:12px;padding:20px">
+          <div style="font-size:15px;font-weight:700;color:var(--g900);margin-bottom:4px">Fix Salaried Rates</div>
+          <div style="font-size:12px;color:var(--g500);margin-bottom:12px;line-height:1.5">76 salaried employees had weekly pay stored as hourly rate. This converts them to correct effective hourly rates (weeklyPay / workHours). One-time fix.</div>
+          <div id="rcv-salary-result" style="margin-bottom:12px"></div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" onclick="App.fixSalariedRates(true)">Preview</button>
+            <button class="btn btn-primary btn-sm" onclick="App.fixSalariedRates(false)" id="rcv-salary-go" disabled>Apply Fix</button>
+          </div>
+        </div>
       </div>
     </div>`;
   },
@@ -3361,6 +3372,67 @@ const App = {
         box.innerHTML = `<div style="background:var(--green-l);color:#047857;border-radius:8px;padding:10px;font-size:12px">
           <strong>${(d.recovered || 0).toLocaleString()}</strong> employee${d.recovered !== 1 ? 's' : ''} recovered successfully.</div>`;
         this.showToast(`${d.recovered} employees recovered`);
+        await this.fetchData();
+      }
+    } catch (e) {
+      box.innerHTML = `<div style="color:var(--red);font-size:12px;padding:4px 0">${sanitize(e.message)}</div>`;
+    }
+  },
+
+  async fixSalariedRates(dryRun) {
+    const box = document.getElementById('rcv-salary-result');
+    if (!box) return;
+
+    if (!dryRun) {
+      const ok = await this.mmsPrompt({
+        title: 'Confirm Salaried Rate Fix',
+        message: '76 salaried employees will have their hourly rates corrected from weekly pay to effective hourly rate.\n\nType FIX to confirm:',
+        placeholder: 'FIX',
+        submitLabel: 'Apply Fix',
+        validate: v => v === 'FIX' ? null : 'Type FIX in all caps to confirm',
+      });
+      if (ok == null) return;
+    }
+
+    box.innerHTML = `<div style="font-size:12px;color:var(--g500);padding:4px 0">${dryRun ? 'Previewing…' : 'Applying fix…'}</div>`;
+    try {
+      const r = await fetch('/api/admin/fix-salaried-rates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dryRun }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Failed');
+
+      if (dryRun) {
+        const fixable = (d.results || []).filter(x => x.status === 'fixed');
+        const rows = fixable.slice(0, 10).map(x =>
+          `<tr>
+            <td style="padding:4px 8px;font-size:12px">${sanitize(x.name || x.id)}</td>
+            <td style="padding:4px 8px;font-size:12px;color:var(--red);text-decoration:line-through">$${x.oldRate}</td>
+            <td style="padding:4px 8px;font-size:12px;color:var(--green);font-weight:600">$${x.newRate}</td>
+          </tr>`
+        ).join('');
+        box.innerHTML = `
+          <div style="background:var(--blue-l);border:1px solid var(--g200);border-radius:8px;padding:10px;font-size:12px;margin-bottom:4px">
+            <strong>${d.fixed}</strong> to fix, <strong>${d.alreadyCorrect}</strong> already correct, <strong>${d.notFound}</strong> not found.
+            ${rows ? `
+            <table style="width:100%;margin-top:8px;border-collapse:collapse">
+              <thead><tr style="border-bottom:1px solid var(--g200)">
+                <th style="text-align:left;padding:4px 8px;font-size:10px;text-transform:uppercase;color:var(--g500)">Name</th>
+                <th style="text-align:left;padding:4px 8px;font-size:10px;text-transform:uppercase;color:var(--g500)">Old Rate</th>
+                <th style="text-align:left;padding:4px 8px;font-size:10px;text-transform:uppercase;color:var(--g500)">New Rate</th>
+              </tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+            ${fixable.length > 10 ? `<div style="color:var(--g400);font-size:11px;margin-top:4px">…and ${fixable.length - 10} more</div>` : ''}` : ''}
+          </div>`;
+        const goBtn = document.getElementById('rcv-salary-go');
+        if (goBtn) goBtn.disabled = d.fixed === 0;
+      } else {
+        box.innerHTML = `<div style="background:var(--green-l);color:#047857;border-radius:8px;padding:10px;font-size:12px">
+          <strong>${d.fixed}</strong> salaried rate${d.fixed !== 1 ? 's' : ''} corrected successfully.</div>`;
+        this.showToast(`${d.fixed} salaried rates corrected`);
         await this.fetchData();
       }
     } catch (e) {
