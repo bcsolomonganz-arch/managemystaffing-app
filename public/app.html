@@ -482,7 +482,7 @@ a:active{opacity:.6}
 </div>
 
 <!-- Offline banner -->
-<div id="offline-banner" class="offline-banner">You're offline — showing cached data</div>
+<div id="offline-banner" class="offline-banner" role="alert">You're offline — showing cached data</div>
 <div id="install-banner" class="install-banner">
   <span>Install ManageMyStaffing for quick access</span>
   <button class="install-btn" onclick="promptInstall()">Install</button>
@@ -499,7 +499,7 @@ a:active{opacity:.6}
     <div id="login-step-creds">
       <p class="sub">Sign in with your work email</p>
       <div id="login-error" class="error-msg"></div>
-      <form id="login-form" autocomplete="on">
+      <form id="login-form" autocomplete="off">
         <div class="field">
           <label for="login-email">Email</label>
           <input id="login-email" name="email" type="email" autocomplete="email" required inputmode="email" autocapitalize="off" autocorrect="off">
@@ -622,7 +622,7 @@ a:active{opacity:.6}
 
 <!-- Sidebar (admin schedule) -->
 <div id="sb-overlay" class="sidebar-overlay"></div>
-<aside id="sb" class="sidebar">
+<aside id="sb" class="sidebar" role="navigation" aria-label="Sidebar menu">
   <div class="sidebar-head">
     <span class="ttl">Filter by group</span>
     <button id="sb-close" class="icon-btn" aria-label="Close">
@@ -646,6 +646,18 @@ a:active{opacity:.6}
 </div>
 
 <div class="toast" id="toast" role="alert" aria-live="polite"></div>
+
+<!-- Custom confirm modal for HIPAA non-repudiation -->
+<div id="confirm-modal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title" style="position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45)">
+  <div style="background:#fff;border-radius:14px;padding:28px 24px 20px;max-width:400px;width:90%;box-shadow:0 8px 30px rgba(0,0,0,.2)">
+    <h3 id="confirm-modal-title" style="font-size:16px;font-weight:700;color:var(--g900);margin:0 0 8px"></h3>
+    <p id="confirm-modal-body" style="font-size:13px;color:var(--g600);margin:0 0 20px;white-space:pre-wrap"></p>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button id="confirm-modal-cancel" type="button" class="btn-ghost" style="padding:8px 18px;font-size:13px;font-weight:600">Cancel</button>
+      <button id="confirm-modal-ok" type="button" class="btn-primary" style="padding:8px 18px;font-size:13px;font-weight:700"></button>
+    </div>
+  </div>
+</div>
 
 <script>
 'use strict';
@@ -738,6 +750,32 @@ const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 // ── Helpers ──────────────────────────────────────────────────────
 function $(sel, root) { return (root||document).querySelector(sel); }
 function $$(sel, root) { return Array.from((root||document).querySelectorAll(sel)); }
+
+// Custom confirm dialog — returns a Promise<boolean>. Replaces native confirm()
+// for HIPAA non-repudiation: the modal is auditable and doesn't rely on browser chrome.
+function confirmAction(title, body, okLabel = 'Confirm') {
+  return new Promise(resolve => {
+    const modal = $('#confirm-modal');
+    $('#confirm-modal-title').textContent = title;
+    $('#confirm-modal-body').textContent = body;
+    const okBtn = $('#confirm-modal-ok');
+    okBtn.textContent = okLabel;
+    modal.classList.remove('hidden');
+    function cleanup(result) {
+      modal.classList.add('hidden');
+      okBtn.removeEventListener('click', onOk);
+      $('#confirm-modal-cancel').removeEventListener('click', onCancel);
+      document.removeEventListener('keydown', onKey);
+      resolve(result);
+    }
+    function onOk() { cleanup(true); }
+    function onCancel() { cleanup(false); }
+    function onKey(e) { if (e.key === 'Escape') cleanup(false); }
+    okBtn.addEventListener('click', onOk);
+    $('#confirm-modal-cancel').addEventListener('click', onCancel);
+    document.addEventListener('keydown', onKey);
+  });
+}
 function escapeHTML(s) {
   return String(s == null ? '' : s)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
@@ -1357,7 +1395,7 @@ function emptyBlock(icon, ttl, sub) {
 async function claimShift(shiftId) {
   const shift = (State.data?.shifts || []).find(s => s.id === shiftId);
   if (!shift) return;
-  if (!confirm("Request to claim this " + (shift.type||"") + " " + (groupLabel(shift.group||"")) + " shift on " + fmtDateLong(shift.date) + "?\n\nYour supervisor will review before it's confirmed.")) return;
+  if (!await confirmAction('Claim Shift', "Request to claim this " + (shift.type||"") + " " + (groupLabel(shift.group||"")) + " shift on " + fmtDateLong(shift.date) + "?\n\nYour supervisor will review before it's confirmed.", 'Submit Claim')) return;
 
   try {
     const r = await apiFetch('/api/shifts/' + encodeURIComponent(shiftId) + '/claim', { method:'POST', body:{} });
@@ -1398,9 +1436,15 @@ function renderAdminScheduleView() {
     `;
     $('#cal-prev').addEventListener('click', () => navMonth(-1));
     $('#cal-next').addEventListener('click', () => navMonth(1));
-    $$('.cal-cell[data-date]').forEach(el => {
-      el.addEventListener('click', () => selectDate(el.dataset.date));
-    });
+    // Event delegation on stable container to avoid listener leaks on re-render
+    const calGrid = $('#main .cal-grid');
+    if (calGrid && !calGrid._delegated) {
+      calGrid._delegated = true;
+      calGrid.addEventListener('click', (e) => {
+        const cell = e.target.closest('.cal-cell[data-date]');
+        if (cell) selectDate(cell.dataset.date);
+      });
+    }
     if (State.selectedDate) renderDayPanel(State.selectedDate);
   }
   if (State.scheduleMode === 'week') wireWeekViewClicks();
@@ -1495,10 +1539,12 @@ function weekRangeLabel() {
   }
   return sd.toLocaleString('en-US', { month:'short', day:'numeric' }) + ' – ' + ed.toLocaleString('en-US', { month:'short', day:'numeric', year:'numeric' });
 }
+let _navWeekTimer = null;
 function navWeek(delta) {
   State.weekStart = addDays(State.weekStart || startOfWeek(TODAY()), 7 * delta);
   State.selectedDate = null;
-  render();
+  clearTimeout(_navWeekTimer);
+  _navWeekTimer = setTimeout(() => render(), 200);
 }
 
 // Week / agenda view: 7 day cards, each listing every shift in the
@@ -1638,7 +1684,7 @@ function wirePendingActions() {
 async function decideTrade(tradeId, decision) {
   const trade = (State.data?.shiftTrades || []).find(t => t.id === tradeId);
   if (!trade) return;
-  if (!confirm(`${decision === 'approve' ? 'Approve' : 'Reject'} this shift trade?`)) return;
+  if (!await confirmAction('Shift Trade', `${decision === 'approve' ? 'Approve' : 'Reject'} this shift trade?`, decision === 'approve' ? 'Approve' : 'Reject')) return;
   try {
     const r = await apiFetch('/api/shifts/trade/' + encodeURIComponent(tradeId) + '/decide', {
       method:'POST', body:{ decision },
@@ -1696,6 +1742,7 @@ function renderCalendarGrid() {
   return html;
 }
 
+let _navMonthTimer = null;
 function navMonth(delta) {
   let y = State.viewYear, m = State.viewMonth + delta;
   if (m < 0) { m = 11; y--; }
@@ -1703,7 +1750,9 @@ function navMonth(delta) {
   State.viewYear = y;
   State.viewMonth = m;
   State.selectedDate = null;
-  render();
+  // Debounce rapid clicks to avoid multiple fetches
+  clearTimeout(_navMonthTimer);
+  _navMonthTimer = setTimeout(() => render(), 200);
 }
 
 function selectDate(iso) {
@@ -1886,7 +1935,7 @@ async function handleShiftAction(shiftId, action) {
   if (!shift) return closeSheet();
 
   if (action === 'unassign') {
-    if (!confirm('Remove this employee from the ' + shift.date + ' shift?\nThe slot becomes open and the rotation continues.')) return;
+    if (!await confirmAction('Unassign Shift', 'Remove this employee from the ' + shift.date + ' shift?\nThe slot becomes open and the rotation continues.', 'Unassign')) return;
     try {
       const r = await apiFetch('/api/shifts/' + encodeURIComponent(shiftId) + '/unassign', { method:'POST', body:{} });
       const j = await r.json();
@@ -1900,7 +1949,7 @@ async function handleShiftAction(shiftId, action) {
   }
   if (action === 'end-rotation') {
     const emp = (State.data?.employees || []).find(e => e.id === shift.employeeId);
-    if (!confirm(`Remove ${emp?.name || 'this employee'} from this and all future ${shift.type} ${shift.group} shifts?\nThis ends the rotation and opens every future matching shift.`)) return;
+    if (!await confirmAction('End Rotation', `Remove ${emp?.name || 'this employee'} from this and all future ${shift.type} ${shift.group} shifts?\nThis ends the rotation and opens every future matching shift.`, 'End Rotation')) return;
     try {
       const r = await apiFetch('/api/shifts/' + encodeURIComponent(shiftId) + '/end-rotation', { method:'POST', body:{} });
       const j = await r.json();
@@ -2384,7 +2433,7 @@ async function decideClaim(shiftId, action) {
   if (!shift?.claimRequest) return;
   const empName = shift.claimRequest.empName || 'this employee';
   const verb = action === 'approve' ? 'Approve' : 'Reject';
-  if (!confirm(`${verb} ${empName}'s claim for the ${shift.type||''} ${groupLabel(shift.group||'')} shift on ${fmtDateLong(shift.date)}?`)) return;
+  if (!await confirmAction(`${verb} Claim`, `${verb} ${empName}'s claim for the ${shift.type||''} ${groupLabel(shift.group||'')} shift on ${fmtDateLong(shift.date)}?`, verb)) return;
 
   try {
     const r = await apiFetch('/api/shifts/' + encodeURIComponent(shiftId) + '/claim/' + action, { method:'POST', body:{} });
@@ -3709,9 +3758,9 @@ function maybePromptPush() {
   let last = 0;
   try { last = Number(localStorage.getItem(PUSH_PROMPT_KEY) || 0); } catch (_) {}
   if (Date.now() - last < 7 * 24 * 3600 * 1000) return;
-  setTimeout(() => {
+  setTimeout(async () => {
     if (Notification.permission !== 'default') return;
-    if (confirm('Enable notifications so you get alerts when shifts open up or messages arrive?')) {
+    if (await confirmAction('Enable Notifications', 'Enable notifications so you get alerts when shifts open up or messages arrive?', 'Enable')) {
       try { localStorage.setItem(PUSH_PROMPT_KEY, String(Date.now())); } catch (_) {}
       enablePush();
     } else {

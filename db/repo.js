@@ -24,9 +24,13 @@ function init() {
   _pool = new Pool({
     connectionString: process.env.PG_CONN,
     ssl: { rejectUnauthorized: process.env.NODE_ENV === 'production' },
-    max: 10,
+    max: parseInt(process.env.PG_POOL_MAX, 10) || 20,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
+  });
+  // Set statement timeout on each new connection to prevent runaway queries
+  _pool.on('connect', (client) => {
+    client.query('SET statement_timeout = 30000').catch(() => {});
   });
   _pool.on('error', (err) => {
     console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg: 'pg_pool_error', err: err.message }));
@@ -44,26 +48,22 @@ async function close() {
 // Safe to call on every startup; relies on Postgres's IF NOT EXISTS clauses.
 async function ensureSchema() {
   if (!_pool) return;
+  await withTx(async (c) => {
   // Open schedule patterns (kind='open') have no employee — allow NULL emp_id.
   // building_id nullable as a safety valve; the save code always tries to set it.
-  await _pool.query(`ALTER TABLE schedule_patterns ALTER COLUMN emp_id DROP NOT NULL`).catch(() => {});
-  await _pool.query(`ALTER TABLE schedule_patterns ALTER COLUMN building_id DROP NOT NULL`).catch(() => {});
-  await _pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS scheduler_only BOOLEAN NOT NULL DEFAULT false`);
-  await _pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS device_trust_epoch BIGINT NOT NULL DEFAULT 0`);
+  await c.query(`ALTER TABLE schedule_patterns ALTER COLUMN emp_id DROP NOT NULL`).catch(() => {});
+  await c.query(`ALTER TABLE schedule_patterns ALTER COLUMN building_id DROP NOT NULL`).catch(() => {});
+  await c.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS scheduler_only BOOLEAN NOT NULL DEFAULT false`);
+  await c.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS device_trust_epoch BIGINT NOT NULL DEFAULT 0`);
   // Nursing license tracking. The expiry date drives a visible countdown
   // on the roster card and an automatic flag on every scheduled shift
   // where the assigned employee's license has lapsed.
-  await _pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS license_number TEXT`);
-  await _pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS license_expires_at DATE`);
-  await _pool.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS license_state TEXT`);
+  await c.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS license_number TEXT`);
+  await c.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS license_expires_at DATE`);
+  await c.query(`ALTER TABLE employees ADD COLUMN IF NOT EXISTS license_state TEXT`);
 
   // ── Persistent migration flags ─────────────────────────────────────────
-  // Records like "_seedStripped" used to be JS-only flags on dataCache and
-  // got reset to undefined on every postgres-mode boot. That meant the
-  // applyMigrations() seed-strip logic could re-run after every restart
-  // (deploy / scaling / host move) and DELETE rows we wanted to keep.
-  // This table makes the flags durable across restarts.
-  await _pool.query(`
+  await c.query(`
     CREATE TABLE IF NOT EXISTS app_migrations (
       flag       TEXT PRIMARY KEY,
       set_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -72,28 +72,23 @@ async function ensureSchema() {
   `);
 
   // ── Append-only employee history ───────────────────────────────────────
-  // Every employee insert/update/delete writes a row here. NEVER deleted.
-  // This makes data recovery possible from history alone — if employees
-  // are lost again, we can rebuild from this log.
-  await _pool.query(`
+  await c.query(`
     CREATE TABLE IF NOT EXISTS employee_history (
       id           BIGSERIAL PRIMARY KEY,
       ts           TIMESTAMPTZ NOT NULL DEFAULT now(),
-      op           TEXT NOT NULL,             -- 'insert' | 'update' | 'delete' | 'restore'
+      op           TEXT NOT NULL,
       emp_id       TEXT NOT NULL,
       building_id  TEXT,
-      actor        TEXT,                      -- account email of whoever triggered
-      before_row   JSONB,                     -- full row before change (null for insert)
-      after_row    JSONB                      -- full row after change (null for delete)
+      actor        TEXT,
+      before_row   JSONB,
+      after_row    JSONB
     )
   `);
-  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_emp_hist_emp ON employee_history(emp_id, ts DESC)`);
-  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_emp_hist_building ON employee_history(building_id, ts DESC)`);
-  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_emp_hist_ts ON employee_history(ts DESC)`);
+  await c.query(`CREATE INDEX IF NOT EXISTS idx_emp_hist_emp ON employee_history(emp_id, ts DESC)`);
+  await c.query(`CREATE INDEX IF NOT EXISTS idx_emp_hist_building ON employee_history(building_id, ts DESC)`);
+  await c.query(`CREATE INDEX IF NOT EXISTS idx_emp_hist_ts ON employee_history(ts DESC)`);
 
-  // Postgres trigger that captures every change to employees automatically.
-  // Even if the app code forgets to log, the DB will. Belt and suspenders.
-  await _pool.query(`
+  await c.query(`
     CREATE OR REPLACE FUNCTION log_employee_change() RETURNS TRIGGER AS $$
     BEGIN
       IF TG_OP = 'INSERT' THEN
@@ -113,18 +108,15 @@ async function ensureSchema() {
     END;
     $$ LANGUAGE plpgsql;
   `);
-  // Drop + recreate the trigger so updates to the function take effect
-  await _pool.query(`DROP TRIGGER IF EXISTS trg_employee_history ON employees`);
-  await _pool.query(`
+  await c.query(`DROP TRIGGER IF EXISTS trg_employee_history ON employees`);
+  await c.query(`
     CREATE TRIGGER trg_employee_history
       AFTER INSERT OR UPDATE OR DELETE ON employees
       FOR EACH ROW EXECUTE FUNCTION log_employee_change()
   `);
 
   // ── Append-only history for accounts, buildings, schedule_patterns ─────
-  // Same protection employees got. Login records, building config, and
-  // shift rotations are all critical-recovery data.
-  await _pool.query(`
+  await c.query(`
     CREATE TABLE IF NOT EXISTS account_history (
       id BIGSERIAL PRIMARY KEY,
       ts TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -135,8 +127,8 @@ async function ensureSchema() {
       before_row JSONB, after_row JSONB
     )
   `);
-  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_acct_hist_acct ON account_history(account_id, ts DESC)`);
-  await _pool.query(`
+  await c.query(`CREATE INDEX IF NOT EXISTS idx_acct_hist_acct ON account_history(account_id, ts DESC)`);
+  await c.query(`
     CREATE OR REPLACE FUNCTION log_account_change() RETURNS TRIGGER AS $$
     BEGIN
       IF TG_OP = 'INSERT' THEN
@@ -156,14 +148,14 @@ async function ensureSchema() {
     END;
     $$ LANGUAGE plpgsql;
   `);
-  await _pool.query(`DROP TRIGGER IF EXISTS trg_account_history ON accounts`);
-  await _pool.query(`
+  await c.query(`DROP TRIGGER IF EXISTS trg_account_history ON accounts`);
+  await c.query(`
     CREATE TRIGGER trg_account_history
       AFTER INSERT OR UPDATE OR DELETE ON accounts
       FOR EACH ROW EXECUTE FUNCTION log_account_change()
   `);
 
-  await _pool.query(`
+  await c.query(`
     CREATE TABLE IF NOT EXISTS building_history (
       id BIGSERIAL PRIMARY KEY,
       ts TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -172,8 +164,8 @@ async function ensureSchema() {
       before_row JSONB, after_row JSONB
     )
   `);
-  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_bld_hist_bld ON building_history(building_id, ts DESC)`);
-  await _pool.query(`
+  await c.query(`CREATE INDEX IF NOT EXISTS idx_bld_hist_bld ON building_history(building_id, ts DESC)`);
+  await c.query(`
     CREATE OR REPLACE FUNCTION log_building_change() RETURNS TRIGGER AS $$
     BEGIN
       IF TG_OP = 'INSERT' THEN
@@ -193,19 +185,15 @@ async function ensureSchema() {
     END;
     $$ LANGUAGE plpgsql;
   `);
-  await _pool.query(`DROP TRIGGER IF EXISTS trg_building_history ON buildings`);
-  await _pool.query(`
+  await c.query(`DROP TRIGGER IF EXISTS trg_building_history ON buildings`);
+  await c.query(`
     CREATE TRIGGER trg_building_history
       AFTER INSERT OR UPDATE OR DELETE ON buildings
       FOR EACH ROW EXECUTE FUNCTION log_building_change()
   `);
 
   // ── Append-only shift history ──────────────────────────────────────────
-  // Every shift insert/update/delete logged here with full before/after.
-  // NEVER deleted from. Even if the live `shifts` table is wiped tomorrow,
-  // recovery is possible by replaying this log via
-  // POST /api/admin/recover-shifts-from-history.
-  await _pool.query(`
+  await c.query(`
     CREATE TABLE IF NOT EXISTS shift_history (
       id           BIGSERIAL PRIMARY KEY,
       ts           TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -222,12 +210,12 @@ async function ensureSchema() {
       after_row    JSONB
     )
   `);
-  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_shift_hist_shift ON shift_history(shift_id, ts DESC)`);
-  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_shift_hist_building ON shift_history(building_id, ts DESC)`);
-  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_shift_hist_date ON shift_history(shift_date, "group", shift_type)`);
-  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_shift_hist_ts ON shift_history(ts DESC)`);
+  await c.query(`CREATE INDEX IF NOT EXISTS idx_shift_hist_shift ON shift_history(shift_id, ts DESC)`);
+  await c.query(`CREATE INDEX IF NOT EXISTS idx_shift_hist_building ON shift_history(building_id, ts DESC)`);
+  await c.query(`CREATE INDEX IF NOT EXISTS idx_shift_hist_date ON shift_history(shift_date, "group", shift_type)`);
+  await c.query(`CREATE INDEX IF NOT EXISTS idx_shift_hist_ts ON shift_history(ts DESC)`);
 
-  await _pool.query(`
+  await c.query(`
     CREATE OR REPLACE FUNCTION log_shift_change() RETURNS TRIGGER AS $$
     BEGIN
       IF TG_OP = 'INSERT' THEN
@@ -247,14 +235,14 @@ async function ensureSchema() {
     END;
     $$ LANGUAGE plpgsql;
   `);
-  await _pool.query(`DROP TRIGGER IF EXISTS trg_shift_history ON shifts`);
-  await _pool.query(`
+  await c.query(`DROP TRIGGER IF EXISTS trg_shift_history ON shifts`);
+  await c.query(`
     CREATE TRIGGER trg_shift_history
       AFTER INSERT OR UPDATE OR DELETE ON shifts
       FOR EACH ROW EXECUTE FUNCTION log_shift_change()
   `);
 
-  await _pool.query(`
+  await c.query(`
     CREATE TABLE IF NOT EXISTS pattern_history (
       id BIGSERIAL PRIMARY KEY,
       ts TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -265,8 +253,8 @@ async function ensureSchema() {
       before_row JSONB, after_row JSONB
     )
   `);
-  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_pat_hist_emp ON pattern_history(emp_id, ts DESC)`);
-  await _pool.query(`
+  await c.query(`CREATE INDEX IF NOT EXISTS idx_pat_hist_emp ON pattern_history(emp_id, ts DESC)`);
+  await c.query(`
     CREATE OR REPLACE FUNCTION log_pattern_change() RETURNS TRIGGER AS $$
     BEGIN
       IF TG_OP = 'INSERT' THEN
@@ -286,8 +274,8 @@ async function ensureSchema() {
     END;
     $$ LANGUAGE plpgsql;
   `);
-  await _pool.query(`DROP TRIGGER IF EXISTS trg_pattern_history ON schedule_patterns`);
-  await _pool.query(`
+  await c.query(`DROP TRIGGER IF EXISTS trg_pattern_history ON schedule_patterns`);
+  await c.query(`
     CREATE TRIGGER trg_pattern_history
       AFTER INSERT OR UPDATE OR DELETE ON schedule_patterns
       FOR EACH ROW EXECUTE FUNCTION log_pattern_change()
@@ -299,13 +287,9 @@ async function ensureSchema() {
   await _pool.query(`CREATE INDEX IF NOT EXISTS idx_patterns_building ON schedule_patterns(building_id) WHERE active = TRUE`);
 
   // ── High water mark per building ────────────────────────────────────────
-  // Tracks the maximum employee/account/building row counts ever seen per
-  // building. saveAll consults this and refuses to drop below the HWM.
-  // This is the strongest possible defense — even if the in-memory cache,
-  // the HTTP layer, AND the saveAll body all fail, the HWM check catches it.
-  await _pool.query(`
+  await c.query(`
     CREATE TABLE IF NOT EXISTS row_high_water (
-      scope        TEXT PRIMARY KEY,    -- e.g. 'employees:b1777218436953'
+      scope        TEXT PRIMARY KEY,
       max_count    INTEGER NOT NULL,
       observed_at  TIMESTAMPTZ NOT NULL DEFAULT now()
     )
@@ -317,13 +301,22 @@ async function ensureSchema() {
   // dropped most of them on the way in, so anything saved through the Demo
   // Portal / Billing / shift-template / PPD-staffing UIs never reached PG.
   // Migrate the HR rows out of here once HR has dedicated RLS-scoped tables.
-  await _pool.query(`
+  await c.query(`
     CREATE TABLE IF NOT EXISTS app_state (
       key         TEXT PRIMARY KEY,
       value       JSONB NOT NULL,
       updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `);
+
+  // ── Additional indexes for performance (Issue #16) ──────────────────────
+  await c.query(`CREATE INDEX IF NOT EXISTS idx_accounts_pw_reset ON accounts(password_reset_token_hash) WHERE password_reset_token_hash IS NOT NULL`);
+  await c.query(`CREATE INDEX IF NOT EXISTS idx_accounts_building_ids ON accounts USING GIN(building_ids)`);
+  await c.query(`CREATE INDEX IF NOT EXISTS idx_patterns_building ON schedule_patterns(building_id)`);
+
+  // ── Unique constraint: no duplicate active employees per building+email (Issue #15) ──
+  await c.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_building_email_unique ON employees(building_id, email) WHERE email IS NOT NULL AND inactive = FALSE`);
+  }); // end withTx
 }
 
 // Read all persistent migration flags into a Set of names.
@@ -360,11 +353,24 @@ async function withTx(fn) {
   }
 }
 
+// Valid roles that can be set in the RLS context
+const VALID_ROLES = new Set(['superadmin', 'admin', 'regionaladmin', 'employee', 'hradmin']);
+const BUILDING_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+
 // Set RLS context for queries on a given client connection
 async function setContext(client, user) {
   if (!user) return;
   const role = user.role || '';
-  const ids = [user.buildingId, ...(user.buildingIds || [])].filter(Boolean).join(',');
+  if (role && !VALID_ROLES.has(role)) {
+    throw new Error(`Invalid role for RLS context: ${role}`);
+  }
+  const rawIds = [user.buildingId, ...(user.buildingIds || [])].filter(Boolean);
+  for (const id of rawIds) {
+    if (!BUILDING_ID_RE.test(id)) {
+      throw new Error(`Invalid building ID for RLS context: ${id}`);
+    }
+  }
+  const ids = rawIds.join(',');
   await client.query("SET LOCAL app.current_role = $1", [role]);
   await client.query("SET LOCAL app.current_building_ids = $1", [ids]);
 }
@@ -513,6 +519,15 @@ function _strip(obj, keys) {
   for (const k of keys) delete o[k];
   return o;
 }
+
+const MAX_METADATA_BYTES = 32 * 1024; // 32KB cap on JSONB metadata
+function _validateMetadata(md, context) {
+  const json = JSON.stringify(md);
+  if (json.length > MAX_METADATA_BYTES) {
+    throw new Error(`Metadata too large (${json.length} bytes, max ${MAX_METADATA_BYTES}) for ${context}`);
+  }
+  return json;
+}
 function _toMs(v) { return v == null ? null : (typeof v === 'number' ? new Date(v) : v); }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -605,7 +620,7 @@ async function saveScopedData(data) {
         await c.query(`INSERT INTO buildings (id, company_id, name, address, color, beds, metadata)
           VALUES ($1, $2, $3, $4, $5, $6, $7)
           ON CONFLICT (id) DO UPDATE SET company_id=$2, name=$3, address=$4, color=$5, beds=$6, metadata=$7, updated_at=now()`,
-          [b.id, b.companyId || null, b.name, b.address || null, b.color || null, b.beds || null, JSON.stringify(md)]);
+          [b.id, b.companyId || null, b.name, b.address || null, b.color || null, b.beds || null, _validateMetadata(md, `building:${b.id}`)]);
       }
     }
     if (Array.isArray(data.employees)) {
@@ -627,24 +642,30 @@ async function saveScopedData(data) {
           [e.id, e.buildingId, e.accountId || null, e.name, e.email || null, e.phone || null, e.group,
            e.employmentType || null, e.hourlyRate || null, e.hireDate || null,
            !!e.inactive, e.notifEmail !== false, e.phone ? (e.notifSMS !== false) : !!e.notifSMS,
-           JSON.stringify(md), JSON.stringify(e.terminationLog || []),
+           _validateMetadata(md, `employee:${e.id}`), JSON.stringify(e.terminationLog || []),
            e.licenseNumber || null, e.licenseExpiresAt || null, e.licenseState || null]);
       }
     }
     if (Array.isArray(data.shifts)) {
       for (const s of data.shifts) {
         const md = _strip(s, ['id','buildingId','employeeId','date','type','group','start','end','status','claimRequest','_version']);
-        await c.query(`INSERT INTO shifts (id, building_id, employee_id, shift_date, shift_type, "group",
+        const result = await c.query(`INSERT INTO shifts (id, building_id, employee_id, shift_date, shift_type, "group",
             start_time, end_time, status, claim_request, metadata, version)
           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, COALESCE($12,1))
           ON CONFLICT (id) DO UPDATE SET
             building_id=$2, employee_id=$3, shift_date=$4, shift_type=$5, "group"=$6,
             start_time=$7, end_time=$8, status=$9, claim_request=$10, metadata=$11,
-            version = shifts.version + 1, updated_at=now()`,
+            version = shifts.version + 1, updated_at=now()
+          WHERE shifts.version = $12`,
           [s.id, s.buildingId, s.employeeId || null, s.date, s.type, s.group,
            s.start || null, s.end || null, s.status || 'open',
            s.claimRequest ? JSON.stringify(s.claimRequest) : null,
-           JSON.stringify(md), s._version || 1]);
+           _validateMetadata(md, `shift:${s.id}`), s._version || 1]);
+        // rowCount 0 on existing row means stale version (concurrency conflict)
+        // rowCount 1 = either inserted or updated successfully
+        if (result.rowCount === 0) {
+          throw new Error(`Concurrency conflict: shift ${s.id} was modified by another request (version ${s._version})`);
+        }
       }
       // DELETE orphaned shifts (scoped save — only remove shifts that
       // belong to buildings in this save scope and are no longer present)
@@ -773,10 +794,12 @@ async function saveAll(data) {
           break;
         }
       }
+      // High-water-mark check: refuse to drop below the all-time max ever
+      // observed for this building. Updates HWM upward when incoming exceeds it.
       if (!_skipEmployeeSave) {
         for (const [bid, n] of incomingByBld) {
           const scope = `employees:${bid}`;
-          const hw = await c.query(`SELECT max_count FROM row_high_water WHERE scope = $1`, [scope]);
+          const hw = await c.query(`SELECT max_count FROM row_high_water WHERE scope = $1 FOR UPDATE`, [scope]);
           const prev = hw.rows[0]?.max_count || 0;
           if (n < prev) {
             console.warn(
@@ -816,7 +839,7 @@ async function saveAll(data) {
       }
       for (const [bid, n] of incomingByBld) {
         const scope = `shifts:${bid}`;
-        const hw = await c.query(`SELECT max_count FROM row_high_water WHERE scope = $1`, [scope]);
+        const hw = await c.query(`SELECT max_count FROM row_high_water WHERE scope = $1 FOR UPDATE`, [scope]);
         const prev = hw.rows[0]?.max_count || 0;
         // We allow shifts to drop below HWM (unlike employees) because
         // legitimate per-shift removes happen often (kept by HTTP-layer
@@ -851,7 +874,7 @@ async function saveAll(data) {
         await c.query(`INSERT INTO buildings (id, company_id, name, address, color, beds, metadata)
           VALUES ($1,$2,$3,$4,$5,$6,$7)
           ON CONFLICT (id) DO UPDATE SET company_id=$2, name=$3, address=$4, color=$5, beds=$6, metadata=$7, updated_at=now()`,
-          [b.id, b.companyId || null, b.name, b.address || null, b.color || null, b.beds || null, JSON.stringify(md)]);
+          [b.id, b.companyId || null, b.name, b.address || null, b.color || null, b.beds || null, _validateMetadata(md, `building:${b.id}`)]);
       }
       // DELETE orphaned buildings no longer in the data
       const keepBuildingIds = data.buildings.map(b => b.id);
@@ -886,7 +909,7 @@ async function saveAll(data) {
           [e.id, e.buildingId, e.accountId || null, e.name, e.email || null, e.phone || null, e.group,
            e.employmentType || null, e.hourlyRate || null, e.hireDate || null,
            !!e.inactive, e.notifEmail !== false, e.phone ? (e.notifSMS !== false) : !!e.notifSMS,
-           JSON.stringify(md), JSON.stringify(e.terminationLog || []),
+           _validateMetadata(md, `employee:${e.id}`), JSON.stringify(e.terminationLog || []),
            e.licenseNumber || null, e.licenseExpiresAt || null, e.licenseState || null]);
       }
     }
@@ -905,7 +928,7 @@ async function saveAll(data) {
           starts.push(s.start || null); ends.push(s.end || null);
           statuses.push(s.status || 'open');
           claims.push(s.claimRequest ? JSON.stringify(s.claimRequest) : null);
-          metas.push(JSON.stringify(md)); versions.push(s._version || 1);
+          metas.push(_validateMetadata(md, `shift:${s.id}`)); versions.push(s._version || 1);
         }
         await c.query(`INSERT INTO shifts (id, building_id, employee_id, shift_date, shift_type, "group",
             start_time, end_time, status, claim_request, metadata, version)

@@ -30,6 +30,7 @@ on:
 jobs:
   run-import:
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - name: Install psql
         run: |
@@ -41,9 +42,8 @@ jobs:
           URL: ${{ inputs.gist_raw_url }}
         run: |
           set -euo pipefail
-          if [[ ! "$URL" =~ ^https://gist.githubusercontent.com/.*\.sql$ && \
-                ! "$URL" =~ ^https://gist.github.com/.*raw.* ]]; then
-            echo "::error::URL does not look like a gist raw URL: $URL"
+          if [[ ! "$URL" =~ ^https://gist\.githubusercontent\.com/[a-zA-Z0-9._-]+/[a-f0-9]+/raw/.*\.sql$ ]]; then
+            echo "::error::URL must be a GitHub Gist raw .sql URL: $URL"
             exit 1
           fi
           curl -fsSL "$URL" -o /tmp/import.sql

@@ -1530,6 +1530,16 @@ function escapeHtml(s) {
   return String(s||'').replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#x27;'}[c]));
 }
 
+// ── PLAIN TEXT SANITIZE (strip CRLF + control chars to prevent email header injection) ──
+// Use for single-line fields: subject lines, display names, interpolated names.
+function sanitizePlainText(s) {
+  return String(s || '').replace(/[\r\n\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ' ');
+}
+// Use for multi-line email bodies: strips \r and control chars but preserves \n.
+function sanitizeBodyText(s) {
+  return String(s || '').replace(/[\r\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+}
+
 // ── CSV ESCAPE (defense against formula injection) ───────────────────────────
 function escapeCsv(s) {
   const v = String(s == null ? '' : s);
@@ -3267,7 +3277,7 @@ app.post('/api/recruiting/onboard', requireAuth, requireAdmin, async (req, res) 
   // missed quotes, leaving a path for HTML attribute injection if the name
   // ever ended up inside an attribute. Defense in depth.
   const escName = escapeHtml(String(p.name || ''));
-  const safePlainName = String(p.name || '').replace(/[\r\n]/g, ' ');
+  const safePlainName = sanitizePlainText(p.name);
 
   if (ACS_CONNECTION_STRING) {
     try {
@@ -3275,9 +3285,9 @@ app.post('/api/recruiting/onboard', requireAuth, requireAdmin, async (req, res) 
       const ec = new EmailClient(ACS_CONNECTION_STRING);
       const poller = await ec.beginSend({
         senderAddress: ACS_FROM_EMAIL,
-        recipients: { to: [{ address: p.email, displayName: p.name }] },
+        recipients: { to: [{ address: p.email, displayName: sanitizePlainText(p.name) }] },
         content: {
-          subject: `Onboarding: ${p.jobTitle || 'New Hire Paperwork'}`,
+          subject: `Onboarding: ${sanitizePlainText(p.jobTitle || 'New Hire Paperwork')}`,
           plainText: `Hi ${safePlainName},\n\nThanks for applying for ${p.jobTitle || 'a position with us'}.\n\nPlease complete your new-hire paperwork at the link below:\n${link}\n\nIf you have any questions, just reply to this email.\n\n— ManageMyStaffing`,
           html: `<div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#f9fafb">
   <div style="background:#fff;border-radius:12px;padding:32px;border:1px solid #e5e7eb">
@@ -4684,6 +4694,21 @@ const _punchLib = require('./lib/punch');
 const _classifyPunch     = _punchLib.classifyPunch;
 const _findOrCreatePunch = _punchLib.findOrCreatePunch;
 
+// Convert a Date to local date (YYYY-MM-DD) and time (HH:MM) in the given IANA timezone.
+// Falls back to UTC if the timezone is invalid or missing.
+function _toLocalDateTime(ts, timezone) {
+  if (!timezone) return { date: ts.toISOString().slice(0, 10), time: ts.toISOString().slice(11, 16) };
+  try {
+    const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' });
+    const date = fmt.format(ts); // 'YYYY-MM-DD' in en-CA locale
+    const tfmt = new Intl.DateTimeFormat('en-GB', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hour12: false });
+    const time = tfmt.format(ts); // 'HH:MM'
+    return { date, time };
+  } catch {
+    return { date: ts.toISOString().slice(0, 10), time: ts.toISOString().slice(11, 16) };
+  }
+}
+
 // Apply a single punch event (action: 'in' | 'out') to data.hrTimeClock.
 // Returns { ok, record } or { error }.
 function _applyPunch(data, emp, action, when, sourceMeta = {}) {
@@ -4692,8 +4717,10 @@ function _applyPunch(data, emp, action, when, sourceMeta = {}) {
   if (!['in','out'].includes(action)) return { error: 'action must be "in" or "out"' };
   const ts = when instanceof Date ? when : new Date(when || Date.now());
   if (isNaN(ts.getTime())) return { error: 'invalid timestamp' };
-  const date = ts.toISOString().slice(0,10);
-  const time = ts.toISOString().slice(11,16);  // HH:MM (UTC)
+  // Look up building timezone for correct local date/time extraction
+  const building = (data.buildings || []).find(b => b.id === emp.buildingId);
+  const tz = building?.timezone || null;
+  const { date, time } = _toLocalDateTime(ts, tz);
 
   const r = _findOrCreatePunch(data, emp.id, date);
   // Snapshot identity fields on each row so HR Time Clock UI shows correctly
@@ -4712,13 +4739,28 @@ function _applyPunch(data, emp, action, when, sourceMeta = {}) {
     const [oh, om] = r.out.split(':').map(Number);
     let mins = (oh*60 + (om||0)) - (ih*60 + (im||0));
     if (mins < 0) mins += 24*60;
+    // Cap at 16 hours — shifts exceeding this are likely clock errors
+    if (mins > 16 * 60) {
+      r.status = 'error';
+      r.statusNote = `Computed shift length ${(mins/60).toFixed(1)}h exceeds 16h cap — likely a missed clock-out or clock-in error`;
+      mins = 16 * 60;
+    }
     r.hours = (mins / 60).toFixed(2);
   }
-  r.status = _classifyPunch(emp, date, r.in, r.out, data.shifts || []);
+  // Only classify if not already flagged as error (e.g. by the 16-hour cap)
+  if (r.status !== 'error') {
+    r.status = _classifyPunch(emp, date, r.in, r.out, data.shifts || []);
+  }
+  // Store both UTC and local representations for wage calculation accuracy
+  r.utcTimestamp = ts.toISOString();
+  r.localDate = date;
+  r.localTime = time;
+  r.timezone = tz || 'UTC';
   // Append source metadata to a punch-events array on the record (for audit)
   if (!Array.isArray(r.events)) r.events = [];
   r.events.push({
     action, at: ts.toISOString(),
+    localDate: date, localTime: time, timezone: tz || 'UTC',
     source: sourceMeta.source || 'unknown',
     deviceId: sourceMeta.deviceId || null,
     gps: sourceMeta.gps || null,
@@ -4765,6 +4807,16 @@ app.post('/api/timeclock/punch', requireAuth, async (req, res) => {
     }
   }
 
+  // Validate timestamp is within 15 minutes of server time
+  if (timestamp) {
+    const clientTs = new Date(timestamp);
+    if (isNaN(clientTs.getTime())) return res.status(400).json({ error: 'Invalid timestamp' });
+    const drift = Math.abs(clientTs.getTime() - Date.now());
+    if (drift > 15 * 60 * 1000) {
+      return res.status(400).json({ error: 'Timestamp is too far from server time (max 15 min drift)' });
+    }
+  }
+
   const result = _applyPunch(data, emp, action, timestamp, {
     source: me.role === 'employee' ? 'mobile' : 'admin',
     gps: gps ? { lat: gps.lat, lng: gps.lng, accuracyM: gps.accuracyM || null } : null,
@@ -4776,7 +4828,15 @@ app.post('/api/timeclock/punch', requireAuth, async (req, res) => {
     if (ev) ev.selfie = selfie;
   }
   if (result.error) return res.status(400).json({ error: result.error });
-  markDirty();
+  // Punch data must be durable before responding — markDirty's 200ms debounce
+  // risks data loss on crash. Force immediate persist.
+  dataDirty = true;
+  try {
+    await persistCache();
+  } catch (e) {
+    logger.error('punch_persist_failed', { empId, action, err: e.message });
+    return res.status(500).json({ error: 'Punch recorded but failed to persist — try again' });
+  }
   auditLog('PUNCH_RECORDED', me, { empId, action, source: me.role === 'employee' ? 'mobile' : 'admin' });
   res.json({ ok: true, record: result.record });
 });
@@ -4787,6 +4847,14 @@ app.post('/api/timeclock/punch', requireAuth, async (req, res) => {
 // buildingId. PIN identifies the employee within that building. Three failed
 // PINs in a 60-second window from the same kiosk locks the kiosk for 5 min.
 const _kioskFailures = new Map();   // kioskId → { count, until }
+
+// Sweep expired kiosk lockouts every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [kid, f] of _kioskFailures) {
+    if (f.until && now > f.until) _kioskFailures.delete(kid);
+  }
+}, 5 * 60 * 1000).unref();
 app.post('/api/timeclock/kiosk-punch', async (req, res) => {
   const { kioskToken, pin, action } = req.body || {};
   if (!kioskToken || !pin || !action) return res.status(400).json({ error: 'kioskToken, pin, action required' });
@@ -4819,7 +4887,13 @@ app.post('/api/timeclock/kiosk-punch', async (req, res) => {
     deviceId: kioskId,
   });
   if (result.error) return res.status(400).json({ error: result.error });
-  markDirty();
+  dataDirty = true;
+  try {
+    await persistCache();
+  } catch (e) {
+    logger.error('kiosk_punch_persist_failed', { empId: matched.id, action, err: e.message });
+    return res.status(500).json({ error: 'Punch recorded but failed to persist — try again' });
+  }
   auditLog('PUNCH_RECORDED', null, { empId: matched.id, action, source: 'kiosk', kioskId });
   res.json({
     ok: true,
@@ -5465,7 +5539,7 @@ app.post('/api/employees/:id/access', requireAuth, requireAdmin, async (req, res
         recipients: { to: [{ address: emp.email }] },
         content: {
           subject: `You've been promoted to ${accessLabel} on ManageMyStaffing`,
-          plainText: `Hi ${emp.name},\n\nYou now have ${accessLabel} access on ManageMyStaffing. Set your password using the link below:\n${link}\n\n— ManageMyStaffing`,
+          plainText: `Hi ${sanitizePlainText(emp.name)},\n\nYou now have ${accessLabel} access on ManageMyStaffing. Set your password using the link below:\n${link}\n\n— ManageMyStaffing`,
           html: `<div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#f9fafb"><div style="background:#fff;border-radius:12px;padding:32px;border:1px solid #e5e7eb"><h2 style="font-size:20px;font-weight:700;color:#111827;margin:0 0 8px">Welcome aboard, ${escName}!</h2><p style="color:#6b7280;font-size:14px;margin:0 0 20px">You now have <strong>${accessLabel}</strong> access on ManageMyStaffing. Set your password to sign in:</p><a href="${link}" style="display:inline-block;background:#6B9E7A;color:#fff;font-weight:700;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px">Set password →</a><p style="color:#9ca3af;font-size:12px;margin:20px 0 0">Link expires in 7 days.</p></div></div>`,
         },
       });
@@ -6590,7 +6664,7 @@ function _reportEmailHtml(data, sub, sendDate) {
         <div style="width:32px;height:32px;background:#6B9E7A;border-radius:7px;color:#fff;font-weight:800;display:inline-flex;align-items:center;justify-content:center;font-size:15px">M</div>
         <span style="font-size:15px;font-weight:700;color:#1A3C34">ManageMyStaffing</span>
       </div>
-      <h2 style="margin:0 0 4px;color:#1F2937">${sub.name || 'Daily Operations Report'}</h2>
+      <h2 style="margin:0 0 4px;color:#1F2937">${escapeHtml(sub.name || 'Daily Operations Report')}</h2>
       <p style="color:#6B7280;margin:0 0 8px;font-size:13px">For ${yesterday} · sent ${today}</p>
       ${dailyTable}
       ${weeklyTable}
@@ -6799,7 +6873,7 @@ app.post('/api/reports/test/:id', requireAuth, requireAdmin, async (req, res) =>
       senderAddress: ACS_FROM_EMAIL,
       recipients: { to: sub.recipients.map(e => ({ address: e })) },
       content: {
-        subject: `[Test] ${sub.name} — ManageMyStaffing daily report`,
+        subject: `[Test] ${sanitizePlainText(sub.name)} — ManageMyStaffing daily report`,
         plainText: 'Your email client does not support HTML. Open in a browser to view the table.',
         html,
       },
@@ -6840,7 +6914,7 @@ async function _maybeSendDueReports() {
         : _reportEmailHtml(data, sub, today);
       if (!html) continue;
 
-      const subjectPrefix = wantClinical ? 'Clinical Quality Report' : sub.name;
+      const subjectPrefix = wantClinical ? 'Clinical Quality Report' : sanitizePlainText(sub.name);
       try {
         const { EmailClient } = require('@azure/communication-email');
         const ec = new EmailClient(ACS_CONNECTION_STRING);
@@ -7453,6 +7527,14 @@ document.addEventListener('contextmenu', e => e.preventDefault());
 //   - Demo accounts disabled in production
 //   - TOTP required for all non-demo accounts
 const _totpPending = new Map(); // sessionId → { acctId, expiresAt }
+
+// Sweep expired TOTP sessions every 5 minutes to prevent unbounded memory growth
+setInterval(() => {
+  const now = Date.now();
+  for (const [sid, p] of _totpPending) {
+    if (now > p.expiresAt) _totpPending.delete(sid);
+  }
+}, 5 * 60 * 1000).unref();
 
 app.post('/api/auth/login', authLimiter, async (req, res) => {
   const { email, password, totp, sessionId } = req.body || {};
@@ -8379,14 +8461,37 @@ app.post('/api/invite', requireAuth, requireAdmin, async (req, res) => {
   data.accounts.push(newAccount);
   await persistAccountNow(newAccount);
 
+  // Auto-create an employee record so the admin appears on the calendar.
+  // Without this, invited admins only exist in the accounts table and are
+  // invisible to the schedule grid (which reads from employees[]).
+  if (acctRole === 'admin' && targetBuilding) {
+    const existingEmp = (data.employees || []).find(e =>
+      e.email && e.email.toLowerCase() === emailNorm
+    );
+    if (!existingEmp) {
+      const newEmp = {
+        id:         'emp_' + Date.now(),
+        name:       name.trim(),
+        email:      emailNorm,
+        group:      'Office',
+        buildingId: targetBuilding,
+        inactive:   false,
+        accountId:  newAccount.id,
+      };
+      data.employees = data.employees || [];
+      data.employees.push(newEmp);
+      markDirty();
+    }
+  }
+
   const link    = `${APP_URL}/?invite=${inviteToken}`;
   const building = (data.buildings || []).find(b => b.id === targetBuilding);
   const bName   = building?.name || 'your facility';
   const escName = escapeHtml(name.trim());
   const escB    = escapeHtml(bName);
   // CRLF-safe plaintext version
-  const safePlainName = String(name.trim()).replace(/[\r\n]/g, ' ');
-  const safePlainB    = String(bName).replace(/[\r\n]/g, ' ');
+  const safePlainName = sanitizePlainText(name.trim());
+  const safePlainB    = sanitizePlainText(bName);
 
   if (ACS_CONNECTION_STRING) {
     try {
@@ -8394,7 +8499,7 @@ app.post('/api/invite', requireAuth, requireAdmin, async (req, res) => {
       const ec     = new EmailClient(ACS_CONNECTION_STRING);
       const poller = await ec.beginSend({
         senderAddress: ACS_FROM_EMAIL,
-        recipients: { to: [{ address: emailNorm, displayName: name.trim() }] },
+        recipients: { to: [{ address: emailNorm, displayName: sanitizePlainText(name.trim()) }] },
         content: {
           subject: "You've been invited to ManageMyStaffing",
           plainText: `Hi ${safePlainName},\n\nYou've been invited to manage ${safePlainB} on ManageMyStaffing.\n\nClick the link below to set your password:\n${link}\n\nThis invitation expires in 7 days.\n\n— ManageMyStaffing`,
@@ -9043,10 +9148,10 @@ app.post('/api/invite/resend', requireAuth, requireAdmin, async (req, res) => {
       const escB    = String(bName).replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#x27;'}[c]));
       const poller = await ec.beginSend({
         senderAddress: ACS_FROM_EMAIL,
-        recipients: { to: [{ address: acct.email, displayName: acct.name }] },
+        recipients: { to: [{ address: acct.email, displayName: sanitizePlainText(acct.name) }] },
         content: {
           subject: "Your ManageMyStaffing invitation has been resent",
-          plainText: `Hi ${acct.name},\n\nYour ManageMyStaffing invitation for ${bName} has been resent.\n\nClick the link below to set your password and sign in:\n${link}\n\nThe password you choose will become your permanent password. This invitation expires in 7 days.\n\n— ManageMyStaffing`,
+          plainText: `Hi ${sanitizePlainText(acct.name)},\n\nYour ManageMyStaffing invitation for ${sanitizePlainText(bName)} has been resent.\n\nClick the link below to set your password and sign in:\n${link}\n\nThe password you choose will become your permanent password. This invitation expires in 7 days.\n\n— ManageMyStaffing`,
           html: `<div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#f9fafb">
   <div style="background:#fff;border-radius:12px;padding:32px;border:1px solid #e5e7eb">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px">
@@ -9119,10 +9224,10 @@ app.post('/api/auth/password-reset/request', authLimiter, async (req, res) => {
       const ec = new EmailClient(ACS_CONNECTION_STRING);
       const poller = await ec.beginSend({
         senderAddress: ACS_FROM_EMAIL,
-        recipients: { to: [{ address: acct.email, displayName: acct.name }] },
+        recipients: { to: [{ address: acct.email, displayName: sanitizePlainText(acct.name) }] },
         content: {
           subject: 'Reset your ManageMyStaffing password',
-          plainText: `Hi ${(acct.name || '').replace(/[\r\n]/g, ' ')},\n\nWe received a request to reset your ManageMyStaffing password.\n\nClick the link below to set a new password (expires in 1 hour):\n${link}\n\nIf you didn't request this, ignore this email — your password will not change.\n\n— ManageMyStaffing`,
+          plainText: `Hi ${sanitizePlainText(acct.name)},\n\nWe received a request to reset your ManageMyStaffing password.\n\nClick the link below to set a new password (expires in 1 hour):\n${link}\n\nIf you didn't request this, ignore this email — your password will not change.\n\n— ManageMyStaffing`,
           html: `<div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#f9fafb">
   <div style="background:#fff;border-radius:12px;padding:32px;border:1px solid #e5e7eb">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px">
@@ -9619,12 +9724,12 @@ async function _processAlertJob(job) {
     let sent = 0; const errors = [];
     for (const r of (recipients || [])) {
       try {
-        const body = message.replace(/\[Name\]/g, r.name || '');
+        const body = sanitizeBodyText(message.replace(/\[Name\]/g, sanitizePlainText(r.name || '')));
         const poller = await ec.beginSend({
           senderAddress: fromEmail,
-          recipients: { to: [{ address: r.email, displayName: r.name }] },
+          recipients: { to: [{ address: r.email, displayName: sanitizePlainText(r.name) }] },
           content: {
-            subject: subject || 'Alert from ManageMyStaffing',
+            subject: sanitizePlainText(subject || 'Alert from ManageMyStaffing'),
             plainText: body,
             html: `<pre style="font-family:sans-serif;white-space:pre-wrap">${body.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre>`,
           },
@@ -9952,10 +10057,10 @@ app.post('/api/demo/message', requireAuth, async (req, res) => {
   try {
     const poller = await emailClient.beginSend({
       senderAddress: ACS_FROM_EMAIL,
-      recipients: { to: [{ address: to, displayName: name || to }] },
+      recipients: { to: [{ address: to, displayName: sanitizePlainText(name || to) }] },
       content: {
-        subject:   subject || 'Message from ManageMyStaffing',
-        plainText: message,
+        subject:   sanitizePlainText(subject || 'Message from ManageMyStaffing'),
+        plainText: sanitizeBodyText(message),
         html:      `<div style="font-family:sans-serif;font-size:14px;color:#111">${htmlBody}</div>`,
       },
     });

@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS shifts (
   "group"       TEXT NOT NULL,
   start_time    TEXT,                      -- '07:00'
   end_time      TEXT,                      -- '15:00'
-  status        TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','scheduled','cancelled')),
+  status        TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','scheduled','cancelled','agency-filled','swapped','traded','error')),
   claim_request JSONB,                     -- {empId, empName, requestedAt}
   metadata      JSONB NOT NULL DEFAULT '{}'::jsonb,
   version       INTEGER NOT NULL DEFAULT 1, -- optimistic concurrency
@@ -165,7 +165,13 @@ ALTER TABLE audit_entries       ENABLE ROW LEVEL SECURITY;
 
 -- Helper: get current user's building IDs from session var
 CREATE OR REPLACE FUNCTION current_building_ids() RETURNS TEXT[] AS $$
-  SELECT string_to_array(coalesce(current_setting('app.current_building_ids', true), ''), ',');
+  SELECT array_remove(
+    string_to_array(
+      nullif(coalesce(current_setting('app.current_building_ids', true), ''), ''),
+      ','
+    ),
+    ''
+  );
 $$ LANGUAGE SQL STABLE;
 
 CREATE OR REPLACE FUNCTION current_role_name() RETURNS TEXT AS $$
@@ -204,9 +210,13 @@ CREATE POLICY p_accounts_tenant ON accounts FOR ALL
     OR building_ids && current_building_ids()
   );
 
-CREATE POLICY p_audit_sa      ON audit_entries FOR ALL USING (current_role_name() = 'superadmin');
-CREATE POLICY p_audit_tenant  ON audit_entries FOR SELECT
+-- Audit policies: SELECT-only for reads; INSERT-only for writes. No UPDATE/DELETE = denied by RLS default.
+CREATE POLICY p_audit_sa_select ON audit_entries FOR SELECT
+  USING (current_role_name() = 'superadmin');
+CREATE POLICY p_audit_tenant_select ON audit_entries FOR SELECT
   USING (building_id IS NULL OR building_id = ANY(current_building_ids()));
+CREATE POLICY p_audit_insert ON audit_entries FOR INSERT
+  WITH CHECK (current_role_name() != '');
 
 -- ──────────────────────────────────────────────────────────────────────────
 -- updated_at triggers

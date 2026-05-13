@@ -7365,7 +7365,9 @@ const App = {
     // Safety: _pushUndo above captures the pre-change snapshot, so a
     // wrong delete is one click away from being reversed. The 25s
     // background poll also re-syncs if the server diverged.
-    this.S.shifts = this.S.shifts.filter(s => !idsToDrop.has(s.id));
+    if (idsToDrop.size > 0) {
+      this.S.shifts = this.S.shifts.filter(s => !idsToDrop.has(s.id));
+    }
 
     // Lower the building's staffing requirement (cap at 0). OPEN tags
     // on the calendar are computed as max(0, requirement - filled), so
@@ -7396,6 +7398,9 @@ const App = {
     }
 
     const removedCount = idsToDrop.size;
+    Audit.log('SHIFTS_REMOVED',
+      `Removed ${removedCount} ${includeAssigned?'':'open '}${shiftType} ${g} shifts (${slotsPerDay} per day${includeAssigned?', incl assigned':''})${reqChanged?'; requirement '+reqBefore+'→'+reqAfter:''}`,
+      this.S.user?.id, includeAssigned ? 'high' : 'medium');
 
     // Build success toast. Lead with the visible result the admin cares
     // about: the staffing requirement change (which makes the OPEN tags
@@ -7427,9 +7432,6 @@ const App = {
     this.closeModal('modal-add-shifts');
     this.renderMain();
     this.showToast(msg);
-    Audit.log('SHIFTS_REMOVED',
-      `Removed ${removedCount} ${includeAssigned?'':'open '}${shiftType} ${g} shifts (${slotsPerDay} per day${includeAssigned?', incl assigned':''})${reqChanged?'; requirement '+reqBefore+'→'+reqAfter:''}`,
-      this.S.user?.id, includeAssigned ? 'high' : 'medium');
 
     // ── BACKGROUND SYNC ─────────────────────────────────────────────────
     // Fire the actual server mutations in the background. If anything
@@ -7444,8 +7446,13 @@ const App = {
             body: JSON.stringify({ ids: Array.from(idsToDrop) }),
           });
           if (!r.ok) {
-            const err = await r.json().catch(() => ({}));
-            this.showToast(`Server delete failed (${err.error || 'HTTP '+r.status}) — hit Undo to restore`, 'warn');
+            const d = await r.json().catch(() => ({}));
+            // Rollback: restore shifts from undo stack
+            const undo = this._undoStack().pop();
+            if (undo) { for (const k of undo.keys) this.S[k] = undo.snap[k]; }
+            if (reqChanged) slots[bId][g][shiftType] = reqBefore;
+            this.renderMain();
+            this.showToast(d.error || `Bulk remove failed (HTTP ${r.status})`, 'warn');
             return;
           }
         }
@@ -7457,7 +7464,11 @@ const App = {
           this.persistData();
         }
       } catch (e) {
-        this.showToast('Background sync failed — hit Undo if anything looks wrong', 'warn');
+        const undo = this._undoStack().pop();
+        if (undo) { for (const k of undo.keys) this.S[k] = undo.snap[k]; }
+        if (reqChanged) slots[bId][g][shiftType] = reqBefore;
+        this.renderMain();
+        this.showToast('Network error — shifts restored', 'warn');
       }
     })();
   },
@@ -7498,19 +7509,95 @@ const App = {
     // HIPAA-safe SMS: no shift type, no time, no date, no facility — generic notification.
     // PHI-safe by design (HIPAA §164.312(e) — SMS is unencrypted by carriers).
     const defaultMsg = `An open shift is available. Sign in at ManageMyStaffing.com to view details and claim.`;
+
+    // ── Auto-detect rotation already in use on this calendar ──────────
+    // If other employees in this (building, group, shiftType) already have
+    // a rotation pattern, pre-populate the picker with the same rotation
+    // so the new employee aligns with the team. Also detect the shift
+    // times actually in use (e.g. 6 AM start instead of the default 7 AM).
+    let autoSelectedDays = clickedIdx >= 0 ? [clickedIdx] : [];
+    let autoCycleAnchor = clickedIdx >= 0 ? clickedIdx : 0;
+    let autoCycleStart = clickedIdx >= 0 ? dates[clickedIdx] : dates[0];
+    let autoPreset = null;
+    let autoShiftStart = shiftDef.start || '';
+    let autoShiftEnd = shiftDef.end || '';
+
+    // Find the most common active rotation pattern for this calendar
+    const calPatterns = (this.S.schedulePatterns || []).filter(p =>
+      p.kind === 'assign' &&
+      p.buildingId === bId &&
+      p.group === group &&
+      p.shiftType === shiftType &&
+      p.active !== false &&
+      !p.endDate
+    );
+    if (calPatterns.length > 0) {
+      // Pick the pattern with the most recent appliedAt (most likely the
+      // "current" rotation), or fall back to the one used most often.
+      // Group by selectedDays signature to find the dominant rotation.
+      const sigCount = {};
+      for (const p of calPatterns) {
+        const sig = JSON.stringify([...(p.selectedDays||[])].sort((a,b)=>a-b));
+        sigCount[sig] = (sigCount[sig] || 0) + 1;
+      }
+      const dominantSig = Object.entries(sigCount).sort((a,b) => b[1]-a[1])[0][0];
+      const dominantPat = calPatterns.find(p =>
+        JSON.stringify([...(p.selectedDays||[])].sort((a,b)=>a-b)) === dominantSig
+      );
+      if (dominantPat && dominantPat.selectedDays?.length) {
+        autoSelectedDays = [...dominantPat.selectedDays];
+        // Compute the anchor: the cycleStartDate of the dominant pattern
+        // needs to be projected onto our 14-day picker grid so the days
+        // line up correctly.
+        const patStart = new Date((dominantPat.cycleStartDate || dominantPat.pickerStart) + 'T12:00:00');
+        const gridStart = new Date(dates[0] + 'T12:00:00');
+        const dayDiff = Math.round((gridStart - patStart) / 86400000);
+        const cycleLen = dominantPat.cycleLen || 14;
+        autoCycleAnchor = ((-dayDiff % cycleLen) + cycleLen) % cycleLen;
+        autoCycleStart = dominantPat.cycleStartDate || dominantPat.pickerStart;
+
+        // Detect which preset this matches (if any) for UI display
+        const rawDays = autoSelectedDays.map(d => ((d - autoCycleAnchor) % 14 + 14) % 14).sort((a,b)=>a-b);
+        const rawSig = JSON.stringify(rawDays);
+        for (const [key, preset] of Object.entries(this._PRESETS)) {
+          if (key === 'none') continue;
+          const pSig = JSON.stringify([...preset.days].sort((a,b)=>a-b));
+          if (rawSig === pSig) { autoPreset = key; break; }
+        }
+      }
+    }
+
+    // Detect shift times from existing shifts on this calendar. If shifts
+    // already have custom start/end times, use those as the default so
+    // new assignments match (e.g. 6 AM starts, not the default 7 AM).
+    const recentShifts = (this.S.shifts || []).filter(s =>
+      s.buildingId === bId && s.group === group && s.type === shiftType &&
+      s.start && s.end && s.date >= TODAY
+    );
+    if (recentShifts.length > 0) {
+      // Find the most common start/end time pair
+      const timeCounts = {};
+      for (const s of recentShifts) {
+        const key = s.start + '|' + s.end;
+        timeCounts[key] = (timeCounts[key] || 0) + 1;
+      }
+      const topTime = Object.entries(timeCounts).sort((a,b) => b[1]-a[1])[0][0];
+      const [detectedStart, detectedEnd] = topTime.split('|');
+      autoShiftStart = detectedStart;
+      autoShiftEnd = detectedEnd;
+    }
+
     this.S._assignShiftState = {
       date, group, shiftType, buildingId: bId, empId: null,
       shiftId: shiftId || null,                  // for the ✕ delete button
-      selectedDays: clickedIdx >= 0 ? [clickedIdx] : [],
-      // Cycle anchor — which date in the 14-day grid is "day 1 of the
-      // rotation". Defaults to whichever cell the operator clicked, so
-      // presets like Pitman start on the date they intended, not blindly
-      // on Monday.
-      cycleAnchorIdx: clickedIdx >= 0 ? clickedIdx : 0,
-      // Actual calendar date of cycle day 1. Defaults to the clicked date
-      // but can be back-dated when the new employee is joining a rotation
-      // that started a week or two earlier.
-      cycleStartDate: clickedIdx >= 0 ? dates[clickedIdx] : dates[0],
+      selectedDays: autoSelectedDays,
+      cycleAnchorIdx: autoCycleAnchor,
+      cycleStartDate: autoCycleStart,
+      _activePreset: autoPreset,
+      // Detected shift times from the calendar — used when creating new
+      // shifts so they match the times already established.
+      detectedStart: autoShiftStart,
+      detectedEnd: autoShiftEnd,
       mirrorWeeks: false,
       dates,
       view: 'assign',
@@ -7551,7 +7638,7 @@ const App = {
         <div style="width:36px;height:36px;border-radius:9px;background:${col}22;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:${col}">${G_ICONS[g]||''}</div>
         <div>
           <div style="font-size:14px;font-weight:700;color:var(--g900)">${sanitize(g)} · ${st.shiftType}</div>
-          <div style="font-size:12px;color:var(--g500)">${dateLabel} · ${shiftDef.start||''}–${shiftDef.end||''}</div>
+          <div style="font-size:12px;color:var(--g500)">${dateLabel} · ${st.detectedStart||shiftDef.start||''}–${st.detectedEnd||shiftDef.end||''}</div>
         </div>
         ${deleteBtn}
       </div>`;
@@ -7664,6 +7751,11 @@ const App = {
             </select>
           </div>
         </div>
+        ${st._activePreset && st.selectedDays.length > 1 ? `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:6px;padding:8px 10px">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="#2563EB" stroke-width="1.8" stroke-linecap="round" style="flex-shrink:0"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 1"/></svg>
+          <span style="font-size:12px;color:#1E40AF;font-weight:500">Rotation auto-detected from existing staff: <strong>${sanitize((this._PRESETS[st._activePreset]||{}).label||st._activePreset)}</strong>. Change the preset or click individual days to customize.</span>
+        </div>` : ''}
         ${st._activePreset === 'weekdays' ? `
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;background:var(--g50);border:1px solid var(--g200);border-radius:6px;padding:8px 10px">
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="var(--blue-d)" stroke-width="1.8" stroke-linecap="round" style="flex-shrink:0"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6h12M5 1v3M11 1v3"/></svg>
@@ -7701,7 +7793,7 @@ const App = {
       ${removeBtn}
       <div style="flex:1"></div>
       <button class="btn btn-secondary" onclick="App.closeModal('modal-assign-shift')">Cancel</button>
-      <button class="btn btn-ghost" onclick="App.saveAssignShiftOnly()">This Shift Only</button>
+      <button class="btn btn-secondary" onclick="App.saveAssignShiftOnly()" style="border-color:var(--blue-m);color:var(--blue-d)">This Shift Only</button>
       <button class="btn btn-primary" onclick="App.saveAssignShift()">Assign &amp; Apply Rotation</button>`;
   },
 
@@ -7758,6 +7850,9 @@ const App = {
     if (!emp) { this.showToast('Employee not found', 'warn'); return; }
     const { group: g, buildingId: bId, shiftType } = st;
     const shiftDef = this.resolveShiftDef(g, shiftType) || {};
+    // Use detected calendar times if available, else fall back to type default
+    const effectiveStart = st.detectedStart || shiftDef.start || '';
+    const effectiveEnd   = st.detectedEnd   || shiftDef.end   || '';
     const pickerStart = new Date(st.dates[0] + 'T12:00:00');
     // Roll the rotation forward for ROTATION_HORIZON_DAYS so it carries into
     // future weeks/months. Also persist the rotation rule itself so views
@@ -7781,7 +7876,7 @@ const App = {
         this.S.shifts.push({
           id: 'sh' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + Math.random().toString(36).slice(2,6),
           date: ds, group: g, type: shiftType,
-          start: shiftDef.start || '', end: shiftDef.end || '',
+          start: effectiveStart, end: effectiveEnd,
           status: 'scheduled', buildingId: bId, employeeId: emp.id,
         });
       }
@@ -7822,6 +7917,8 @@ const App = {
     if (!emp) { this.showToast('Employee not found', 'warn'); return; }
     const { group: g, buildingId: bId, shiftType, date } = st;
     const shiftDef = this.resolveShiftDef(g, shiftType) || {};
+    const effectiveStart = st.detectedStart || shiftDef.start || '';
+    const effectiveEnd   = st.detectedEnd   || shiftDef.end   || '';
     // Assign only the single shift that was clicked
     if (this.S.shifts.find(s => s.date===date && matchesGroup(s, g) && s.type===shiftType && s.buildingId===bId && s.employeeId===emp.id)) {
       this.showToast('Employee already scheduled for this shift', 'warn'); return;
@@ -7833,7 +7930,7 @@ const App = {
       this.S.shifts.push({
         id: 'sh' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + Math.random().toString(36).slice(2,6),
         date, group: g, type: shiftType,
-        start: shiftDef.start || '', end: shiftDef.end || '',
+        start: effectiveStart, end: effectiveEnd,
         status: 'scheduled', buildingId: bId, employeeId: emp.id,
       });
     }
@@ -8332,59 +8429,56 @@ const App = {
     const _delBldg = shift.buildingId;
     const _delEmpId = shift.employeeId;
     const _delStatus = shift.status;
+
+    // Optimistic update: remove from local state and re-render immediately
+    // so the calendar responds without waiting for the network round-trip.
+    this.S.shifts = this.S.shifts.filter(s => s.id !== shiftId);
+    // Mark the deleted shift's date in ALL matching schedule patterns'
+    // removedDates so _extendRotationsThrough() won't regenerate it.
+    if (Array.isArray(this.S.schedulePatterns)) {
+      for (const pat of this.S.schedulePatterns) {
+        if (pat.active === false) continue;
+        if (pat.group !== _delGroup || pat.shiftType !== _delType) continue;
+        if (pat.buildingId !== _delBldg) continue;
+        const kind = pat.kind || (pat.empId ? 'assign' : 'open');
+        if (kind === 'assign' && pat.empId && pat.empId !== _delEmpId) continue;
+        if (!pat.removedDates) pat.removedDates = [];
+        if (!pat.removedDates.includes(_delDate)) {
+          pat.removedDates.push(_delDate);
+        }
+      }
+    }
+    // If the deleted shift was open and a staffing requirement exists,
+    // decrement by 1 so the virtual OPEN placeholder also disappears.
+    if (_delStatus === 'open') {
+      const slots = this.S.staffingSlots = this.S.staffingSlots || {};
+      if (slots[_delBldg]?.[_delGroup]?.[_delType] > 0) {
+        slots[_delBldg][_delGroup][_delType] = Math.max(0, slots[_delBldg][_delGroup][_delType] - 1);
+      }
+    }
+    this.closeModal('modal-remove-shift');
+    this.closeModal('modal-assign-shift');
+    this.renderMain();
+    this.showToast(`Removed ${_delGroup} ${_delType} shift on ${dateLabel}${emp ? ' (was ' + emp.name.split(' ')[0] + ')' : ''}`);
+
+    // Fire the server delete in the background. On failure, restore from undo.
     try {
       const r = await fetch(`/api/shifts/${encodeURIComponent(shiftId)}`, { method: 'DELETE' });
       if (!r.ok) {
         const d = await r.json().catch(() => ({}));
+        // Rollback: restore shifts from undo stack
+        const undo = this._undoStack().pop();
+        if (undo) { for (const k of undo.keys) this.S[k] = undo.snap[k]; }
+        this.renderMain();
         this.showToast(d.error || `Delete failed (HTTP ${r.status})`, 'warn');
-        return;
-      }
-      // Re-pull canonical state so the calendar matches the server. If the
-      // refetch fails, fall back to local removal so the UI stays consistent
-      // with what the user just did — server is the source of truth and will
-      // reconcile on the next reload.
-      try {
-        const dResp = await fetch('/api/data');
-        if (dResp.ok) this.applyServerData(await dResp.json(), dResp.headers.get('ETag'));
-        else this.S.shifts = this.S.shifts.filter(s => s.id !== shiftId);
-      } catch {
-        this.S.shifts = this.S.shifts.filter(s => s.id !== shiftId);
-      }
-      // Mark the deleted shift's date in ALL matching schedule patterns'
-      // removedDates so _extendRotationsThrough() won't regenerate it.
-      // Uses captured shift details (not the now-deleted shift object).
-      if (Array.isArray(this.S.schedulePatterns)) {
-        for (const pat of this.S.schedulePatterns) {
-          if (pat.active === false) continue;
-          if (pat.group !== _delGroup || pat.shiftType !== _delType) continue;
-          if (pat.buildingId !== _delBldg) continue;
-          // Match both assign and open patterns for this date — an open
-          // pattern can produce shifts that later get assigned, so we must
-          // still mark the date removed regardless of employeeId.
-          const kind = pat.kind || (pat.empId ? 'assign' : 'open');
-          if (kind === 'assign' && pat.empId && pat.empId !== _delEmpId) continue;
-          if (!pat.removedDates) pat.removedDates = [];
-          if (!pat.removedDates.includes(_delDate)) {
-            pat.removedDates.push(_delDate);
-          }
-        }
-      }
-      // If the deleted shift was open and a staffing requirement exists,
-      // decrement by 1 so the virtual OPEN placeholder also disappears.
-      if (_delStatus === 'open') {
-        const slots = this.S.staffingSlots = this.S.staffingSlots || {};
-        if (slots[_delBldg]?.[_delGroup]?.[_delType] > 0) {
-          slots[_delBldg][_delGroup][_delType] = Math.max(0, slots[_delBldg][_delGroup][_delType] - 1);
-        }
       }
       // Always persist after deletion to save removedDates and staffingSlots
       this.persistData();
-      this.closeModal('modal-remove-shift');
-      this.closeModal('modal-assign-shift');
-      this.renderMain();
-      this.showToast(`Removed ${_delGroup} ${_delType} shift on ${dateLabel}${emp ? ' (was ' + emp.name.split(' ')[0] + ')' : ''}`);
     } catch (e) {
-      this.showToast('Network error — try again', 'warn');
+      const undo = this._undoStack().pop();
+      if (undo) { for (const k of undo.keys) this.S[k] = undo.snap[k]; }
+      this.renderMain();
+      this.showToast('Network error — shift restored', 'warn');
     }
   },
 
@@ -15400,23 +15494,72 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         <div style="font-size:11px;color:var(--g500);font-weight:600;text-transform:uppercase;letter-spacing:.04em;flex-shrink:0">${label}</div>
         <div style="font-size:13px;color:var(--g900);text-align:right;font-weight:500;word-break:break-word;min-width:0">${val == null || val === '' ? dash : val}</div>
       </div>`;
+    // Editable row: clicking the value switches to an inline input.
+    // fieldKey = emp property name, inputType = text|email|tel|date|select
+    // selectOpts = [{value,label}] for select type
+    const eRow = (label, fieldKey, displayVal, inputType, selectOpts) => {
+      const uid = `empcard-field-${fieldKey.replace(/\./g,'_')}-${emp.id}`;
+      const fkParts = fieldKey.split('.');
+      const rawVal = fkParts.length === 2
+        ? (emp[fkParts[0]]?.[fkParts[1]] != null ? String(emp[fkParts[0]][fkParts[1]]) : '')
+        : (emp[fieldKey] != null ? String(emp[fieldKey]) : '');
+      const isEmpty = displayVal == null || displayVal === '';
+      const clickStyle = 'cursor:pointer;border-bottom:1px dashed var(--g300)';
+      const emptyClickStyle = 'cursor:pointer;color:var(--blue-d);font-size:11px';
+      let inputHtml;
+      if (inputType === 'select' && selectOpts) {
+        inputHtml = `<select id="${uid}-input" style="padding:3px 6px;border:1.5px solid var(--g200);border-radius:5px;font-size:13px;text-align:right;max-width:200px"
+          onchange="App.empCardSaveField('${emp.id}','${fieldKey}',this.value,'select')" onkeydown="if(event.key==='Escape'){App.empCardCancelField('${uid}')}">
+          ${selectOpts.map(o => `<option value="${sanitize(o.value)}"${o.value===rawVal?' selected':''}>${sanitize(o.label)}</option>`).join('')}
+        </select>`;
+      } else {
+        const iType = inputType === 'email' ? 'email' : inputType === 'tel' ? 'tel' : inputType === 'date' ? 'date' : 'text';
+        inputHtml = `<input type="${iType}" id="${uid}-input" value="${sanitize(rawVal)}" style="padding:3px 6px;border:1.5px solid var(--g200);border-radius:5px;font-size:13px;text-align:right;max-width:200px;width:${inputType==='date'?'160':'140'}px"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();App.empCardSaveField('${emp.id}','${fieldKey}',this.value,'${iType}')}else if(event.key==='Escape'){App.empCardCancelField('${uid}')}"
+          onblur="setTimeout(()=>{if(document.getElementById('${uid}-edit'))App.empCardSaveField('${emp.id}','${fieldKey}',this.value,'${iType}')},150)">`;
+      }
+      return `
+      <div style="display:flex;justify-content:space-between;gap:14px;padding:8px 0;border-bottom:1px solid var(--g100)">
+        <div style="font-size:11px;color:var(--g500);font-weight:600;text-transform:uppercase;letter-spacing:.04em;flex-shrink:0">${label}</div>
+        <div style="font-size:13px;color:var(--g900);text-align:right;font-weight:500;word-break:break-word;min-width:0">
+          <span id="${uid}-display" onclick="App.empCardStartEdit('${uid}','${inputType}')" style="${isEmpty ? emptyClickStyle : clickStyle}" title="Click to edit">${isEmpty ? '+ Add' : displayVal}</span>
+          <span id="${uid}-edit" style="display:none;align-items:center;gap:4px;justify-content:flex-end">
+            ${inputHtml}
+            ${inputType !== 'select' ? `<button type="button" class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 6px;color:var(--g600)" onclick="App.empCardCancelField('${uid}')">&#10005;</button>` : ''}
+          </span>
+        </div>
+      </div>`;};
 
     // — Section: Contact —
     const contactSection = `
       <div style="background:#fff;border:1px solid var(--g200);border-radius:10px;padding:6px 14px">
         <div style="font-weight:700;font-size:12px;color:var(--g700);text-transform:uppercase;letter-spacing:.05em;padding:8px 0 4px">Contact</div>
-        ${row('Email',  emp.email ? `<a href="mailto:${sanitize(emp.email)}" style="color:var(--blue-d);text-decoration:none">${sanitize(emp.email)}</a>` : null)}
-        ${row('Phone',  emp.phone ? `<a href="tel:${sanitize(emp.phone)}"   style="color:var(--blue-d);text-decoration:none">${sanitize(emp.phone)}</a>` : null)}
+        ${eRow('Email', 'email', emp.email ? sanitize(emp.email) : null, 'email')}
+        ${eRow('Phone', 'phone', emp.phone ? sanitize(emp.phone) : null, 'tel')}
       </div>`;
 
     // — Section: Employment —
+    const buildingOpts = (this.S.buildings || []).map(b2 => ({ value: b2.id, label: b2.name }));
+    const empTypeOpts = [
+      { value: '', label: '— not set —' },
+      { value: 'fulltime', label: 'Full-time' },
+      { value: 'parttime', label: 'Part-time' },
+      { value: 'prn', label: 'PRN' },
+    ];
+    const empTypeLabel = { fulltime: 'Full-time', parttime: 'Part-time', prn: 'PRN' };
     const employmentSection = `
       <div style="background:#fff;border:1px solid var(--g200);border-radius:10px;padding:6px 14px">
         <div style="font-weight:700;font-size:12px;color:var(--g700);text-transform:uppercase;letter-spacing:.05em;padding:8px 0 4px">Employment</div>
-        ${row('Position',     `<span style="display:inline-flex;align-items:center;gap:5px">${G_ICONS[emp.group]||''}<span style="color:${col};font-weight:600">${sanitize(emp.group)}</span></span>`)}
-        ${row('Building',     bld ? sanitize(bld.name) : null)}
-        ${row('Hire date',    fmtDate(emp.hireDate) ? `${fmtDate(emp.hireDate)}${tenure ? ` <span style="color:var(--g500);font-weight:400">· ${tenure}</span>` : ''}` : null)}
-        ${row('Type',         emp.employmentType ? sanitize(emp.employmentType) : null)}
+        ${row('Position',     `<span style="display:inline-flex;align-items:center;gap:6px">
+            ${G_ICONS[emp.group]||''}
+            <select id="empcard-pos-select-${emp.id}" onchange="App.empCardSavePosition('${emp.id}')"
+              style="padding:4px 24px 4px 6px;border:1.5px solid var(--g200);border-radius:6px;font-size:13px;font-weight:600;color:${col};background:#fff;cursor:pointer;appearance:auto">
+              ${GROUPS.map(g2=>`<option value="${g2}"${g2===emp.group?' selected':''}>${groupLabel(g2)}</option>`).join('')}
+            </select>
+          </span>`)}
+        ${eRow('Building', 'buildingId', bld ? sanitize(bld.name) : null, 'select', buildingOpts)}
+        ${eRow('Hire date', 'hireDate', fmtDate(emp.hireDate) ? `${fmtDate(emp.hireDate)}${tenure ? ` <span style="color:var(--g500);font-weight:400">· ${tenure}</span>` : ''}` : null, 'date')}
+        ${eRow('Type', 'employmentType', emp.employmentType ? (empTypeLabel[emp.employmentType] || sanitize(emp.employmentType)) : null, 'select', empTypeOpts)}
         ${showFinancials ? row('Pay type', `
           <span id="empcard-paytype-display-${emp.id}">
             <strong>${isSalaried ? 'Salary' : 'Hourly'}</strong>
@@ -15458,7 +15601,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const personalSection = `
       <div style="background:#fff;border:1px solid var(--g200);border-radius:10px;padding:6px 14px">
         <div style="font-weight:700;font-size:12px;color:var(--g700);text-transform:uppercase;letter-spacing:.05em;padding:8px 0 4px">Personal</div>
-        ${row('Date of birth', emp.dob ? `${fmtDate(emp.dob)}${age != null ? ` <span style="color:var(--g500);font-weight:400">· age ${age}</span>` : ''}` : null)}
+        ${eRow('Date of birth', 'dob', emp.dob ? `${fmtDate(emp.dob)}${age != null ? ` <span style="color:var(--g500);font-weight:400">· age ${age}</span>` : ''}` : null, 'date')}
       </div>`;
 
     // — Section: IDs & Codes —
@@ -15468,11 +15611,11 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       <div style="background:#fff;border:1px solid var(--g200);border-radius:10px;padding:6px 14px">
         <div style="font-weight:700;font-size:12px;color:var(--g700);text-transform:uppercase;letter-spacing:.05em;padding:8px 0 4px">IDs &amp; Codes</div>
         ${row('Employee ID',  `<code style="font-size:11px;background:var(--g50);padding:2px 6px;border-radius:4px">${sanitize(emp.id)}</code>`)}
-        ${row('Badge ID',     emp.badgeId ? `<code style="font-size:11px;background:var(--g50);padding:2px 6px;border-radius:4px">${sanitize(emp.badgeId)}</code>` : null)}
-        ${row('SmartLinx',    emp.smartlinxId ? `<code style="font-size:11px;background:var(--g50);padding:2px 6px;border-radius:4px">${sanitize(emp.smartlinxId)}</code>` : null)}
-        ${row('Paycom',       paycomId ? `<span style="background:#DCFCE7;color:#15803D;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px">${sanitize(paycomId)}</span>` : null)}
-        ${row('ADP',          adpId    ? `<span style="background:#DCFCE7;color:#15803D;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px">${sanitize(adpId)}</span>`    : null)}
-        ${row('PBJ override', emp.pbjCode ? sanitize(emp.pbjCode) : null)}
+        ${eRow('Badge ID', 'badgeId', emp.badgeId ? sanitize(emp.badgeId) : null, 'text')}
+        ${eRow('SmartLinx', 'smartlinxId', emp.smartlinxId ? sanitize(emp.smartlinxId) : null, 'text')}
+        ${eRow('Paycom', 'payrollIds.paycom', paycomId ? sanitize(paycomId) : null, 'text')}
+        ${eRow('ADP', 'payrollIds.adp', adpId ? sanitize(adpId) : null, 'text')}
+        ${eRow('PBJ override', 'pbjCode', emp.pbjCode ? sanitize(emp.pbjCode) : null, 'text')}
       </div>`;
 
     // — Section: License (always shown for nursing positions) —
@@ -15482,6 +15625,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const licStatus = isNurse ? this._licenseStatus(emp) : null;
     const licBadgeColors = { ok: 'background:#DCFCE7;color:#15803D', missing: 'background:#FEF9C3;color:#92400E', expiringSoon: 'background:#FEF9C3;color:#92400E', expired: 'background:#FEE2E2;color:#991B1B' };
     const licBadgeLabel = { ok: 'Valid', missing: 'Not on file', expiringSoon: `Expires in ${this._daysToLicenseExpiry(emp)}d`, expired: 'Expired' };
+    const showLicense = isNurse || emp.licenseNumber || emp.licenseState || emp.licenseExpiresAt;
     const licenseSection = isNurse ? `
       <div style="background:#fff;border:1px solid var(--g200);border-radius:10px;padding:6px 14px">
         <div style="font-weight:700;font-size:12px;color:var(--g700);text-transform:uppercase;letter-spacing:.05em;padding:8px 0 4px">License</div>
@@ -15490,12 +15634,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         ${row('State',      emp.licenseState)}
         ${row('Expires',    fmtDate(emp.licenseExpiresAt))}
         ${row('Status',     `<span style="${licBadgeColors[licStatus]};font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px">${licBadgeLabel[licStatus]}</span>`)}
-      </div>` : (emp.licenseNumber || emp.licenseState || emp.licenseExpiresAt) ? `
+      </div>` : showLicense ? `
       <div style="background:#fff;border:1px solid var(--g200);border-radius:10px;padding:6px 14px">
         <div style="font-weight:700;font-size:12px;color:var(--g700);text-transform:uppercase;letter-spacing:.05em;padding:8px 0 4px">License</div>
-        ${row('Number',     emp.licenseNumber)}
-        ${row('State',      emp.licenseState)}
-        ${row('Expires',    fmtDate(emp.licenseExpiresAt))}
+        ${eRow('Number', 'licenseNumber', emp.licenseNumber ? sanitize(emp.licenseNumber) : null, 'text')}
+        ${eRow('State', 'licenseState', emp.licenseState ? sanitize(emp.licenseState) : null, 'text')}
+        ${eRow('Expires', 'licenseExpiresAt', fmtDate(emp.licenseExpiresAt), 'date')}
       </div>` : '';
 
     // — Section: Schedule snapshot —
@@ -15562,7 +15706,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
             ${sanitize(emp.initials || (emp.name||'').split(' ').map(w=>w[0]||'').join('').slice(0,2).toUpperCase())}
           </div>
           <div style="flex:1;min-width:0">
-            <div style="font-weight:700;font-size:18px;color:${isActive?'var(--g900)':'var(--g500)'}">${sanitize(emp.name)}</div>
+            <div id="empcard-name-display-${emp.id}" style="font-weight:700;font-size:18px;color:${isActive?'var(--g900)':'var(--g500)'};cursor:pointer;border-bottom:1px dashed transparent" onmouseover="this.style.borderBottomColor='var(--g300)'" onmouseout="this.style.borderBottomColor='transparent'" onclick="App.empCardStartNameEdit('${emp.id}')" title="Click to edit name">${sanitize(emp.name)}</div>
+            <div id="empcard-name-edit-${emp.id}" style="display:none">
+              <input type="text" id="empcard-name-input-${emp.id}" value="${sanitize(emp.name)}" style="font-weight:700;font-size:18px;color:var(--g900);border:1.5px solid var(--g200);border-radius:5px;padding:2px 6px;width:100%"
+                onkeydown="if(event.key==='Enter'){event.preventDefault();App.empCardSaveName('${emp.id}')}else if(event.key==='Escape'){App.empCardCancelName('${emp.id}')}"
+                onblur="setTimeout(()=>App.empCardSaveName('${emp.id}'),150)">
+            </div>
             <div style="font-size:13px;color:var(--g600);margin-top:2px">${sanitize(emp.group)}${bld ? ' · ' + sanitize(bld.name) : ''}</div>
           </div>
           <span class="${isActive?'tag-active':'tag-inactive'}" style="flex-shrink:0">${isActive?'Active':'Inactive'}</span>
@@ -15585,6 +15734,147 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     document.body.appendChild(div);
   },
 
+  // Generic inline-edit handlers for the Employee Card fields.
+  // empCardStartEdit: show the input, hide the display.
+  empCardStartEdit(uid, inputType) {
+    const display = document.getElementById(uid + '-display');
+    const editor  = document.getElementById(uid + '-edit');
+    if (!display || !editor) return;
+    display.style.display = 'none';
+    editor.style.display  = 'inline-flex';
+    const input = document.getElementById(uid + '-input');
+    if (input && inputType !== 'select') { input.focus(); input.select?.(); }
+  },
+  empCardCancelField(uid) {
+    const display = document.getElementById(uid + '-display');
+    const editor  = document.getElementById(uid + '-edit');
+    if (!display || !editor) return;
+    editor.style.display  = 'none';
+    display.style.display = 'inline';
+  },
+  empCardSaveField(empId, fieldKey, value, inputType) {
+    const emp = (this.S.employees || []).find(e => e.id === empId);
+    if (!emp) { this.showToast('Employee not found', 'warn'); return; }
+    const val = (value || '').trim();
+    // Validate email format
+    if (inputType === 'email' && val && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
+      this.showToast('Enter a valid email address', 'warn'); return;
+    }
+    // Handle nested keys like payrollIds.paycom
+    const setField = (obj, key, v) => {
+      const parts = key.split('.');
+      if (parts.length === 2) {
+        if (!obj[parts[0]]) obj[parts[0]] = {};
+        const oldVal = obj[parts[0]][parts[1]] || '';
+        if (v) obj[parts[0]][parts[1]] = v; else delete obj[parts[0]][parts[1]];
+        return oldVal;
+      }
+      const oldVal = obj[key] != null ? String(obj[key]) : '';
+      if (v) obj[key] = v; else delete obj[key];
+      return oldVal;
+    };
+    const getField = (obj, key) => {
+      const parts = key.split('.');
+      if (parts.length === 2) return obj[parts[0]]?.[parts[1]] || '';
+      return obj[key] != null ? String(obj[key]) : '';
+    };
+    const oldVal = getField(emp, fieldKey);
+    if (val === oldVal) {
+      // No change — just close the editor
+      const uid = `empcard-field-${fieldKey.replace(/\./g,'_')}-${empId}`;
+      this.empCardCancelField(uid);
+      return;
+    }
+    // Badge ID duplicate check
+    if (fieldKey === 'badgeId' && val) {
+      const dup = (this.S.employees || []).find(e => e.id !== empId && e.buildingId === emp.buildingId && e.badgeId === val);
+      if (dup) { this.showToast(`Badge ID already used by ${dup.name}`, 'warn'); return; }
+    }
+    // Building change — update shifts too
+    if (fieldKey === 'buildingId' && val !== oldVal) {
+      const oldBld = (this.S.buildings || []).find(b => b.id === oldVal);
+      const newBld = (this.S.buildings || []).find(b => b.id === val);
+      emp.buildingId = val;
+      const today = new Date().toISOString().slice(0, 10);
+      let moved = 0;
+      for (const s of (this.S.shifts || [])) {
+        if (s.employeeId !== empId || s.date < today) continue;
+        if (s.buildingId === oldVal) { s.buildingId = val; moved++; }
+      }
+      this.persistData();
+      Audit.log('EMP_BUILDING_CHANGED',
+        `${sanitize(emp.name)} moved from ${oldBld?.name||oldVal} to ${newBld?.name||val}. ${moved} future shift${moved===1?'':'s'} updated.`,
+        this.S.user?.id, 'high');
+      this.showToast(`${emp.name.split(' ')[0]} → ${newBld?.name||val}${moved ? ' · '+moved+' shift'+(moved===1?'':'s')+' moved' : ''}`);
+      document.getElementById('modal-employee-card')?.remove();
+      this.openEmployeeCard(empId);
+      this.renderMain();
+      return;
+    }
+    const FIELD_LABELS = {
+      email:'Email', phone:'Phone', buildingId:'Building', hireDate:'Hire date',
+      employmentType:'Type', dob:'Date of birth', badgeId:'Badge ID',
+      smartlinxId:'SmartLinx ID', pbjCode:'PBJ override',
+      'payrollIds.paycom':'Paycom ID', 'payrollIds.adp':'ADP ID',
+      licenseNumber:'License number', licenseState:'License state',
+      licenseExpiresAt:'License expiry',
+    };
+    const fieldLabel = FIELD_LABELS[fieldKey] || fieldKey.replace(/([A-Z])/g, ' $1').toLowerCase().replace(/^./, c => c.toUpperCase());
+    setField(emp, fieldKey, val);
+    this.persistData();
+    Audit.log('EMP_FIELD_UPDATED',
+      `${sanitize(emp.name)} ${fieldLabel}: "${oldVal||'—'}" → "${val||'—'}"`,
+      this.S.user?.id, 'low');
+    this.showToast(`${emp.name.split(' ')[0]}: ${fieldLabel} updated`);
+    document.getElementById('modal-employee-card')?.remove();
+    this.openEmployeeCard(empId);
+    this.renderMain();
+  },
+  // Name edit handlers for the header area
+  empCardStartNameEdit(empId) {
+    const display = document.getElementById('empcard-name-display-' + empId);
+    const editor  = document.getElementById('empcard-name-edit-' + empId);
+    if (!display || !editor) return;
+    display.style.display = 'none';
+    editor.style.display  = 'block';
+    const input = document.getElementById('empcard-name-input-' + empId);
+    if (input) { input.focus(); input.select(); }
+  },
+  empCardCancelName(empId) {
+    const display = document.getElementById('empcard-name-display-' + empId);
+    const editor  = document.getElementById('empcard-name-edit-' + empId);
+    if (!display || !editor) return;
+    editor.style.display  = 'none';
+    display.style.display = 'block';
+  },
+  empCardSaveName(empId) {
+    const emp = (this.S.employees || []).find(e => e.id === empId);
+    if (!emp) return;
+    const input = document.getElementById('empcard-name-input-' + empId);
+    if (!input) return;
+    const val = input.value.trim();
+    if (!val) { this.showToast('Name cannot be empty', 'warn'); return; }
+    if (val === emp.name) { this.empCardCancelName(empId); return; }
+    const oldName = emp.name;
+    emp.name = val;
+    // Update name on future shifts
+    for (const s of (this.S.shifts || [])) {
+      if (s.employeeId === empId && s.name) s.name = val;
+    }
+    // Update name on timeclock records
+    for (const p of (this.S.hrTimeClock || [])) {
+      if (p.empId === empId && p.name) p.name = val;
+    }
+    this.persistData();
+    Audit.log('EMP_NAME_CHANGED',
+      `Employee name changed: "${sanitize(oldName)}" → "${sanitize(val)}"`,
+      this.S.user?.id, 'medium');
+    this.showToast(`Name updated: ${val}`);
+    document.getElementById('modal-employee-card')?.remove();
+    this.openEmployeeCard(empId);
+    this.renderMain();
+  },
+
   // Inline edit handlers for the Employee Card's hourly-rate row.
   // Toggle display ↔ input, save with validation + audit, or cancel.
   empCardEditRate(empId) {
@@ -15603,6 +15893,57 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     editor.style.display  = 'none';
     display.style.display = 'inline';
   },
+
+  // Position dropdown handler — fires on change. Confirms with the admin,
+  // updates the employee's group, and moves future shifts to the new group
+  // so the calendar updates accordingly (e.g. CNA → RN after passing boards).
+  async empCardSavePosition(empId) {
+    const emp = (this.S.employees || []).find(e => e.id === empId);
+    if (!emp) { this.showToast('Employee not found', 'warn'); return; }
+    const sel = document.getElementById('empcard-pos-select-' + empId);
+    if (!sel) return;
+    const newGroup = sel.value;
+    if (!newGroup || newGroup === emp.group) return;
+    const oldGroup = emp.group;
+
+    const confirmed = await confirmAction(
+      'Change Position',
+      `Move ${emp.name} from ${groupLabel(oldGroup)} to ${groupLabel(newGroup)}?\n\nAll future scheduled shifts will be updated to the new position.`,
+      'Change Position'
+    );
+    if (!confirmed) {
+      // Reset the dropdown to the current value
+      sel.value = oldGroup;
+      return;
+    }
+
+    // Update the employee's group
+    emp.group = newGroup;
+
+    // Move future shifts assigned to this employee to the new group
+    const today = new Date().toISOString().slice(0, 10);
+    let shiftsMoved = 0;
+    for (const s of (this.S.shifts || [])) {
+      if (s.employeeId !== empId) continue;
+      if (s.date < today) continue;
+      if (s.group === oldGroup) {
+        s.group = newGroup;
+        shiftsMoved++;
+      }
+    }
+
+    this.persistData();
+    Audit.log('EMP_POSITION_CHANGED',
+      `${sanitize(emp.name)} position changed: ${oldGroup} → ${newGroup}. ${shiftsMoved} future shift${shiftsMoved===1?'':'s'} updated.`,
+      this.S.user?.id, 'high');
+    this.showToast(`${emp.name.split(' ')[0]}: ${groupLabel(oldGroup)} → ${groupLabel(newGroup)}${shiftsMoved ? ' · ' + shiftsMoved + ' shift' + (shiftsMoved===1?'':'s') + ' moved' : ''}`);
+
+    // Re-render card and calendar
+    document.getElementById('modal-employee-card')?.remove();
+    this.openEmployeeCard(empId);
+    this.renderMain();
+  },
+
   empCardSaveRate(empId) {
     const emp = (this.S.employees || []).find(e => e.id === empId);
     if (!emp) { this.showToast('Employee not found', 'warn'); return; }
@@ -15662,20 +16003,37 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
 
   // Switch an employee between hourly and salaried pay. Requires user
   // confirmation since this changes how the daily cost calc treats them.
-  // The previous-mode field is preserved (so a former salaried emp's last
-  // annualSalary stays on file), but only the active-mode field is honored.
+  // Auto-converts the pay amount: hourly × 2080 → annual salary, or
+  // annual ÷ 2080 → hourly. The previous-mode field is preserved (so a
+  // former salaried emp's last annualSalary stays on file), but only the
+  // active-mode field is honored.
   async empCardSwitchPayType(empId) {
     const emp = (this.S.employees || []).find(e => e.id === empId);
     if (!emp) { this.showToast('Employee not found', 'warn'); return; }
     if (!this.canViewFinancials?.()) { this.showToast('Not allowed to change pay type', 'warn'); return; }
-    // Toggle on the EXPLICITLY-DECLARED payType field, not on whether the
-    // current salary has been filled in. Otherwise switching to "salaried"
-    // and back wouldn't work until you typed a salary.
     const wasSalaried = emp.payType === 'salaried';
     const newType = wasSalaried ? 'hourly' : 'salaried';
+    const oldHourly = parseFloat(emp.hourlyRate) || 0;
+    const oldAnnual = parseFloat(emp.annualSalary) || 0;
+
+    // Auto-convert: hourly × 2080 → annual, or annual ÷ 2080 → hourly
+    let convertedRate;
+    let convertNote;
+    if (wasSalaried) {
+      convertedRate = oldAnnual > 0 ? (oldAnnual / 2080) : 0;
+      convertNote = oldAnnual > 0
+        ? `Hourly rate auto-calculated: $${(oldAnnual).toLocaleString()}/yr ÷ 2,080 hrs = $${convertedRate.toFixed(2)}/hr`
+        : '';
+    } else {
+      convertedRate = oldHourly > 0 ? (oldHourly * 2080) : 0;
+      convertNote = oldHourly > 0
+        ? `Annual salary auto-calculated: $${oldHourly.toFixed(2)}/hr × 2,080 hrs = $${Math.round(convertedRate).toLocaleString()}/yr`
+        : '';
+    }
+
     const msg = wasSalaried
-      ? `Switch ${emp.name} to HOURLY pay?\n\nTheir current annual salary ($${(emp.annualSalary||0).toLocaleString()}) will be kept on file but stop affecting daily cost calcs. You'll need to enter an hourly rate next.`
-      : `Switch ${emp.name} to SALARY pay?\n\nTheir hourly rate (${emp.hourlyRate?'$'+emp.hourlyRate+'/hr':'unset'}) will be kept on file but stop affecting cost calcs. Salaried daily cost = annual salary ÷ 365, regardless of which days they're scheduled. No OT.\n\nYou'll need to enter an annual salary next.`;
+      ? `Switch ${emp.name} to HOURLY pay?\n\nTheir current annual salary ($${(emp.annualSalary||0).toLocaleString()}) will be kept on file but stop affecting daily cost calcs.${convertNote ? '\n\n' + convertNote : ''}`
+      : `Switch ${emp.name} to SALARY pay?\n\nTheir hourly rate (${emp.hourlyRate?'$'+emp.hourlyRate+'/hr':'unset'}) will be kept on file but stop affecting cost calcs. Salaried daily cost = annual salary ÷ 365, regardless of which days they're scheduled. No OT.${convertNote ? '\n\n' + convertNote : ''}`;
     const okSwitch = await this.mmsConfirm({
       title: 'Switch pay type',
       message: msg,
@@ -15683,11 +16041,18 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     });
     if (!okSwitch) return;
     emp.payType = newType;
+    // Auto-populate the new pay field from the converted rate
+    if (wasSalaried && convertedRate > 0 && !oldHourly) {
+      emp.hourlyRate = parseFloat(convertedRate.toFixed(2));
+    }
+    if (!wasSalaried && convertedRate > 0 && !oldAnnual) {
+      emp.annualSalary = Math.round(convertedRate);
+    }
     this.persistData();
     Audit.log('EMP_PAY_TYPE_SWITCHED',
-      `${sanitize(emp.name)} pay type → ${newType}`,
+      `${sanitize(emp.name)} pay type → ${newType}${convertNote ? '. ' + convertNote : ''}`,
       this.S.user?.id, 'high');
-    this.showToast(`${emp.name.split(' ')[0]} → ${newType === 'salaried' ? 'salary' : 'hourly'}`);
+    this.showToast(`${emp.name.split(' ')[0]} → ${newType === 'salaried' ? 'salary' : 'hourly'}${convertNote ? ' · rate converted' : ''}`);
     document.getElementById('modal-employee-card')?.remove();
     this.openEmployeeCard(empId);
   },
@@ -16628,13 +16993,6 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/></svg>
       Add Shifts
     </button>`;
-    // Contextual button: only on the Administration tab so admins can add
-    // a new administrator (employee with Position=Administration, Role=Building
-    // Admin) directly from the schedule. Pre-fills the Add Employee form.
-    const addAdminBtn = (g === 'Office') ? `<button class="btn btn-secondary btn-sm" onclick="App.openAddAdministrator()" style="display:flex;align-items:center;gap:6px;font-weight:600;color:var(--blue-d);border-color:var(--blue-m)">
-      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="6" cy="6" r="3"/><path d="M1 14a5 5 0 0 1 10 0"/><path d="M13 6v4M11 8h4"/></svg>
-      Add Administrator
-    </button>` : '';
     const removeShiftsBtn = `<button class="btn btn-secondary btn-sm" onclick="App.openRemoveShiftsModal()" style="display:flex;align-items:center;gap:6px;font-weight:600;color:var(--red);border-color:#FCA5A5">
       <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="2" y1="8" x2="14" y2="8"/></svg>
       Remove Shifts
@@ -16767,27 +17125,9 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     else calHtml = this.renderShiftView();
 
     document.getElementById('main').innerHTML = `${stats}${groupTabs}
-      <div class="cal-toolbar">${viewTabs}${groupPill}${g?addShiftsBtn:''}${addAdminBtn}${g?removeShiftsBtn:''}${undoBtn}<button class="btn btn-secondary btn-sm" onclick="App.runCalendarAudit()" title="Run calendar integrity audit" style="display:flex;align-items:center;gap:5px;font-weight:600;color:var(--g600);border-color:var(--g300);font-size:11px"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 8A6 6 0 1 1 2 8a6 6 0 0 1 12 0z"/><path d="M8 5v3M8 11h.01"/></svg>Audit</button>${filterTabs}</div>${calHtml}`;
+      <div class="cal-toolbar">${viewTabs}${groupPill}${g?addShiftsBtn:''}${g?removeShiftsBtn:''}${undoBtn}<button class="btn btn-secondary btn-sm" onclick="App.runCalendarAudit()" title="Run calendar integrity audit" style="display:flex;align-items:center;gap:5px;font-weight:600;color:var(--g600);border-color:var(--g300);font-size:11px"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14 8A6 6 0 1 1 2 8a6 6 0 0 1 12 0z"/><path d="M8 5v3M8 11h.01"/></svg>Audit</button>${filterTabs}</div>${calHtml}`;
   },
 
-  // Open the Add Employee modal pre-filled for an administrator.
-  // Position=Office (labeled "Administration") and Role=Building Admin.
-  // Surfaced as a contextual button on the Administration schedule tab.
-  openAddAdministrator() {
-    this.openModal('modal-add-emp');
-    // Defer field setting until after the modal is in the DOM/visible.
-    setTimeout(() => {
-      const pos  = document.getElementById('emp-position');
-      const role = document.getElementById('emp-role');
-      if (pos)  pos.value  = 'Office';
-      if (role) role.value = 'admin';
-      // Show the Admin Access dropdown that's normally hidden until role=admin
-      if (typeof this.toggleAdminAccessRow === 'function') this.toggleAdminAccessRow();
-      if (typeof this.toggleEmpLicenseSection === 'function') this.toggleEmpLicenseSection();
-      const nameInput = document.getElementById('emp-name');
-      if (nameInput) nameInput.focus();
-    }, 30);
-  },
 
   // ── PPD CALCULATOR ──────────────────────────────────────────
   renderPPDCalc() {
@@ -18457,6 +18797,14 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       }
 
       const shiftDef = this.resolveShiftDef(pat.group, pat.shiftType, pat.buildingId) || {};
+      // Use times from existing shifts matching this pattern so extensions
+      // inherit calendar-specific times (e.g. 6 AM starts), not type defaults.
+      const sampleShift = (this.S.shifts || []).find(s =>
+        s.buildingId === pat.buildingId && s.group === pat.group &&
+        s.type === pat.shiftType && s.start && s.end
+      );
+      const extStart = sampleShift?.start || shiftDef.start || '';
+      const extEnd   = sampleShift?.end   || shiftDef.end   || '';
       const pickerStart = new Date(pat.pickerStart + 'T12:00:00');
       const start = new Date(lastEnd + 'T12:00:00');
       start.setDate(start.getDate() + 1);
@@ -18489,7 +18837,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
             this.S.shifts.push({
               id: 'sh' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + Math.random().toString(36).slice(2,6),
               date: ds, group: pat.group, type: pat.shiftType,
-              start: shiftDef.start || '', end: shiftDef.end || '',
+              start: extStart, end: extEnd,
               status: 'scheduled', buildingId: pat.buildingId, employeeId: emp.id,
             });
             _countMap.set(baseKey, (_countMap.get(baseKey) || 0) + 1);
@@ -18504,7 +18852,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
             this.S.shifts.push({
               id: 'sh' + Date.now() + '_' + Math.random().toString(36).slice(2,8) + Math.random().toString(36).slice(2,6),
               date: ds, group: pat.group, type: pat.shiftType,
-              start: shiftDef.start || '', end: shiftDef.end || '',
+              start: extStart, end: extEnd,
               status: 'open', buildingId: pat.buildingId, employeeId: null,
             });
             extended++;
