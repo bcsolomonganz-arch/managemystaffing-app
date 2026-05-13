@@ -4227,12 +4227,17 @@ app.post('/api/admin/recover-from-history', requireAuth, requireAdmin, async (re
         FROM employee_history
         WHERE building_id = $1
         ORDER BY emp_id, ts DESC
+      ),
+      live AS (
+        SELECT id FROM employees WHERE building_id = $1
       )
-      SELECT emp_id,
-             COALESCE(after_row, before_row) AS row_data,
-             op
-      FROM latest_per_emp
-      WHERE COALESCE(after_row, before_row) IS NOT NULL
+      SELECT lp.emp_id,
+             COALESCE(lp.after_row, lp.before_row) AS row_data,
+             lp.op
+      FROM latest_per_emp lp
+      LEFT JOIN live l ON l.id = lp.emp_id
+      WHERE COALESCE(lp.after_row, lp.before_row) IS NOT NULL
+        AND l.id IS NULL
     `, [buildingId]);
 
     if (dryRun) {
@@ -4240,7 +4245,12 @@ app.post('/api/admin/recover-from-history', requireAuth, requireAdmin, async (re
       return res.json({
         ok: true, dryRun: true,
         wouldRestore: r.rows.length,
-        sampleNames: r.rows.slice(0, 10).map(x => x.row_data?.name).filter(Boolean),
+        sample: r.rows.slice(0, 10).map(x => ({
+          id: x.emp_id,
+          name: x.row_data?.name,
+          group: x.row_data?.group,
+          lastOp: x.op,
+        })),
       });
     }
 

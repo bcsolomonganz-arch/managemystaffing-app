@@ -1975,7 +1975,7 @@ const App = {
         if (parsed && parsed.uid && parsed.role && parsed.ts) {
           // Privileged roles: 24h marker (HIPAA-style — re-auth daily).
           // Employees: 30d marker so they stay logged in on a personal device.
-          const isPrivileged = parsed.role === 'admin' || parsed.role === 'superadmin';
+          const isPrivileged = ['admin','superadmin','hradmin','regionaladmin'].includes(parsed.role);
           const markerTTL = isPrivileged ? 86400000 : 86400000 * 30;
           if (Date.now() - parsed.ts < markerTTL) {
             const user = this.S.accounts.find(a => a.id === parsed.uid)
@@ -2861,6 +2861,7 @@ const App = {
       ['demos',    'Demo Portal',   '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 8.5a6 6 0 1 1-12 0V5"/><path d="M5 2h6l1 3H4z"/><path d="M8 8.5V14M5 14h6"/></svg>'],
       ['billing',  'Billing',       '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="14" height="10" rx="1.5"/><path d="M1 7h14"/><path d="M4 11h2M9 11h3"/></svg>'],
       ['backups',  'Backups',       '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="8" cy="3.5" rx="6" ry="2"/><path d="M2 3.5v9c0 1.1 2.7 2 6 2s6-.9 6-2v-9"/><path d="M2 8c0 1.1 2.7 2 6 2s6-.9 6-2"/></svg>'],
+      ['recovery', 'Recovery',      '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M1 8a7 7 0 0 1 13-3.5"/><path d="M14 1v3.5h-3.5"/><path d="M15 8a7 7 0 0 1-13 3.5"/><path d="M2 15v-3.5h3.5"/></svg>'],
     ];
     // 'company' is a drill-down of 'overview' — keep overview active
     const activePg = pg === 'company' ? 'overview' : pg;
@@ -2893,6 +2894,7 @@ const App = {
       demos:    () => this.renderSADemos(),
       billing:  () => this.renderSABilling(),
       backups:  () => this.renderSABackups(),
+      recovery: () => this.renderSARecovery(),
     };
     (pages[this.S.saPage] || pages.overview)();
   },
@@ -3027,6 +3029,343 @@ const App = {
       this.showToast('Restored. Reloading…');
       setTimeout(() => location.reload(), 800);
     } catch (e) { this.showToast(e.message, 'warn'); }
+  },
+
+  // ── SA RECOVERY DASHBOARD ────────────────────────────────────
+  // In-app UI for recovering lost shifts, assignments, and employees
+  // from shift_history / employee_history tables. No console commands needed.
+  async renderSARecovery() {
+    const main = document.getElementById('main');
+    if (!main) return;
+    const buildings = this.S.buildings || [];
+    const bOpts = buildings.map(b =>
+      `<option value="${sanitize(b.id)}">${sanitize(b.name)}</option>`
+    ).join('');
+
+    main.innerHTML = `<div style="padding:24px;max-width:1100px">
+      <div style="margin-bottom:20px">
+        <div style="font-size:22px;font-weight:800;color:var(--g900)">Shift & Data Recovery</div>
+        <div style="font-size:13px;color:var(--g500);margin-top:2px">Recover deleted shifts, lost employee assignments, and employee records directly from the database history log. All operations support a dry-run preview before committing changes.</div>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap">
+        <label style="font-size:13px;font-weight:700;color:var(--g700)">Building:</label>
+        <select id="rcv-building" style="padding:6px 10px;border:1.5px solid var(--g200);border-radius:8px;font-size:13px;background:#fff;min-width:220px">
+          <option value="">Select a building…</option>
+          ${bOpts}
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="App.runRecoveryDiagnostic()">Run Diagnostic</button>
+      </div>
+
+      <div id="rcv-diagnostic" style="margin-bottom:24px"></div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px">
+        <!-- Recover Deleted Shifts -->
+        <div style="background:#fff;border:1.5px solid var(--g200);border-radius:12px;padding:20px">
+          <div style="font-size:15px;font-weight:700;color:var(--g900);margin-bottom:4px">Recover Deleted Shifts</div>
+          <div style="font-size:12px;color:var(--g500);margin-bottom:12px;line-height:1.5">Finds shifts that exist in shift_history but are missing from the live table. Restores them with their most recent known state.</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <label style="font-size:12px;color:var(--g600)">Since:</label>
+            <input type="date" id="rcv-shifts-since" style="padding:4px 8px;border:1px solid var(--g200);border-radius:6px;font-size:12px" />
+            <span style="font-size:11px;color:var(--g400)">(optional)</span>
+          </div>
+          <div id="rcv-shifts-result" style="margin-bottom:12px"></div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" onclick="App.recoverDeletedShifts(true)">Preview</button>
+            <button class="btn btn-primary btn-sm" onclick="App.recoverDeletedShifts(false)" id="rcv-shifts-go" disabled>Recover</button>
+          </div>
+        </div>
+
+        <!-- Restore Lost Assignments -->
+        <div style="background:#fff;border:1.5px solid var(--g200);border-radius:12px;padding:20px">
+          <div style="font-size:15px;font-weight:700;color:var(--g900);margin-bottom:4px">Restore Lost Assignments</div>
+          <div style="font-size:12px;color:var(--g500);margin-bottom:12px;line-height:1.5">Finds open shifts that previously had an employee assigned (per shift_history) and restores those assignments.</div>
+          <div id="rcv-assign-result" style="margin-bottom:12px"></div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" onclick="App.restoreLostAssignments(true)">Preview</button>
+            <button class="btn btn-primary btn-sm" onclick="App.restoreLostAssignments(false)" id="rcv-assign-go" disabled>Restore</button>
+          </div>
+        </div>
+
+        <!-- Recover Employees -->
+        <div style="background:#fff;border:1.5px solid var(--g200);border-radius:12px;padding:20px">
+          <div style="font-size:15px;font-weight:700;color:var(--g900);margin-bottom:4px">Recover Deleted Employees</div>
+          <div style="font-size:12px;color:var(--g500);margin-bottom:12px;line-height:1.5">Finds employees that exist in employee_history but are missing from the live table and restores them.</div>
+          <div id="rcv-emp-result" style="margin-bottom:12px"></div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" onclick="App.recoverDeletedEmployees(true)">Preview</button>
+            <button class="btn btn-primary btn-sm" onclick="App.recoverDeletedEmployees(false)" id="rcv-emp-go" disabled>Recover</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  },
+
+  // Get selected building from recovery page
+  _rcvBuildingId() {
+    const el = document.getElementById('rcv-building');
+    return el?.value || '';
+  },
+
+  // Run diagnostic on shift_history for selected building
+  async runRecoveryDiagnostic() {
+    const bId = this._rcvBuildingId();
+    if (!bId) { this.showToast('Select a building first', 'warn'); return; }
+    const box = document.getElementById('rcv-diagnostic');
+    if (!box) return;
+    box.innerHTML = `<div style="font-size:13px;color:var(--g500);padding:8px 0">Running diagnostic…</div>`;
+    try {
+      const r = await fetch('/api/admin/restore-shift-assignments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ buildingId: bId, diagnose: true }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Failed');
+      const fmtDate = iso => { try { return new Date(iso).toLocaleString(); } catch { return iso || 'n/a'; } };
+      box.innerHTML = `
+        <div style="background:var(--g50);border:1.5px solid var(--g200);border-radius:10px;padding:16px;font-size:13px">
+          <div style="font-weight:700;color:var(--g900);margin-bottom:10px">Shift History Diagnostic</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px">
+            <div style="background:#fff;border:1px solid var(--g200);border-radius:8px;padding:10px">
+              <div style="font-size:11px;color:var(--g500);text-transform:uppercase;letter-spacing:.04em">Live Total</div>
+              <div style="font-size:20px;font-weight:800;color:var(--g900)">${Number(d.live_total).toLocaleString()}</div>
+            </div>
+            <div style="background:#fff;border:1px solid var(--g200);border-radius:8px;padding:10px">
+              <div style="font-size:11px;color:var(--g500);text-transform:uppercase;letter-spacing:.04em">Live Open</div>
+              <div style="font-size:20px;font-weight:800;color:var(--orange)">${Number(d.live_open).toLocaleString()}</div>
+            </div>
+            <div style="background:#fff;border:1px solid var(--g200);border-radius:8px;padding:10px">
+              <div style="font-size:11px;color:var(--g500);text-transform:uppercase;letter-spacing:.04em">Live Assigned</div>
+              <div style="font-size:20px;font-weight:800;color:var(--green)">${Number(d.live_assigned).toLocaleString()}</div>
+            </div>
+            <div style="background:#fff;border:1px solid var(--g200);border-radius:8px;padding:10px">
+              <div style="font-size:11px;color:var(--g500);text-transform:uppercase;letter-spacing:.04em">History Records</div>
+              <div style="font-size:20px;font-weight:800;color:var(--g900)">${Number(d.history_total).toLocaleString()}</div>
+            </div>
+            <div style="background:#fff;border:1px solid var(--g200);border-radius:8px;padding:10px">
+              <div style="font-size:11px;color:var(--g500);text-transform:uppercase;letter-spacing:.04em">Inserts / Updates / Deletes</div>
+              <div style="font-size:14px;font-weight:700;color:var(--g700)">${Number(d.history_inserts).toLocaleString()} / ${Number(d.history_updates).toLocaleString()} / ${Number(d.history_deletes).toLocaleString()}</div>
+            </div>
+            <div style="background:#fff;border:1px solid var(--g200);border-radius:8px;padding:10px">
+              <div style="font-size:11px;color:var(--g500);text-transform:uppercase;letter-spacing:.04em">Ever Assigned</div>
+              <div style="font-size:20px;font-weight:800;color:var(--blue)">${Number(d.shifts_ever_assigned).toLocaleString()}</div>
+            </div>
+            <div style="background:#fff;border:1px solid var(--g200);border-radius:8px;padding:10px">
+              <div style="font-size:11px;color:var(--g500);text-transform:uppercase;letter-spacing:.04em">Open w/ Lost Assignment</div>
+              <div style="font-size:20px;font-weight:800;color:${Number(d.openShiftsWithAssignmentHistory) > 0 ? 'var(--red)' : 'var(--green)'}">${Number(d.openShiftsWithAssignmentHistory).toLocaleString()}</div>
+            </div>
+            <div style="background:#fff;border:1px solid var(--g200);border-radius:8px;padding:10px">
+              <div style="font-size:11px;color:var(--g500);text-transform:uppercase;letter-spacing:.04em">History Window</div>
+              <div style="font-size:12px;font-weight:600;color:var(--g700)">${fmtDate(d.earliest_history)}<br/>to ${fmtDate(d.latest_history)}</div>
+            </div>
+          </div>
+        </div>`;
+    } catch (e) {
+      box.innerHTML = `<div style="color:var(--red);font-size:13px;padding:8px 0">${sanitize(e.message)}</div>`;
+    }
+  },
+
+  // Recover deleted shifts
+  async recoverDeletedShifts(dryRun) {
+    const bId = this._rcvBuildingId();
+    if (!bId) { this.showToast('Select a building first', 'warn'); return; }
+    const box = document.getElementById('rcv-shifts-result');
+    if (!box) return;
+    const sinceEl = document.getElementById('rcv-shifts-since');
+    const sinceTs = sinceEl?.value ? new Date(sinceEl.value).toISOString() : '';
+
+    if (!dryRun) {
+      const ok = await this.mmsPrompt({
+        title: 'Confirm Shift Recovery',
+        message: 'This will insert recovered shifts back into the live database. A safety snapshot will NOT be taken automatically — use the Backups page to create one first if needed.\n\nType RECOVER to confirm:',
+        placeholder: 'RECOVER',
+        submitLabel: 'Recover Shifts',
+        validate: v => v === 'RECOVER' ? null : 'Type RECOVER in all caps to confirm',
+      });
+      if (ok == null) return;
+    }
+
+    box.innerHTML = `<div style="font-size:12px;color:var(--g500);padding:4px 0">${dryRun ? 'Previewing…' : 'Recovering…'}</div>`;
+    try {
+      const body = { buildingId: bId, dryRun };
+      if (sinceTs) body.sinceTs = sinceTs;
+      const r = await fetch('/api/admin/recover-shifts-from-history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Failed');
+
+      if (dryRun) {
+        const count = d.wouldRestore || 0;
+        const sampleRows = (d.sample || []).map(s =>
+          `<tr>
+            <td style="padding:4px 8px;font-size:11px;font-family:monospace;color:var(--g600)">${sanitize(s.id || '')}</td>
+            <td style="padding:4px 8px;font-size:12px">${sanitize(s.date || '')}</td>
+            <td style="padding:4px 8px;font-size:12px">${sanitize(s.group || '')}</td>
+            <td style="padding:4px 8px;font-size:12px">${sanitize(s.type || '')}</td>
+            <td style="padding:4px 8px;font-size:12px">${sanitize(s.employeeId || 'open')}</td>
+          </tr>`
+        ).join('');
+        box.innerHTML = `
+          <div style="background:${count > 0 ? 'var(--blue-l)' : 'var(--g50)'};border:1px solid var(--g200);border-radius:8px;padding:10px;font-size:12px;margin-bottom:4px">
+            <strong>${count.toLocaleString()}</strong> shift${count !== 1 ? 's' : ''} can be recovered.
+            ${count > 0 && d.sample?.length ? `
+            <table style="width:100%;margin-top:8px;border-collapse:collapse">
+              <thead><tr style="border-bottom:1px solid var(--g200)">
+                <th style="text-align:left;padding:4px 8px;font-size:10px;text-transform:uppercase;color:var(--g500)">ID</th>
+                <th style="text-align:left;padding:4px 8px;font-size:10px;text-transform:uppercase;color:var(--g500)">Date</th>
+                <th style="text-align:left;padding:4px 8px;font-size:10px;text-transform:uppercase;color:var(--g500)">Group</th>
+                <th style="text-align:left;padding:4px 8px;font-size:10px;text-transform:uppercase;color:var(--g500)">Type</th>
+                <th style="text-align:left;padding:4px 8px;font-size:10px;text-transform:uppercase;color:var(--g500)">Employee</th>
+              </tr></thead>
+              <tbody>${sampleRows}</tbody>
+            </table>
+            ${count > 5 ? `<div style="color:var(--g400);font-size:11px;margin-top:4px">…and ${(count - 5).toLocaleString()} more</div>` : ''}` : ''}
+          </div>`;
+        const goBtn = document.getElementById('rcv-shifts-go');
+        if (goBtn) goBtn.disabled = count === 0;
+      } else {
+        box.innerHTML = `<div style="background:var(--green-l);color:#047857;border-radius:8px;padding:10px;font-size:12px">
+          <strong>${(d.recovered || 0).toLocaleString()}</strong> shift${d.recovered !== 1 ? 's' : ''} recovered successfully.</div>`;
+        this.showToast(`${d.recovered} shifts recovered`);
+        await this.fetchData();
+      }
+    } catch (e) {
+      box.innerHTML = `<div style="color:var(--red);font-size:12px;padding:4px 0">${sanitize(e.message)}</div>`;
+    }
+  },
+
+  // Restore lost assignments
+  async restoreLostAssignments(dryRun) {
+    const bId = this._rcvBuildingId();
+    if (!bId) { this.showToast('Select a building first', 'warn'); return; }
+    const box = document.getElementById('rcv-assign-result');
+    if (!box) return;
+
+    if (!dryRun) {
+      const ok = await this.mmsPrompt({
+        title: 'Confirm Assignment Restore',
+        message: 'This will update open shifts with their most recent employee assignment from shift_history.\n\nType RESTORE to confirm:',
+        placeholder: 'RESTORE',
+        submitLabel: 'Restore Assignments',
+        validate: v => v === 'RESTORE' ? null : 'Type RESTORE in all caps to confirm',
+      });
+      if (ok == null) return;
+    }
+
+    box.innerHTML = `<div style="font-size:12px;color:var(--g500);padding:4px 0">${dryRun ? 'Previewing…' : 'Restoring…'}</div>`;
+    try {
+      const r = await fetch('/api/admin/restore-shift-assignments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ buildingId: bId, dryRun }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Failed');
+
+      if (dryRun) {
+        const count = d.wouldRestore || 0;
+        const sampleRows = (d.sample || []).map(s =>
+          `<tr>
+            <td style="padding:4px 8px;font-size:11px;font-family:monospace;color:var(--g600)">${sanitize(s.shiftId || '')}</td>
+            <td style="padding:4px 8px;font-size:12px">${sanitize(s.employeeId || '')}</td>
+            <td style="padding:4px 8px;font-size:12px">${sanitize(s.status || '')}</td>
+          </tr>`
+        ).join('');
+        box.innerHTML = `
+          <div style="background:${count > 0 ? 'var(--blue-l)' : 'var(--g50)'};border:1px solid var(--g200);border-radius:8px;padding:10px;font-size:12px;margin-bottom:4px">
+            <strong>${count.toLocaleString()}</strong> assignment${count !== 1 ? 's' : ''} can be restored.
+            ${count > 0 && d.sample?.length ? `
+            <table style="width:100%;margin-top:8px;border-collapse:collapse">
+              <thead><tr style="border-bottom:1px solid var(--g200)">
+                <th style="text-align:left;padding:4px 8px;font-size:10px;text-transform:uppercase;color:var(--g500)">Shift ID</th>
+                <th style="text-align:left;padding:4px 8px;font-size:10px;text-transform:uppercase;color:var(--g500)">Employee</th>
+                <th style="text-align:left;padding:4px 8px;font-size:10px;text-transform:uppercase;color:var(--g500)">Status</th>
+              </tr></thead>
+              <tbody>${sampleRows}</tbody>
+            </table>
+            ${count > 20 ? `<div style="color:var(--g400);font-size:11px;margin-top:4px">…and ${(count - 20).toLocaleString()} more</div>` : ''}` : ''}
+          </div>`;
+        const goBtn = document.getElementById('rcv-assign-go');
+        if (goBtn) goBtn.disabled = count === 0;
+      } else {
+        box.innerHTML = `<div style="background:var(--green-l);color:#047857;border-radius:8px;padding:10px;font-size:12px">
+          <strong>${(d.restored || 0).toLocaleString()}</strong> assignment${d.restored !== 1 ? 's' : ''} restored successfully.</div>`;
+        this.showToast(`${d.restored} assignments restored`);
+        await this.fetchData();
+      }
+    } catch (e) {
+      box.innerHTML = `<div style="color:var(--red);font-size:12px;padding:4px 0">${sanitize(e.message)}</div>`;
+    }
+  },
+
+  // Recover deleted employees
+  async recoverDeletedEmployees(dryRun) {
+    const bId = this._rcvBuildingId();
+    if (!bId) { this.showToast('Select a building first', 'warn'); return; }
+    const box = document.getElementById('rcv-emp-result');
+    if (!box) return;
+
+    if (!dryRun) {
+      const ok = await this.mmsPrompt({
+        title: 'Confirm Employee Recovery',
+        message: 'This will restore deleted employees from employee_history back into the live table.\n\nType RECOVER to confirm:',
+        placeholder: 'RECOVER',
+        submitLabel: 'Recover Employees',
+        validate: v => v === 'RECOVER' ? null : 'Type RECOVER in all caps to confirm',
+      });
+      if (ok == null) return;
+    }
+
+    box.innerHTML = `<div style="font-size:12px;color:var(--g500);padding:4px 0">${dryRun ? 'Previewing…' : 'Recovering…'}</div>`;
+    try {
+      const r = await fetch('/api/admin/recover-from-history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ buildingId: bId, dryRun }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Failed');
+
+      if (dryRun) {
+        const count = d.wouldRestore || 0;
+        const sampleRows = (d.sample || []).map(s =>
+          `<tr>
+            <td style="padding:4px 8px;font-size:11px;font-family:monospace;color:var(--g600)">${sanitize(s.id || '')}</td>
+            <td style="padding:4px 8px;font-size:12px">${sanitize(s.name || '')}</td>
+            <td style="padding:4px 8px;font-size:12px">${sanitize(s.group || '')}</td>
+            <td style="padding:4px 8px;font-size:12px">${sanitize(s.lastOp || '')}</td>
+          </tr>`
+        ).join('');
+        box.innerHTML = `
+          <div style="background:${count > 0 ? 'var(--blue-l)' : 'var(--g50)'};border:1px solid var(--g200);border-radius:8px;padding:10px;font-size:12px;margin-bottom:4px">
+            <strong>${count.toLocaleString()}</strong> employee${count !== 1 ? 's' : ''} can be recovered.
+            ${count > 0 && d.sample?.length ? `
+            <table style="width:100%;margin-top:8px;border-collapse:collapse">
+              <thead><tr style="border-bottom:1px solid var(--g200)">
+                <th style="text-align:left;padding:4px 8px;font-size:10px;text-transform:uppercase;color:var(--g500)">ID</th>
+                <th style="text-align:left;padding:4px 8px;font-size:10px;text-transform:uppercase;color:var(--g500)">Name</th>
+                <th style="text-align:left;padding:4px 8px;font-size:10px;text-transform:uppercase;color:var(--g500)">Group</th>
+                <th style="text-align:left;padding:4px 8px;font-size:10px;text-transform:uppercase;color:var(--g500)">Last Op</th>
+              </tr></thead>
+              <tbody>${sampleRows}</tbody>
+            </table>
+            ${count > 5 ? `<div style="color:var(--g400);font-size:11px;margin-top:4px">…and ${(count - 5).toLocaleString()} more</div>` : ''}` : ''}
+          </div>`;
+        const goBtn = document.getElementById('rcv-emp-go');
+        if (goBtn) goBtn.disabled = count === 0;
+      } else {
+        box.innerHTML = `<div style="background:var(--green-l);color:#047857;border-radius:8px;padding:10px;font-size:12px">
+          <strong>${(d.recovered || 0).toLocaleString()}</strong> employee${d.recovered !== 1 ? 's' : ''} recovered successfully.</div>`;
+        this.showToast(`${d.recovered} employees recovered`);
+        await this.fetchData();
+      }
+    } catch (e) {
+      box.innerHTML = `<div style="color:var(--red);font-size:12px;padding:4px 0">${sanitize(e.message)}</div>`;
+    }
   },
 
   // ── SA DEMO PORTAL ───────────────────────────────────────────
