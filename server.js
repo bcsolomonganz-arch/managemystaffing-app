@@ -8358,6 +8358,7 @@ app.post('/api/invite', requireAuth, requireAdmin, async (req, res) => {
 // sends onboarding email with password-set link.
 // Body: { name, email, group, buildingId, inviteType }
 app.post('/api/invite/onboard', requireAuth, requireAdmin, async (req, res) => {
+  try {
   const { name, email, group, buildingId, inviteType } = req.body || {};
   if (!name || !email) return res.status(400).json({ error: 'name and email are required' });
   const emailNorm = email.trim().toLowerCase();
@@ -8443,7 +8444,7 @@ app.post('/api/invite/onboard', requireAuth, requireAdmin, async (req, res) => {
   const escB    = escapeHtml(bName);
   const safePlainName = String(name.trim()).replace(/[\r\n]/g, ' ');
   const safePlainB    = String(bName).replace(/[\r\n]/g, ' ');
-  const onboardFromEmail = building?.hrFromEmail || 'onboarding@managemystaffing.com';
+  const onboardFromEmail = building?.hrFromEmail || ACS_FROM_EMAIL;
 
   if (ACS_CONNECTION_STRING) {
     try {
@@ -8482,6 +8483,10 @@ app.post('/api/invite/onboard', requireAuth, requireAdmin, async (req, res) => {
 
   auditLog('ONBOARD_INVITE_SENT', req.user, { to: emailNorm, role: group, buildingId: targetBuilding, inviteType });
   res.json({ ok: true, accountId: newAccount.id, hrEmployeeId, inviteLink: link });
+  } catch (err) {
+    logger.error('onboard_invite_failed', { err: err.message, stack: err.stack });
+    res.status(500).json({ error: 'Failed to create onboarding invite: ' + err.message });
+  }
 });
 
 // ── POST /api/onboarding/step ─────────────────────────────────────────────
