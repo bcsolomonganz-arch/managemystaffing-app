@@ -4047,11 +4047,15 @@ app.post('/api/admin/recover-shifts-from-history', requireAuth, requireAdmin, as
 // For shifts that exist in the live table but lost their employee assignment
 // (e.g. SA stale save overwrote assigned→open), this endpoint finds the most
 // recent history record where each shift HAD an employee_id and restores it.
-// Only affects shifts currently in status='open' with no employee_id.
+// Also checks before_row on DELETE records (shifts that were deleted and
+// recovered may have assignment data in the DELETE's before_row).
+//
+// Pass diagnose:true for a raw diagnostic of what's in the shift_history table.
 app.post('/api/admin/restore-shift-assignments', requireAuth, requireAdmin, async (req, res) => {
   if (!_useDB) return res.status(503).json({ error: 'Endpoint requires postgres backend' });
   const buildingId = String(req.body?.buildingId || '').trim();
   const dryRun     = !!req.body?.dryRun;
+  const diagnose   = !!req.body?.diagnose;
   if (!buildingId) return res.status(400).json({ error: 'buildingId required' });
   const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds || [])].filter(Boolean));
   if (req.user.role !== 'superadmin' && !callerBIds.has(buildingId)) {
@@ -4065,16 +4069,53 @@ app.post('/api/admin/restore-shift-assignments', requireAuth, requireAdmin, asyn
     connectionString: liveConn,
     ssl: { rejectUnauthorized: IS_PROD },
     connectionTimeoutMillis: 10000,
-    statement_timeout: 60000,
+    statement_timeout: 120000,
   });
 
   let restored = 0;
   try {
     await client.connect();
 
+    // Diagnostic mode: show raw shift_history stats for this building
+    if (diagnose) {
+      const stats = await client.query(`
+        SELECT
+          (SELECT count(*) FROM shifts WHERE building_id = $1) AS live_total,
+          (SELECT count(*) FROM shifts WHERE building_id = $1 AND (employee_id IS NULL OR employee_id = '')) AS live_open,
+          (SELECT count(*) FROM shifts WHERE building_id = $1 AND employee_id IS NOT NULL AND employee_id != '') AS live_assigned,
+          (SELECT count(*) FROM shift_history WHERE building_id = $1) AS history_total,
+          (SELECT count(*) FROM shift_history WHERE building_id = $1 AND op = 'insert') AS history_inserts,
+          (SELECT count(*) FROM shift_history WHERE building_id = $1 AND op = 'update') AS history_updates,
+          (SELECT count(*) FROM shift_history WHERE building_id = $1 AND op = 'delete') AS history_deletes,
+          (SELECT count(DISTINCT shift_id) FROM shift_history WHERE building_id = $1
+            AND (
+              (after_row->>'employee_id' IS NOT NULL AND after_row->>'employee_id' != '' AND op IN ('insert','update'))
+              OR
+              (before_row->>'employee_id' IS NOT NULL AND before_row->>'employee_id' != '' AND op = 'delete')
+            )) AS shifts_ever_assigned,
+          (SELECT min(ts) FROM shift_history WHERE building_id = $1) AS earliest_history,
+          (SELECT max(ts) FROM shift_history WHERE building_id = $1) AS latest_history
+      `, [buildingId]);
+      // Also check: how many currently-open shifts have assignment history?
+      const openWithHistory = await client.query(`
+        SELECT count(DISTINCT h.shift_id) AS count
+        FROM shift_history h
+        INNER JOIN shifts s ON s.id = h.shift_id AND s.building_id = $1
+        WHERE h.building_id = $1
+          AND (s.employee_id IS NULL OR s.employee_id = '')
+          AND (
+            (h.after_row->>'employee_id' IS NOT NULL AND h.after_row->>'employee_id' != '' AND h.op IN ('insert','update'))
+            OR
+            (h.before_row->>'employee_id' IS NOT NULL AND h.before_row->>'employee_id' != '' AND h.op = 'delete')
+          )
+      `, [buildingId]);
+      await client.end();
+      return res.json({ ok: true, diagnose: true, ...stats.rows[0], openShiftsWithAssignmentHistory: openWithHistory.rows[0]?.count });
+    }
+
     // Find live open shifts that had an employee assignment in their history.
-    // For each open shift, get the most recent history record where employee_id
-    // was set — that's the assignment we want to restore.
+    // Check BOTH after_row (for INSERT/UPDATE) and before_row (for DELETE
+    // records — shifts that were deleted then recovered as open).
     const r = await client.query(`
       WITH open_shifts AS (
         SELECT id FROM shifts
@@ -4082,19 +4123,27 @@ app.post('/api/admin/restore-shift-assignments', requireAuth, requireAdmin, asyn
           AND (employee_id IS NULL OR employee_id = '')
           AND (status = 'open' OR status IS NULL)
       ),
-      last_assigned AS (
-        SELECT DISTINCT ON (h.shift_id)
-               h.shift_id,
-               h.after_row->>'employee_id' AS emp_id,
-               h.after_row->>'status' AS status,
+      assignment_history AS (
+        SELECT h.shift_id,
+               CASE
+                 WHEN h.op IN ('insert','update') THEN h.after_row->>'employee_id'
+                 WHEN h.op = 'delete' THEN h.before_row->>'employee_id'
+               END AS emp_id,
+               CASE
+                 WHEN h.op IN ('insert','update') THEN h.after_row->>'status'
+                 WHEN h.op = 'delete' THEN h.before_row->>'status'
+               END AS status,
                h.ts
         FROM shift_history h
         INNER JOIN open_shifts os ON os.id = h.shift_id
         WHERE h.building_id = $1
-          AND h.after_row->>'employee_id' IS NOT NULL
-          AND h.after_row->>'employee_id' != ''
-          AND h.op IN ('insert','update')
-        ORDER BY h.shift_id, h.ts DESC
+      ),
+      last_assigned AS (
+        SELECT DISTINCT ON (shift_id)
+               shift_id, emp_id, status, ts
+        FROM assignment_history
+        WHERE emp_id IS NOT NULL AND emp_id != ''
+        ORDER BY shift_id, ts DESC
       )
       SELECT la.shift_id, la.emp_id, la.status
       FROM last_assigned la
@@ -4105,7 +4154,7 @@ app.post('/api/admin/restore-shift-assignments', requireAuth, requireAdmin, asyn
       return res.json({
         ok: true, dryRun: true,
         wouldRestore: r.rows.length,
-        sample: r.rows.slice(0, 10).map(x => ({
+        sample: r.rows.slice(0, 20).map(x => ({
           shiftId: x.shift_id,
           employeeId: x.emp_id,
           status: x.status,
@@ -4132,7 +4181,7 @@ app.post('/api/admin/restore-shift-assignments', requireAuth, requireAdmin, asyn
     auditLog('SHIFT_ASSIGNMENT_RECOVERY_FAILED', req.user, { buildingId, err: e.message });
     res.status(500).json({ error: e.message });
   } finally {
-    try { await client.end(); } catch {};
+    try { await client.end(); } catch {}
   }
 });
 

@@ -18369,7 +18369,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
 
   assignShiftByDate(date, group, shiftType, empId) {
     if (!empId) return;
-    if (this.S.user?.role !== 'admin' && this.S.user?.role !== 'superadmin') { this.showToast('Unauthorized','warn'); return; }
+    if (!['admin','superadmin','hradmin','regionaladmin'].includes(this.S.user?.role)) { this.showToast('Unauthorized','warn'); return; }
     const emp = this._empLookup(empId);
     if (!emp) return;
     const bId = this.S.user?.buildingId || 'b1';
@@ -18404,7 +18404,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
 
   assignShift(shiftId, empId) {
     if(!empId) return;
-    if(this.S.user?.role !== 'admin' && this.S.user?.role !== 'superadmin') { this.showToast('Unauthorized','warn'); return; }
+    if(!['admin','superadmin','hradmin','regionaladmin'].includes(this.S.user?.role)) { this.showToast('Unauthorized','warn'); return; }
     const shift=this.S.shifts.find(s=>s.id===shiftId);
     if(!shift) return;
     const emp=this._empLookup(empId);
@@ -18418,7 +18418,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
 
   removeEmpFromShift(shiftId) {
-    if(this.S.user?.role !== 'admin' && this.S.user?.role !== 'superadmin') { this.showToast('Unauthorized','warn'); return; }
+    if(!['admin','superadmin','hradmin','regionaladmin'].includes(this.S.user?.role)) { this.showToast('Unauthorized','warn'); return; }
     const shift=this.S.shifts.find(s=>s.id===shiftId);
     if(!shift) return;
     // Capture before clearing so we can mark rotation patterns
