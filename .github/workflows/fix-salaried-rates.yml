@@ -1,0 +1,81 @@
+# One-off fix: convert salaried employees' weekly pay (stored as hourly_rate)
+# to effective hourly rate (weekly_pay / work_hours).
+#
+# The SmartLinx import stored Pay Rate directly as hourly_rate for all employees,
+# but salaried employees' Pay Rate is a weekly amount, not hourly.
+#
+# Run manually from Actions tab → "Fix Salaried Rates" → Run workflow.
+
+name: Fix Salaried Rates
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'If true, rolls back at end (no changes committed)'
+        required: false
+        default: 'true'
+        type: string
+
+jobs:
+  fix-rates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install psql
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Pre-fix check
+        env:
+          MMS_PG_CONN: ${{ secrets.MMS_PG_CONN }}
+        run: |
+          set -euo pipefail
+          echo "Salaried employees with hourly_rate > 100 (likely weekly pay, not hourly):"
+          psql "$MMS_PG_CONN" -c "
+            SELECT id, name, hourly_rate, \"group\"
+            FROM employees
+            WHERE hourly_rate > 100
+            ORDER BY hourly_rate DESC
+            LIMIT 20;"
+
+      - name: Run fix
+        env:
+          MMS_PG_CONN: ${{ secrets.MMS_PG_CONN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "DRY RUN — rolling back at end"
+            (
+              cat fix-salaried-rates.sql
+              echo 'ROLLBACK;'
+            ) > /tmp/fix-dry.sql
+            # Remove the COMMIT from the original since we're rolling back
+            sed -i 's/^COMMIT;/-- COMMIT (dry run);/' /tmp/fix-dry.sql
+            psql "$MMS_PG_CONN" --set ON_ERROR_STOP=on -f /tmp/fix-dry.sql
+          else
+            psql "$MMS_PG_CONN" --set ON_ERROR_STOP=on -f fix-salaried-rates.sql
+          fi
+
+      - name: Post-fix verification
+        env:
+          MMS_PG_CONN: ${{ secrets.MMS_PG_CONN }}
+        run: |
+          set -euo pipefail
+          echo "Employees with hourly_rate > 100 after fix (should be 0):"
+          psql "$MMS_PG_CONN" -c "
+            SELECT COUNT(*) AS remaining_above_100
+            FROM employees
+            WHERE hourly_rate > 100;"
+          echo ""
+          echo "Sample of corrected rates:"
+          psql "$MMS_PG_CONN" -c "
+            SELECT name, hourly_rate, \"group\"
+            FROM employees
+            WHERE id IN ('e_p200229','e_p250618','e_p120010','e_p360386','e_p210115')
+            ORDER BY name;"
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/fix-dry.sql

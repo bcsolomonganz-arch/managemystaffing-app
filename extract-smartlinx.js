@@ -194,7 +194,14 @@ for (const b of basic) {
 
   const phone   = cleanPhone(c['Phone']) || cleanPhone(c['Mobile']) || cleanPhone(c['Alt. Phone']) || null;
   const email   = cleanEmail(c['Primary Email']) || cleanEmail(c['Alt. Email']) || null;
-  const rate    = cleanRate(p['Pay Rate']);
+  let rate      = cleanRate(p['Pay Rate']);
+  const payType = String(p['Pay Type'] || '').trim();
+  const workHrs = parseFloat(p['Work Hours']);
+  // Salaried employees: Pay Rate is weekly pay, not hourly.
+  // Convert to effective hourly rate: weeklyPay / workHours.
+  if (payType === 'Salaried' && rate && isFinite(workHrs) && workHrs > 0) {
+    rate = Math.round((rate / workHrs) * 100) / 100;
+  }
   const hireISO = excelDateToISO(b['Date Hired']);
   const mapped  = mapPosition(b.Position);
 
