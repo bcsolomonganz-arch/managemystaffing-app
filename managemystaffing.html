@@ -670,7 +670,7 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
       <button type="button" onclick="App._showForgotPassword();document.getElementById('forgot-pwd-section').scrollIntoView({behavior:'smooth',block:'nearest'})"
         style="background:none;border:none;color:var(--blue-d);font-size:13px;cursor:pointer;padding:0;text-decoration:underline;text-underline-offset:3px">Forgot password?</button>
     </div>
-    <button class="btn btn-primary btn-full" onclick="App.loginForm()">Sign In</button>
+    <button class="btn btn-primary btn-full" id="login-submit-btn" onclick="App.loginForm()">Sign In</button>
     <div id="forgot-pwd-section" style="display:none;margin-top:14px;padding:12px;border:1px solid var(--g200);border-radius:8px;background:var(--g50)">
       <p style="font-size:12px;color:var(--g700);margin:0 0 8px;line-height:1.5">Trouble signing in? We can email a password reset link to you.</p>
       <button class="btn btn-secondary btn-full" id="forgot-pwd-btn" onclick="App.requestPasswordReset()" style="font-size:13px">
@@ -2176,7 +2176,7 @@ const App = {
 
   // Show one-time recovery codes after TOTP enrollment.
   // Codes are displayed ONCE, server only stores hashes.
-  _showRecoveryCodes(codes, user, email) {
+  _showRecoveryCodes(codes, user, email, serverData) {
     const codesHtml = codes.map(c => `<div style="font-family:monospace;font-size:14px;padding:6px 10px;background:#fff;border:1px solid var(--g200);border-radius:4px;letter-spacing:1px">${sanitize(c)}</div>`).join('');
     document.getElementById('totp-title').textContent = 'Save Your Recovery Codes';
     document.getElementById('modal-totp-body').innerHTML = `
@@ -2215,6 +2215,7 @@ const App = {
     this.S._pendingTotpCodes = codes;
     this.S._pendingTotpUser = user;
     this.S._pendingTotpEmail = email;
+    this.S._pendingTotpData = serverData || null;
   },
 
   _downloadRecoveryCodes() {
@@ -2245,9 +2246,11 @@ const App = {
     const user = this.S._pendingTotpUser;
     const email = this.S._pendingTotpEmail;
     // Clear the codes from memory
+    const savedData = this.S._pendingTotpData;
     this.S._pendingTotpCodes = null;
     this.S._pendingTotpUser = null;
     this.S._pendingTotpEmail = null;
+    this.S._pendingTotpData = null;
     this.closeModal('modal-totp');
     // Restore the modal footer to original state for next time
     const footer = document.querySelector('#modal-totp .modal-footer');
@@ -2258,8 +2261,12 @@ const App = {
     }
     // Proceed into the app
     this.S.user = user;
-    const dResp = await fetch('/api/data');
-    if (dResp.ok) this.applyServerData(await dResp.json());
+    if (savedData) {
+      this.applyServerData(savedData);
+    } else {
+      const dResp = await fetch('/api/data');
+      if (dResp.ok) this.applyServerData(await dResp.json());
+    }
     this._saveLoginCredentials(email, user.name);
     Audit.log('TOTP_ENROLLED', `2FA enrolled: ${sanitize(email)}`, user.id, 'medium');
     this.showApp();
@@ -2293,13 +2300,17 @@ const App = {
       this.S._totpSession = null;
       // If this was an enrollment, show the recovery codes ONCE before proceeding
       if (sess.mode === 'enroll' && Array.isArray(recoveryCodes) && recoveryCodes.length) {
-        this._showRecoveryCodes(recoveryCodes, user, sess.email);
+        this._showRecoveryCodes(recoveryCodes, user, sess.email, body.data);
         return;
       }
       this.closeModal('modal-totp');
       this.S.user = user;
-      const dResp = await api('/api/data');
-      if (dResp.ok) this.applyServerData(await dResp.json());
+      if (body.data) {
+        this.applyServerData(body.data);
+      } else {
+        const dResp = await api('/api/data');
+        if (dResp.ok) this.applyServerData(await dResp.json());
+      }
       this._saveLoginCredentials(sess.email, user.name);
       Audit.log('LOGIN_SUCCESS_2FA', `2FA login: ${sanitize(sess.email)}`, user.id, 'low');
       this.showApp();
@@ -2409,9 +2420,14 @@ const App = {
     const emailRaw = (document.getElementById('login-email').value || '').trim().toLowerCase();
     const pass     = (document.getElementById('login-pass').value || '');
     const errEl    = document.getElementById('login-error');
+    const loginBtn = document.getElementById('login-submit-btn');
     const showErr  = msg => { if(errEl){errEl.textContent=msg;errEl.style.display='block';} };
     if (!emailRaw || !pass) { showErr('Please enter your email and password.'); return; }
     if (emailRaw.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)) { showErr('Please enter a valid email address.'); return; }
+
+    // Show loading state immediately for visual feedback
+    if (loginBtn) { loginBtn.disabled = true; loginBtn.textContent = 'Signing in\u2026'; }
+    const resetBtn = () => { if (loginBtn) { loginBtn.disabled = false; loginBtn.textContent = 'Sign In'; } };
 
     if (IS_SERVER_MODE) {
       // ── SERVER MODE AUTH ────────────────────────────────
@@ -2425,6 +2441,7 @@ const App = {
           body:JSON.stringify({email:emailRaw, password:pass, rememberMe})
         });
         if (!resp.ok) {
+          resetBtn();
           const body = await resp.json().catch(()=>({}));
           if (resp.status === 401) showErr(body.error || 'Invalid email or password.');
           else if (resp.status === 403) showErr(body.error || 'Account not yet activated.');
@@ -2438,15 +2455,17 @@ const App = {
         const body = await resp.json();
         // ── TOTP enrollment (first time)
         if (body.needsTotpSetup) {
+          resetBtn();
           this._openTotpEnroll(body.sessionId, body.qrDataUrl, body.totpSecret, emailRaw);
           return;
         }
         // ── TOTP verification (existing user)
         if (body.needsTotp) {
+          resetBtn();
           this._openTotpVerify(body.sessionId, emailRaw);
           return;
         }
-        // ── Fully authenticated (demo only)
+        // ── Fully authenticated
         const { user } = body;
         // Auth comes via httpOnly cookie set by the server — no token in JS.
         if (user.demo) {
@@ -2457,8 +2476,11 @@ const App = {
           this.S.employees = [...SEED_EMPLOYEES];
           this.S.shifts    = generateShifts(this.S.employees);
           this.S.schedulePatterns = [];
+        } else if (body.data) {
+          // Server bundled facility data in login response — skip extra fetch
+          this.applyServerData(body.data);
         } else {
-          // Load real facility data from server — cookie auth is automatic
+          // Fallback: load data separately (older server version)
           const dResp = await fetch('/api/data');
           if (dResp.ok) this.applyServerData(await dResp.json());
         }
@@ -2468,6 +2490,7 @@ const App = {
         Audit.log('LOGIN_SUCCESS', 'Login: '+sanitize(emailRaw), user.id, 'low');
         this.showApp();
       } catch(e) {
+        resetBtn();
         showErr('Connection error. Please check your connection and try again.');
       }
       return;

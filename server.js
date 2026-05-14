@@ -7883,7 +7883,15 @@ async function _issueToken(req, res, acct, data) {
   await lastActivity.set(sid, Date.now());
   setAuthCookie(res, token, ttl);           // ← XSS-safe httpOnly cookie, surface-aware TTL
   auditLog('LOGIN_SUCCESS', acct, { sid, surface: surface || 'web' });
-  return res.json({ user: payload, authVia: 'cookie' });
+  // Bundle facility data in login response to eliminate the second GET /api/data
+  // round-trip. The client falls back to a separate fetch if `data` is absent.
+  let bundledData;
+  if (!isDemo && data) {
+    try { bundledData = getDataForUser(payload, data); } catch (_) { /* fallback to separate fetch */ }
+  }
+  const result = { user: payload, authVia: 'cookie' };
+  if (bundledData) result.data = bundledData;
+  return res.json(result);
 }
 
 // ── GET /api/auth/verify ──────────────────────────────────────────────────────
