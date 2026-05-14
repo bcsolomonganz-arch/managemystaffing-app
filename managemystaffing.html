@@ -4845,7 +4845,7 @@ const App = {
       ['dashboard','Hiring','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5h0c2.8 0 5 2.2 5 5"/><line x1="12" y1="3" x2="12" y2="9"/><line x1="9" y1="6" x2="15" y2="6"/></svg>'],
       ['employees','Employees','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.5"/><path d="M1 14c0-2.8 2.2-5 5-5h0c2.8 0 5 2.2 5 5"/><circle cx="12.5" cy="5" r="2"/><path d="M16 13.5c0-2.2-1.6-4-3.5-4"/></svg>'],
       ['docreview','Doc Review','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="1" width="12" height="14" rx="1.5"/><path d="M5 5h6M5 8h6M5 11h4"/></svg>'],
-      ['schedule','Schedule','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="13" rx="1.5"/><path d="M1 6h14M5 1v3M11 1v3"/></svg>'],
+      ['schedule','Discharges','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="13" rx="1.5"/><path d="M1 6h14M5 1v3M11 1v3"/></svg>'],
       ['shiftboard','Shift Board','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.5V8l2.5 2"/></svg>'],
       ['timeclock','Time Clock','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v3.5l2 2"/></svg>'],
       ['payroll','Payroll Calculator','<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M5 5h6M5 8h6M5 11h3"/><circle cx="12" cy="11" r="2.5" fill="#fff" stroke="currentColor"/><path d="M12 9.5v3M10.5 11h3" stroke-width="1.4"/></svg>'],
@@ -5070,106 +5070,8 @@ const App = {
   },
 
   renderHRSchedule() {
-    const offset = this.S.hrScheduleOffset || 0;
-    const selDepts = this.S.hrScheduleDepts || [];
-
-    // Anchor to a known Saturday (Jan 4, 2025), compute current period start
-    const anchor = new Date('2025-01-04T00:00:00');
-    const today  = new Date(TODAY + 'T00:00:00');
-    const daysDiff = Math.floor((today - anchor) / 86400000);
-    const curPeriod = Math.floor(daysDiff / 14);
-    const periodStart = new Date(anchor.getTime() + (curPeriod + offset) * 14 * 86400000);
-    const periodEnd   = new Date(periodStart.getTime() + 13 * 86400000);
-
-    const fmtShort = d => d.toLocaleDateString('en-US', {month:'short', day:'numeric'});
-    const fmtFull  = d => d.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
-    const periodLabel = `${fmtShort(periodStart)} – ${fmtFull(periodEnd)}`;
-    const periodNote  = offset === 0 ? ' (Current)' : offset < 0 ? ` (${Math.abs(offset)} period${Math.abs(offset)>1?'s':''} ago)` : ` (+${offset} period${offset>1?'s':''})`;
-
-    // Build 14 days
-    const days = [];
-    for (let d = 0; d < 14; d++) {
-      const dt = new Date(periodStart.getTime() + d * 86400000);
-      const ds = dt.toISOString().slice(0,10);
-      days.push({dt, ds, isToday: ds === TODAY,
-        dow: dt.toLocaleDateString('en-US',{weekday:'short'}),
-        dom: dt.toLocaleDateString('en-US',{month:'short',day:'numeric'})});
-    }
-
-    // All active employees + unique roles
-    const allActive = this.S.hrEmployees.filter(e => e.status === 'active');
-    const allRoles  = [...new Set(allActive.map(e => e.role))].sort();
-    const active    = selDepts.length ? allActive.filter(e => selDepts.includes(e.role)) : allActive;
-
-    // Deterministic shift pattern (stable across re-renders, varies by period)
-    const shiftNames  = ['Day','Eve','Night'];
-    const shiftColors = {Day:'#6B9E7A', Eve:'#2563EB', Night:'#7C3AED'};
-    const getShift = (emp, dayIdx) => {
-      const seed = (emp.id.split('').reduce((s,c)=>s+c.charCodeAt(0),0) + dayIdx * 3 + offset * 7) % 10;
-      if (seed >= 7) return null; // off
-      return shiftNames[seed % 3];
-    };
-
-    const rows = active.map(e => `
-      <tr style="border-bottom:1px solid var(--g100)">
-        <td style="padding:10px 14px;white-space:nowrap;position:sticky;left:0;background:#fff;z-index:1;border-right:1px solid var(--g100)">
-          <div style="display:flex;align-items:center;gap:8px">
-            ${this.hrAvatar(e.initials,'active')}
-            <div><div style="font-weight:600;font-size:12px;color:var(--g900)">${sanitize(e.name)}</div>
-            <div style="font-size:11px;color:var(--g500)">${sanitize(e.role)}</div></div>
-          </div>
-        </td>
-        ${days.map((w,i)=>{
-          const shift = getShift(e, i);
-          return `<td style="padding:4px 3px;text-align:center;background:${w.isToday?'var(--blue-l)':''}">
-            ${shift
-              ? `<div style="background:${shiftColors[shift]};color:#fff;border-radius:5px;padding:3px 4px;font-size:10px;font-weight:600">${shift}</div>`
-              : `<span style="font-size:10px;color:var(--g300)">Off</span>`}
-          </td>`;
-        }).join('')}
-      </tr>`).join('');
-
-    // Dept filter pills
-    const deptPills = allRoles.map(r => {
-      const sel = selDepts.includes(r);
-      return `<button class="btn btn-${sel?'primary':'secondary'} btn-sm" style="font-size:11px;padding:3px 10px"
-        onclick="App.toggleHRScheduleDept('${sanitize(r)}')">${sanitize(r)}</button>`;
-    }).join('');
-
-    return `
-      ${this.hrHipaaBar()}
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:16px;flex-wrap:wrap">
-        <div><div class="hr-page-title">Schedule</div><div class="hr-page-sub">2-week payroll view · SmartLinx sync</div></div>
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <button class="btn btn-secondary btn-sm" onclick="App.S.hrScheduleOffset=(App.S.hrScheduleOffset||0)-1;App.renderHRMain()" style="gap:4px">
-            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 12L6 8l4-4"/></svg> Prev
-          </button>
-          <div style="font-size:12px;font-weight:700;color:var(--g700);padding:4px 12px;background:var(--g50);border-radius:8px;white-space:nowrap">
-            ${periodLabel}<span style="font-weight:400;color:var(--g600)">${periodNote}</span>
-          </div>
-          <button class="btn btn-secondary btn-sm" onclick="App.S.hrScheduleOffset=(App.S.hrScheduleOffset||0)+1;App.renderHRMain()" style="gap:4px">
-            Next <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 4l4 4-4 4"/></svg>
-          </button>
-          ${offset!==0?`<button class="btn btn-ghost btn-sm" onclick="App.S.hrScheduleOffset=0;App.renderHRMain()" style="color:var(--blue-d)">Today</button>`:''}
-        </div>
-      </div>
-      <div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;flex-wrap:wrap">
-        <span style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">Department:</span>
-        <button class="btn btn-${selDepts.length===0?'primary':'secondary'} btn-sm" style="font-size:11px;padding:3px 10px"
-          onclick="App.S.hrScheduleDepts=[];App.renderHRMain()">All</button>
-        ${deptPills}
-      </div>
-      <div class="hr-section" style="overflow-x:auto">
-        <table style="width:100%;border-collapse:collapse;min-width:760px">
-          <thead>
-            <tr style="border-bottom:2px solid var(--g100)">
-              <th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--g600);text-transform:uppercase;letter-spacing:.06em;position:sticky;left:0;background:#fff;z-index:1;border-right:1px solid var(--g100);white-space:nowrap">Employee</th>
-              ${days.map(w=>`<th style="padding:6px 3px;font-size:10px;font-weight:700;color:${w.isToday?'var(--blue)':'var(--g400)'};text-align:center;white-space:nowrap;min-width:44px">${w.dow}<br><span style="font-weight:400;font-size:9px">${w.dom}</span></th>`).join('')}
-            </tr>
-          </thead>
-          <tbody>${rows||`<tr><td colspan="15" style="padding:32px;text-align:center;color:var(--g600);font-size:13px">No active employees${selDepts.length?` in selected department${selDepts.length>1?'s':''}`:''}</td></tr>`}</tbody>
-        </table>
-      </div>`;
+    if (!this.S.eventsCalMonth) this.S.eventsCalMonth = TODAY.slice(0,7);
+    return `${this.hrHipaaBar()}${this.renderDischargeCalendar('renderHRMain')}`;
   },
 
   toggleHRScheduleDept(role) {
@@ -6921,8 +6823,8 @@ const App = {
     sevenOff:    { label: '7 off / 7 on (week 2)', days: [7,8,9,10,11,12,13] },
     // Pitman 2-2-3 / 3-2-2 — 7 work days / 14, with weekends rotating.
     // Week 1: Mon Tue _ _ Fri Sat Sun  → [0,1,4,5,6]
-    // Week 2: _ _ Wed Thu Fri _ _      → [9,10,11]
-    pitman:      { label: 'Pitman 2-2-3 / 3-2-2', days: [0,1,4,5,6, 9,10,11] },
+    // Week 2: _ _ _ Thu Fri _ _        → [10,11]
+    pitman:      { label: 'Pitman 2-2-3 / 3-2-2', days: [0,1,4,5,6, 10,11] },
     // Common SNF nursing rotation: 5 days on, 2 off, 4 on, 3 off
     fiveOnFourOn:{ label: '5 on / 2 off / 4 on / 3 off', days: [0,1,2,3,4, 7,8,9,10] },
     all:         { label: 'Every day',        days: [0,1,2,3,4,5,6, 7,8,9,10,11,12,13] },
@@ -13710,12 +13612,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.render();
   },
 
-  eventsCalNav(dir) {
+  eventsCalNav(dir, renderFn) {
     const cur = this.S.eventsCalMonth || TODAY.slice(0,7);
     const [y,m] = cur.split('-').map(Number);
     const d = new Date(y, m-1+dir, 1);
     this.S.eventsCalMonth = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-    this.renderMain();
+    this[renderFn || 'renderMain']();
   },
 
   // Birthdays + anniversaries derive from employee.dob / employee.hireDate.
@@ -13844,15 +13746,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const tail = (7 - ((firstDow + daysInMo) % 7)) % 7;
     for (let i = 0; i < tail; i++) cells.push(`<div style="background:var(--g50);min-height:120px;border-right:1px solid var(--g100);border-bottom:1px solid var(--g100)"></div>`);
 
-    const toggleHtml = `<div style="display:inline-flex;border:1.5px solid var(--g200);border-radius:8px;overflow:hidden;margin-bottom:16px">
-        <button onclick="App.S.dischargeView=false;App.renderMain()" style="padding:6px 16px;font-size:12px;font-weight:700;border:none;cursor:pointer;${!this.S.dischargeView?'background:var(--green);color:#fff':'background:#fff;color:var(--g600)'}">Events</button>
-        <button onclick="App.S.dischargeView=true;App.renderMain()" style="padding:6px 16px;font-size:12px;font-weight:700;border:none;cursor:pointer;border-left:1.5px solid var(--g200);${this.S.dischargeView?'background:var(--green);color:#fff':'background:#fff;color:var(--g600)'}">Discharges</button>
-      </div>`;
-
-    if (this.S.dischargeView) return this.renderDischargeCalendar(bId, monthKey, y, m, monthLbl, building, dows, dowHdr, toggleHtml);
-
     return `<div style="padding:20px;max-width:1100px">
-      ${toggleHtml}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px">
         <div>
           <div style="font-size:20px;font-weight:800;color:var(--g900)">Staff Events</div>
@@ -13887,8 +13781,18 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
 
   // ── DISCHARGE CALENDAR ──────────────────────────────────────────────────
-  renderDischargeCalendar(bId, monthKey, y, m, monthLbl, building, dows, dowHdr, toggleHtml) {
+  renderDischargeCalendar(renderFn) {
+    const _rfn = renderFn || 'renderMain';
     if (!Array.isArray(this.S.discharges)) this.S.discharges = [];
+    const bId = this.S.activeBuildingId || this.S.user.buildingId || 'b1';
+    const monthKey = this.S.eventsCalMonth || (this.S.eventsCalMonth = TODAY.slice(0,7));
+    const [y,m] = monthKey.split('-').map(Number);
+    const monthLbl = new Date(y, m-1, 1).toLocaleString('default', { month:'long', year:'numeric' });
+    const building = this.S.buildings.find(b => b.id === bId);
+    const dows = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const dowHdr = dows.map(d =>
+      `<div style="padding:8px 4px;font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.06em;text-align:center;background:var(--g50);border-bottom:1px solid var(--g200)">${d}</div>`
+    ).join('');
     const firstDow = new Date(y, m-1, 1).getDay();
     const daysInMo = new Date(y, m, 0).getDate();
     const bDischarges = this.S.discharges.filter(d => d.buildingId === bId);
@@ -13922,7 +13826,6 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const tmplPreview = tmpl ? `${sanitize(tmpl.greeting||'Hi')} [Name], ${sanitize(tmpl.body||'')}` : '<em>No template saved — click Edit Template to create one</em>';
 
     return `<div style="padding:20px;max-width:1100px">
-      ${toggleHtml}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px">
         <div>
           <div style="font-size:20px;font-weight:800;color:var(--g900)">Discharge Follow-ups</div>
@@ -13930,10 +13833,10 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         </div>
         <div style="display:flex;align-items:center;gap:8px">
           <button onclick="App.editDischargeTemplate()" style="padding:5px 12px;border-radius:6px;border:1px solid var(--g200);background:#fff;cursor:pointer;font-size:12px;font-weight:600;color:var(--g700)">Edit Template</button>
-          <button onclick="App.eventsCalNav(-1)" style="width:30px;height:30px;border-radius:6px;border:1px solid var(--g200);background:#fff;cursor:pointer;color:var(--g600)">◀</button>
+          <button onclick="App.eventsCalNav(-1,'${_rfn}')" style="width:30px;height:30px;border-radius:6px;border:1px solid var(--g200);background:#fff;cursor:pointer;color:var(--g600)">◀</button>
           <div style="font-size:14px;font-weight:800;color:var(--g900);min-width:160px;text-align:center">${monthLbl}</div>
-          <button onclick="App.eventsCalNav(1)" style="width:30px;height:30px;border-radius:6px;border:1px solid var(--g200);background:#fff;cursor:pointer;color:var(--g600)">▶</button>
-          <button onclick="App.S.eventsCalMonth=TODAY.slice(0,7);App.renderMain()" style="padding:5px 12px;border-radius:6px;border:1px solid var(--g200);background:#fff;cursor:pointer;font-size:12px;font-weight:600;color:var(--g700)">Today</button>
+          <button onclick="App.eventsCalNav(1,'${_rfn}')" style="width:30px;height:30px;border-radius:6px;border:1px solid var(--g200);background:#fff;cursor:pointer;color:var(--g600)">▶</button>
+          <button onclick="App.S.eventsCalMonth=TODAY.slice(0,7);App.${_rfn}()" style="padding:5px 12px;border-radius:6px;border:1px solid var(--g200);background:#fff;cursor:pointer;font-size:12px;font-weight:600;color:var(--g700)">Today</button>
         </div>
       </div>
 
@@ -15706,7 +15609,12 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   async saveAccessChange(empId, currentValue) {
     const sel = document.querySelector('input[name="access-level"]:checked')?.value;
     if (!sel) { this.showToast('Pick an access level','warn'); return; }
-    if (sel === currentValue) { document.getElementById('modal-access')?.remove(); return; }
+    if (sel === currentValue) {
+      const labels = { employee:'Employee', admin:'Full Admin', hradmin:'HR Admin', scheduler:'Scheduler Access' };
+      this.showToast(`Already set to ${labels[sel] || sel}`);
+      document.getElementById('modal-access')?.remove();
+      return;
+    }
     try {
       const r = await fetch(`/api/employees/${encodeURIComponent(empId)}/access`, {
         method: 'POST',
@@ -16050,7 +15958,8 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         </button>` : `<button class="btn btn-secondary btn-sm" style="color:var(--blue-d);border-color:var(--blue-m)" onclick="document.getElementById('modal-employee-card').remove();App.reactivateEmp('${emp.id}')">
           Reactivate
         </button>`}
-        <button class="btn btn-primary btn-sm" onclick="document.getElementById('modal-employee-card').remove()">Close</button>
+        <button class="btn btn-primary btn-sm" onclick="App.persistData();App.showToast('Changes saved')">Save</button>
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('modal-employee-card').remove()">Close</button>
       </div>`;
 
     // — Build & insert —
@@ -16078,6 +15987,16 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
             <div style="font-size:13px;color:var(--g600);margin-top:2px">${sanitize(emp.group)}${bld ? ' · ' + sanitize(bld.name) : ''}</div>
           </div>
           <span class="${isActive?'tag-active':'tag-inactive'}" style="flex-shrink:0">${isActive?'Active':'Inactive'}</span>
+          ${(() => {
+            const linked = (this.S.accounts || []).find(a => a.email && emp.email && a.email.toLowerCase() === emp.email.toLowerCase());
+            let lvl = '';
+            if (linked?.role === 'superadmin') lvl = 'Super Admin';
+            else if (linked?.role === 'regionaladmin') lvl = 'Regional Admin';
+            else if (linked?.role === 'admin' && linked.schedulerOnly) lvl = 'Scheduler';
+            else if (linked?.role === 'admin') lvl = 'Full Admin';
+            else if (linked?.role === 'hradmin') lvl = 'HR Admin';
+            return lvl ? `<span style="flex-shrink:0;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;background:var(--blue-l);color:var(--blue-d);border:1px solid var(--blue-m)">${lvl}</span>` : '';
+          })()}
         </div>
         <div style="display:flex;flex-direction:column;gap:12px">
           ${contactSection}
@@ -16619,11 +16538,14 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     }
     return 8;
   },
-  // ISO week range (Mon → Sun) containing dateISO, in YYYY-MM-DD strings.
+  // FLSA workweek range (Sun → Sat) containing dateISO, in YYYY-MM-DD strings.
+  // Healthcare / SNF facilities use Sunday–Saturday for FLSA overtime.
+  // This prevents Pittman 2-2-3 rotations from lumping Fri-Sat-Sun + Mon-Tue
+  // into the same week (which inflates OT from 8h to 20h per heavy week).
   _weekRangeISO(dateISO) {
     const d = new Date(dateISO + 'T00:00:00');
     const day = d.getDay();                    // 0=Sun .. 6=Sat
-    const offset = day === 0 ? -6 : 1 - day;   // Monday-based week
+    const offset = -day;                        // Sunday-based week
     const start = new Date(d); start.setDate(d.getDate() + offset);
     const end   = new Date(start); end.setDate(start.getDate() + 6);
     const fmt = x => x.toISOString().slice(0,10);
