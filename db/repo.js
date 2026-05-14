@@ -295,7 +295,7 @@ async function ensureSchema() {
   // ── Index on schedule_patterns(building_id) ─────────────────────────────
   // RLS tenant filter and roster queries both filter by building_id.
   // Without this, those queries full-scan the table.
-  await _pool.query(`CREATE INDEX IF NOT EXISTS idx_patterns_building ON schedule_patterns(building_id) WHERE active = TRUE`);
+  await c.query(`CREATE INDEX IF NOT EXISTS idx_patterns_building ON schedule_patterns(building_id) WHERE active = TRUE`);
 
   // ── High water mark per building ────────────────────────────────────────
   await c.query(`

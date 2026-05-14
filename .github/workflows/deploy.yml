@@ -110,10 +110,15 @@ jobs:
         id: verify-prod
         run: |
           for i in {1..30}; do
-            if curl -sf https://${{ env.PRODUCTION_HOST }}/health > /dev/null; then echo "Live!"; exit 0; fi
+            if curl -sf https://${{ env.PRODUCTION_HOST }}/health > /dev/null; then break; fi
             sleep 5
           done
-          echo "Production did not become healthy after swap"; exit 1
+          # Deep readiness: verify Postgres is connected (not silent file fallback)
+          ready=$(curl -s https://${{ env.PRODUCTION_HOST }}/health/ready)
+          echo "ready: $ready"
+          echo "$ready" | grep -q '"ok":true' || { echo "Production /health/ready NOT ok"; exit 1; }
+          echo "$ready" | grep -q '"postgres":true' || { echo "CRITICAL: Production fell back to file mode — Postgres not connected"; exit 1; }
+          echo "Production verified: healthy + Postgres connected"
 
       - name: Rollback on failure
         if: ${{ steps.verify-prod.outcome == 'failure' }}

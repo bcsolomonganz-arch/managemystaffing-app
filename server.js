@@ -934,13 +934,14 @@ async function persistAccountNow(acct) {
   markDirty();                        // keep rest of cache eventually consistent
 }
 
-// PG_REQUIRE_ON_BOOT — when set, refuse to fall back to file mode if
-// PG_CONN is configured but the ping fails. This prevents the silent
-// "Postgres is configured but server fell back to file with empty data
-// and made every save go nowhere" scenario that lost the 2026-05-08
-// session. Recommended setting in production where PG is the system
-// of record.
-const PG_REQUIRE_ON_BOOT = String(process.env.PG_REQUIRE_ON_BOOT || '').toLowerCase() === 'true';
+// PG_REQUIRE_ON_BOOT — refuse to fall back to file mode if PG_CONN is
+// configured but the ping fails. Defaults to TRUE in production when
+// PG_CONN is set — the 2026-05-14 deployment fell to file mode silently
+// after a slot swap, wiping the SA password and hiding all buildings/
+// employees/shifts. Opt out with PG_REQUIRE_ON_BOOT=false if needed.
+const _pgRequireExplicit = (process.env.PG_REQUIRE_ON_BOOT || '').toLowerCase();
+const PG_REQUIRE_ON_BOOT = _pgRequireExplicit === 'true'
+  || (_pgRequireExplicit !== 'false' && IS_PROD && !!process.env.PG_CONN);
 
 // Periodic recovery ping. If the server starts in file fallback mode but
 // PG_CONN is configured, retry every 60 seconds. The first time pg comes
@@ -1010,6 +1011,7 @@ async function loadData() {
         _scheduleDbRecoveryPing();
       }
     } catch (e) {
+      _useDB = false;   // reset so file fallback runs below
       logger.error('pg_init_failed_fallback_to_file', { err: e.message });
       if (PG_REQUIRE_ON_BOOT) throw e;
       _scheduleDbRecoveryPing();
@@ -7816,7 +7818,14 @@ app.post('/api/auth/totp/enroll', totpEnrollLimiter, async (req, res) => {
   // Trust this device for 30 days — first enrollment counts as a verified device.
   setDeviceTrustCookie(res, acct);
   auditLog('LOGIN_SUCCESS', acct, { sid, via: 'totp_enrollment', surface: surface || 'web' });
-  return res.json({ user: payload, authVia: 'cookie', recoveryCodes: codes });
+  // Bundle facility data so the client can skip the extra GET /api/data round-trip
+  let bundledData;
+  if (!isDemo && data) {
+    try { bundledData = getDataForUser(payload, data); } catch (_) { /* fallback to separate fetch */ }
+  }
+  const result = { user: payload, authVia: 'cookie', recoveryCodes: codes };
+  if (bundledData) result.data = bundledData;
+  return res.json(result);
 });
 
 // Regenerate recovery codes (user must be authenticated)
