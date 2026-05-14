@@ -32,17 +32,15 @@ jobs:
           echo "::add-mask::$JWT_SECRET"
           echo "::add-mask::$DATA_ENCRYPTION_KEY"
           echo "::add-mask::$AUDIT_HMAC_KEY"
-          cat > /tmp/mms-secure/.env <<'ENVEOF'
-NODE_ENV=test
-PORT=3002
-ENVEOF
-          cat >> /tmp/mms-secure/.env <<ENVEOF
-JWT_SECRET=$JWT_SECRET
-DATA_ENCRYPTION_KEY=$DATA_ENCRYPTION_KEY
-AUDIT_HMAC_KEY=$AUDIT_HMAC_KEY
-DATA_FILE=/tmp/mms-secure/mms-data.json
-AUDIT_LOG_FILE=/tmp/mms-secure/mms-audit.log
-ENVEOF
+          {
+            echo "NODE_ENV=test"
+            echo "PORT=3002"
+            echo "JWT_SECRET=$JWT_SECRET"
+            echo "DATA_ENCRYPTION_KEY=$DATA_ENCRYPTION_KEY"
+            echo "AUDIT_HMAC_KEY=$AUDIT_HMAC_KEY"
+            echo "DATA_FILE=/tmp/mms-secure/mms-data.json"
+            echo "AUDIT_LOG_FILE=/tmp/mms-secure/mms-audit.log"
+          } > /tmp/mms-secure/.env
 
       - name: Start server
         run: |
@@ -118,7 +116,7 @@ ENVEOF
           echo "Production did not become healthy after swap"; exit 1
 
       - name: Rollback on failure
-        if: steps.verify-prod.outcome == 'failure'
+        if: ${{ steps.verify-prod.outcome == 'failure' }}
         run: |
           echo "Production health check failed — swapping staging back to production"
           az webapp deployment slot swap \
