@@ -1847,9 +1847,14 @@ const App = {
     // are derived from employee.dob / employee.hireDate, not stored here).
     staffEvents: [],          // [{id,date:'YYYY-MM-DD',title,type,buildingId,createdBy,createdAt}]
     eventsCalMonth: null,     // 'YYYY-MM' currently displayed
+    // Discharge follow-up calendar
+    dischargeView: false,     // true = show discharge calendar instead of events calendar
+    discharges: [],           // [{id,date,residentName,phone,buildingId,createdBy,createdAt,messages:[{offsetDays,hour,status,sentAt}]}]
+    dischargeTemplates: [],   // [{buildingId,greeting,body,savedBy,savedAt}]
     // Texts (alert log + replies)
     alertLog: [],             // populated by /api/data; see server's data.alertLog
     textsLastSeen: 0,         // ms timestamp of last time the user opened the Texts view
+    otHighlight: false,       // true = amber-highlight OT shifts on month calendar
     // Recruiting — prospects from job applications
     prospects: [],            // [{id, jobId, jobTitle, name, email, phone, source, status, appliedAt, notes}]
     recruitFilter: 'all',     // 'all' | 'nursing' | 'support' | 'admin' | 'other'
@@ -5948,6 +5953,105 @@ const App = {
       else                             {           pts += 10; }
     }
     return {score: Math.round(pts / maxPts * 100), late, missed, noOut};
+  },
+
+  // Compute three performance scores for an employee from time clock data.
+  // Returns {earlyScore, earlyDays, tardinessScore, lateDays, correctionCount, totalDays}
+  _employeeScores(empId) {
+    const recs = (this.S.hrTimeClock || []).filter(r => r.empId === empId);
+    const shifts = (this.S.shifts || []);
+    const toMin = (t) => {
+      if (!t) return null;
+      const str = String(t).trim();
+      // 12-hour: "7:00 AM" → minutes
+      const m12 = str.match(/^(\d{1,2}):?(\d{2})?\s*(AM|PM)$/i);
+      if (m12) {
+        let h = parseInt(m12[1], 10);
+        const min = parseInt(m12[2] || '0', 10);
+        const ap = m12[3].toUpperCase();
+        if (ap === 'AM' && h === 12) h = 0;
+        else if (ap === 'PM' && h < 12) h += 12;
+        return h * 60 + min;
+      }
+      // 24-hour: "07:00" → minutes
+      const m24 = str.match(/^(\d{1,2}):(\d{2})$/);
+      if (m24) return parseInt(m24[1], 10) * 60 + parseInt(m24[2], 10);
+      return null;
+    };
+
+    let earlyPts = 0, earlyMax = 0, earlyDays = 0;
+    let tardPts = 0, tardMax = 0, lateDays = 0;
+    let totalDays = 0;
+
+    for (const r of recs) {
+      if (!r.in) continue;  // skip missed punches (no clock-in data)
+      const sched = shifts.find(s =>
+        s.employeeId === empId && s.date === r.date && s.status === 'scheduled');
+      if (!sched || !sched.start) continue;
+      const schedMin = toMin(sched.start);
+      const actualMin = toMin(r.in);
+      if (schedMin == null || actualMin == null) continue;
+      totalDays++;
+
+      // --- Early Score ---
+      // >15 min early is penalized; further early = worse deduction
+      earlyMax += 100;
+      const earlyBy = schedMin - actualMin;  // positive = early
+      if (earlyBy > 15) {
+        earlyDays++;
+        // Weighted: 16-30 min early → 70 pts, 31-60 → 40 pts, >60 → 10 pts
+        if (earlyBy <= 30) earlyPts += 70;
+        else if (earlyBy <= 60) earlyPts += 40;
+        else earlyPts += 10;
+      } else {
+        earlyPts += 100;  // on time or within 15-min window
+      }
+
+      // --- Tardiness Score ---
+      // 7-minute grace period (same as classifyPunch)
+      tardMax += 100;
+      const lateBy = actualMin - schedMin;  // positive = late
+      if (lateBy > 7) {
+        lateDays++;
+        // Weighted: 8-15 min late → 70 pts, 16-30 → 40 pts, >30 → 10 pts
+        if (lateBy <= 15) tardPts += 70;
+        else if (lateBy <= 30) tardPts += 40;
+        else tardPts += 10;
+      } else {
+        tardPts += 100;  // on time or within grace
+      }
+    }
+
+    // --- Correction Count ---
+    let correctionCount = 0;
+    for (const r of (this.S.hrTimeClock || [])) {
+      if (r.empId !== empId) continue;
+      if (!Array.isArray(r.events)) continue;
+      for (const ev of r.events) {
+        if (ev.action === 'admin-edit') correctionCount++;
+      }
+    }
+
+    return {
+      earlyScore: earlyMax > 0 ? Math.round(earlyPts / earlyMax * 100) : 100,
+      earlyDays,
+      tardinessScore: tardMax > 0 ? Math.round(tardPts / tardMax * 100) : 100,
+      lateDays,
+      correctionCount,
+      totalDays,
+    };
+  },
+
+  // Count of punch corrections performed BY a given admin email
+  _adminCorrectionCount(email) {
+    let count = 0;
+    for (const r of (this.S.hrTimeClock || [])) {
+      if (!Array.isArray(r.events)) continue;
+      for (const ev of r.events) {
+        if (ev.action === 'admin-edit' && ev.editor === email) count++;
+      }
+    }
+    return count;
   },
 
   renderHRDataCenter() {
@@ -13717,7 +13821,15 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const tail = (7 - ((firstDow + daysInMo) % 7)) % 7;
     for (let i = 0; i < tail; i++) cells.push(`<div style="background:var(--g50);min-height:120px;border-right:1px solid var(--g100);border-bottom:1px solid var(--g100)"></div>`);
 
+    const toggleHtml = `<div style="display:inline-flex;border:1.5px solid var(--g200);border-radius:8px;overflow:hidden;margin-bottom:16px">
+        <button onclick="App.S.dischargeView=false;App.renderMain()" style="padding:6px 16px;font-size:12px;font-weight:700;border:none;cursor:pointer;${!this.S.dischargeView?'background:var(--green);color:#fff':'background:#fff;color:var(--g600)'}">Events</button>
+        <button onclick="App.S.dischargeView=true;App.renderMain()" style="padding:6px 16px;font-size:12px;font-weight:700;border:none;cursor:pointer;border-left:1.5px solid var(--g200);${this.S.dischargeView?'background:var(--green);color:#fff':'background:#fff;color:var(--g600)'}">Discharges</button>
+      </div>`;
+
+    if (this.S.dischargeView) return this.renderDischargeCalendar(bId, monthKey, y, m, monthLbl, building, dows, dowHdr, toggleHtml);
+
     return `<div style="padding:20px;max-width:1100px">
+      ${toggleHtml}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px">
         <div>
           <div style="font-size:20px;font-weight:800;color:var(--g900)">Staff Events</div>
@@ -13749,6 +13861,188 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         }).join('')}
       </div>
     </div>`;
+  },
+
+  // ── DISCHARGE CALENDAR ──────────────────────────────────────────────────
+  renderDischargeCalendar(bId, monthKey, y, m, monthLbl, building, dows, dowHdr, toggleHtml) {
+    if (!Array.isArray(this.S.discharges)) this.S.discharges = [];
+    const firstDow = new Date(y, m-1, 1).getDay();
+    const daysInMo = new Date(y, m, 0).getDate();
+    const bDischarges = this.S.discharges.filter(d => d.buildingId === bId);
+
+    const cells = [];
+    for (let i = 0; i < firstDow; i++) cells.push(`<div style="background:var(--g50);min-height:120px;border-right:1px solid var(--g100);border-bottom:1px solid var(--g100)"></div>`);
+    for (let d = 1; d <= daysInMo; d++) {
+      const dateISO = `${monthKey}-${String(d).padStart(2,'0')}`;
+      const isToday = dateISO === TODAY;
+      const dayDischarges = bDischarges.filter(dc => dc.date === dateISO);
+      const dcHtml = dayDischarges.map(dc => {
+        const pending = (dc.messages||[]).filter(m => m.status === 'pending').length;
+        const sent    = (dc.messages||[]).filter(m => m.status === 'sent').length;
+        const statusLbl = pending > 0 ? `${sent}/3 sent` : 'All sent';
+        const statusCol = pending > 0 ? '#B45309' : '#047857';
+        return `<div style="background:#EFF6FF;color:#1E40AF;padding:3px 6px;border-radius:4px;font-size:10px;font-weight:600;display:flex;align-items:center;gap:3px;line-height:1.3" title="${sanitize(dc.residentName)} — ${dc.phone}">
+          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${sanitize(dc.residentName)}</span>
+          <span style="font-size:9px;color:${statusCol};white-space:nowrap">${statusLbl}</span>
+          <button onclick="event.stopPropagation();App.removeDischarge('${dc.id}')" style="background:none;border:none;color:#1E40AF;opacity:.5;cursor:pointer;padding:0;margin-left:2px;font-size:11px" title="Remove">×</button>
+        </div>`;
+      }).join('');
+      cells.push(`<div onclick="App.addDischarge('${dateISO}')" style="background:#fff;min-height:120px;padding:6px;border-right:1px solid var(--g100);border-bottom:1px solid var(--g100);${isToday?'box-shadow:inset 0 0 0 2px var(--green)':''};display:flex;flex-direction:column;gap:3px;cursor:pointer;transition:background .15s" onmouseover="this.style.background='var(--g50)'" onmouseout="this.style.background='#fff'">
+        <div style="font-size:11px;font-weight:${isToday?'800':'700'};color:${isToday?'#047857':'var(--g700)'}">${d}</div>
+        ${dcHtml}
+      </div>`);
+    }
+    const tail = (7 - ((firstDow + daysInMo) % 7)) % 7;
+    for (let i = 0; i < tail; i++) cells.push(`<div style="background:var(--g50);min-height:120px;border-right:1px solid var(--g100);border-bottom:1px solid var(--g100)"></div>`);
+
+    const tmpl = (this.S.dischargeTemplates||[]).find(t => t.buildingId === bId);
+    const tmplPreview = tmpl ? `${sanitize(tmpl.greeting||'Hi')} [Name], ${sanitize(tmpl.body||'')}` : '<em>No template saved — click Edit Template to create one</em>';
+
+    return `<div style="padding:20px;max-width:1100px">
+      ${toggleHtml}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px">
+        <div>
+          <div style="font-size:20px;font-weight:800;color:var(--g900)">Discharge Follow-ups</div>
+          <div style="font-size:13px;color:var(--g500);margin-top:2px">${sanitize(building?.name||'')} · click a day to log a discharge · 3 SMS follow-ups sent automatically</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button onclick="App.editDischargeTemplate()" style="padding:5px 12px;border-radius:6px;border:1px solid var(--g200);background:#fff;cursor:pointer;font-size:12px;font-weight:600;color:var(--g700)">Edit Template</button>
+          <button onclick="App.eventsCalNav(-1)" style="width:30px;height:30px;border-radius:6px;border:1px solid var(--g200);background:#fff;cursor:pointer;color:var(--g600)">◀</button>
+          <div style="font-size:14px;font-weight:800;color:var(--g900);min-width:160px;text-align:center">${monthLbl}</div>
+          <button onclick="App.eventsCalNav(1)" style="width:30px;height:30px;border-radius:6px;border:1px solid var(--g200);background:#fff;cursor:pointer;color:var(--g600)">▶</button>
+          <button onclick="App.S.eventsCalMonth=TODAY.slice(0,7);App.renderMain()" style="padding:5px 12px;border-radius:6px;border:1px solid var(--g200);background:#fff;cursor:pointer;font-size:12px;font-weight:600;color:var(--g700)">Today</button>
+        </div>
+      </div>
+
+      <div style="background:#fff;border:1.5px solid var(--g200);border-radius:12px;overflow:hidden">
+        <div style="display:grid;grid-template-columns:repeat(7,1fr);background:var(--g100)">${dowHdr}</div>
+        <div style="display:grid;grid-template-columns:repeat(7,1fr);background:var(--g100)">${cells.join('')}</div>
+      </div>
+
+      <div style="margin-top:14px;padding:12px 16px;background:var(--g50);border:1px solid var(--g200);border-radius:8px">
+        <div style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Message Template</div>
+        <div style="font-size:13px;color:var(--g700)">${tmplPreview}</div>
+        <div style="font-size:11px;color:var(--g400);margin-top:4px">SMS sent at: Day 2 @ 1 PM · Day 7 @ 1 PM · Day 7 @ 2 PM</div>
+      </div>
+    </div>`;
+  },
+
+  async addDischarge(dateISO) {
+    const bId = this.S.activeBuildingId || this.S.user.buildingId || 'b1';
+    const tmpl = (this.S.dischargeTemplates||[]).find(t => t.buildingId === bId);
+
+    const name = await this.mmsPrompt({
+      title: `Discharge — ${dateISO}`,
+      message: 'Resident name (first and last).',
+      placeholder: 'John Smith',
+      submitLabel: 'Next →',
+      validate: v => v && v.trim() ? null : 'Name required',
+    });
+    if (name == null) return;
+
+    const phone = await this.mmsPrompt({
+      title: 'Cell phone number',
+      message: 'Enter the cell phone number for follow-up SMS messages.',
+      placeholder: '(555) 123-4567',
+      submitLabel: 'Next →',
+      validate: v => {
+        if (!v || !v.trim()) return 'Phone number required';
+        const digits = v.replace(/\D/g, '');
+        if (digits.length < 10) return 'Enter a valid 10-digit phone number';
+        return null;
+      },
+    });
+    if (phone == null) return;
+
+    // Normalize to E.164
+    const digits = phone.replace(/\D/g, '');
+    const e164 = digits.length === 10 ? '+1' + digits : '+' + digits;
+
+    // Show preview of the message that will be sent
+    const greeting = tmpl?.greeting || 'Hi';
+    const body = tmpl?.body || '(no template saved — edit the template first)';
+    const preview = `${greeting} ${name.trim()}, ${body}`;
+    const ok = await this.mmsConfirm({
+      title: 'Confirm discharge follow-up',
+      message: `<div style="margin-bottom:8px"><strong>${sanitize(name.trim())}</strong> · ${sanitize(e164)}</div>
+        <div style="font-size:12px;color:var(--g500);margin-bottom:6px">3 SMS messages will be sent automatically:</div>
+        <div style="font-size:11px;color:var(--g600);padding:8px;background:var(--g50);border-radius:6px;border:1px solid var(--g200);white-space:pre-wrap">${sanitize(preview)}</div>
+        <div style="font-size:11px;color:var(--g400);margin-top:6px">Day 2 @ 1 PM · Day 7 @ 1 PM · Day 7 @ 2 PM</div>`,
+      confirmLabel: 'Save discharge',
+    });
+    if (!ok) return;
+
+    if (!Array.isArray(this.S.discharges)) this.S.discharges = [];
+    this.S.discharges.push({
+      id: 'dsc_' + Date.now(),
+      date: dateISO,
+      residentName: name.trim(),
+      phone: e164,
+      buildingId: bId,
+      createdBy: this.S.user.email,
+      createdAt: new Date().toISOString(),
+      messages: [
+        { offsetDays: 2, hour: 13, status: 'pending', sentAt: null },
+        { offsetDays: 7, hour: 13, status: 'pending', sentAt: null },
+        { offsetDays: 7, hour: 14, status: 'pending', sentAt: null },
+      ],
+    });
+    this.persistData();
+    this.renderMain();
+    this.showToast('Discharge saved — 3 follow-up messages scheduled', 'ok');
+  },
+
+  async editDischargeTemplate() {
+    const bId = this.S.activeBuildingId || this.S.user.buildingId || 'b1';
+    if (!Array.isArray(this.S.dischargeTemplates)) this.S.dischargeTemplates = [];
+    const existing = this.S.dischargeTemplates.find(t => t.buildingId === bId);
+
+    const greeting = await this.mmsPrompt({
+      title: 'Discharge message template',
+      message: 'Greeting (prepended to resident name, e.g. "Hi" → "Hi John,").',
+      defaultValue: existing?.greeting || 'Hi',
+      placeholder: 'Hi',
+      submitLabel: 'Next →',
+    });
+    if (greeting == null) return;
+
+    const body = await this.mmsPrompt({
+      title: 'Message body',
+      message: 'Message body sent after the greeting and name. Keep under 160 characters for a single SMS segment.',
+      defaultValue: existing?.body || '',
+      placeholder: 'This is a follow-up from our facility. How are you doing? Reply STOP to opt out.',
+      submitLabel: 'Save template',
+      validate: v => v && v.trim() ? null : 'Message body required',
+    });
+    if (body == null) return;
+
+    const tmpl = {
+      buildingId: bId,
+      greeting: greeting.trim() || 'Hi',
+      body: body.trim(),
+      savedBy: this.S.user.email,
+      savedAt: new Date().toISOString(),
+    };
+    const idx = this.S.dischargeTemplates.findIndex(t => t.buildingId === bId);
+    if (idx >= 0) this.S.dischargeTemplates[idx] = tmpl;
+    else this.S.dischargeTemplates.push(tmpl);
+
+    this.persistData();
+    this.renderMain();
+    this.showToast('Discharge template saved', 'ok');
+  },
+
+  async removeDischarge(id) {
+    const ok = await this.mmsConfirm({
+      title: 'Remove discharge',
+      message: 'Remove this discharge and cancel any unsent follow-up messages?',
+      confirmLabel: 'Remove',
+      danger: true,
+    });
+    if (!ok) return;
+    this.S.discharges = (this.S.discharges || []).filter(d => d.id !== id);
+    this.persistData();
+    this.renderMain();
   },
 
   // ── DIRECT MESSAGES (in-app 1-to-1 thread) ─────────────────────────────
@@ -15651,6 +15945,22 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         ${row('Active rotation',   patSummary)}
       </div>`;
 
+    // — Section: Performance Scores (computed live from time clock data) —
+    const _scores = this._employeeScores(emp.id);
+    const scoreBadge = (val) => {
+      const bg = val >= 90 ? '#DCFCE7' : val >= 70 ? '#FEF3C7' : '#FEE2E2';
+      const fg = val >= 90 ? '#166534' : val >= 70 ? '#92400E' : '#991B1B';
+      return `<span style="background:${bg};color:${fg};font-weight:700;font-size:12px;padding:2px 10px;border-radius:10px">${val}</span>`;
+    };
+    const performanceSection = `
+      <div style="background:#fff;border:1px solid var(--g200);border-radius:10px;padding:6px 14px">
+        <div style="font-weight:700;font-size:12px;color:var(--g700);text-transform:uppercase;letter-spacing:.05em;padding:8px 0 4px">Performance Scores</div>
+        ${row('Early Clock-In', `${scoreBadge(_scores.earlyScore)} <span style="font-size:11px;color:var(--g500);margin-left:6px">${_scores.earlyDays} day${_scores.earlyDays===1?'':'s'} >15 min early</span>`)}
+        ${row('Tardiness', `${scoreBadge(_scores.tardinessScore)} <span style="font-size:11px;color:var(--g500);margin-left:6px">${_scores.lateDays} day${_scores.lateDays===1?'':'s'} late</span>`)}
+        ${row('Punch Corrections', `<span style="font-weight:700;font-size:13px">${_scores.correctionCount}</span> <span style="font-size:11px;color:var(--g500)">admin correction${_scores.correctionCount===1?'':'s'}</span>`)}
+        ${_scores.totalDays > 0 ? `<div style="font-size:10px;color:var(--g400);text-align:right;padding:4px 0 2px">Based on ${_scores.totalDays} day${_scores.totalDays===1?'':'s'} of punch data</div>` : `<div style="font-size:10px;color:var(--g400);text-align:right;padding:4px 0 2px">No punch data available</div>`}
+      </div>`;
+
     // — Section: Termination history —
     const termLog = (emp.terminationLog || []);
     const terminationSection = termLog.length ? `
@@ -15671,6 +15981,36 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           <div style="font-size:12px;font-weight:600;color:#92400E">${sanitize(fmtDate(a.date) || a.date || '—')} · ${sanitize(a.type || 'note')}</div>
           ${a.notes ? `<div style="font-size:11px;color:var(--g700);margin-top:3px">${sanitize(a.notes)}</div>` : ''}
         </div>`).join('')}
+      </div>` : '';
+
+    // — Section: Punch Corrections (read-only audit trail from hrTimeClock events) —
+    const corrections = [];
+    for (const r of (this.S.hrTimeClock || [])) {
+      if (r.empId !== emp.id || !Array.isArray(r.events)) continue;
+      for (const ev of r.events) {
+        if (ev.action !== 'admin-edit') continue;
+        corrections.push({ date: r.date, before: ev.before, after: ev.after, editor: ev.editor, note: ev.note, at: ev.at });
+      }
+    }
+    corrections.sort((a, b) => (b.at || b.date || '').localeCompare(a.at || a.date || ''));
+    const correctionsSection = corrections.length ? `
+      <div style="background:#fff;border:1px solid var(--g200);border-radius:10px;padding:14px 14px">
+        <div style="font-weight:700;font-size:12px;color:var(--g700);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Punch Corrections <span style="background:var(--g100);color:var(--g600);font-size:11px;padding:1px 7px;border-radius:10px;margin-left:4px">${corrections.length}</span></div>
+        ${corrections.map(c => {
+          const beforeStr = c.before ? `${c.before.in || '—'} → ${c.before.out || '—'}` : '—';
+          const afterStr  = c.after  ? `${c.after.in  || '—'} → ${c.after.out  || '—'}` : '—';
+          return `<div style="padding:8px 10px;background:#F0F9FF;border:1px solid #BAE6FD;border-radius:6px;margin-bottom:6px">
+            <div style="font-size:12px;font-weight:600;color:#0C4A6E">${sanitize(fmtDate(c.date) || c.date || '—')}</div>
+            <div style="font-size:11px;color:var(--g700);margin-top:3px">
+              <span style="color:var(--g500)">Before:</span> ${sanitize(beforeStr)}
+              &nbsp;&rarr;&nbsp;
+              <span style="color:var(--g500)">After:</span> ${sanitize(afterStr)}
+            </div>
+            <div style="font-size:10px;color:var(--g500);margin-top:2px">
+              Corrected by ${sanitize(c.editor || 'unknown')}${c.note ? ` · ${sanitize(c.note)}` : ''}
+            </div>
+          </div>`;
+        }).join('')}
       </div>` : '';
 
     // — Action buttons (footer) —
@@ -15723,8 +16063,10 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           ${idsSection}
           ${licenseSection}
           ${scheduleSection}
+          ${performanceSection}
           ${terminationSection}
           ${disciplineSection}
+          ${correctionsSection}
         </div>
       </div>
       <div class="modal-footer" style="flex-shrink:0">
@@ -16352,6 +16694,38 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       otHours += otHrsAttribute;
     }
     return otHours;
+  },
+  // Returns a Set of shift IDs whose employee exceeds 40 hrs/wk, for OT
+  // highlight on the month calendar. Same bucketing logic as _otHoursOver().
+  _getOtShiftIds(buildingId, fromISO, toISO, groupFilter) {
+    const salariedSet = new Set();
+    const eligible    = new Set();
+    for (const e of (this.S.employees || [])) {
+      if (this._isSalaried(e)) salariedSet.add(e.id);
+      else eligible.add(e.id);
+    }
+    // Pass 1: bucket weekly hours per employee (full-week totals for >40 threshold)
+    const buckets = new Map();    // empId|weekStart → { weekHrs, shiftIds: [] }
+    for (const s of (this.S.shifts || [])) {
+      if (s.buildingId !== buildingId) continue;
+      if (!s.employeeId || s.status !== 'scheduled') continue;
+      if (salariedSet.has(s.employeeId)) continue;
+      if (!eligible.has(s.employeeId)) continue;
+      const inGroup = !groupFilter || s.group === groupFilter;
+      const wk = this._weekRangeISO(s.date);
+      const key = s.employeeId + '|' + wk.start;
+      const b = buckets.get(key) || { weekHrs: 0, shiftIds: [] };
+      b.weekHrs += this._shiftHours(s);
+      if (inGroup && s.date >= fromISO && s.date <= toISO) b.shiftIds.push(s.id);
+      buckets.set(key, b);
+    }
+    // Pass 2: collect shift IDs for employees over 40 hrs
+    const result = new Set();
+    for (const b of buckets.values()) {
+      if (b.weekHrs <= 40) continue;
+      for (const id of b.shiftIds) result.add(id);
+    }
+    return result;
   },
   // Daily base cost for a list of groups on a given date.
   // Two parts:
@@ -17097,10 +17471,10 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         <div class="stat-label">Open Shifts</div>
         <div class="stat-change" style="color:var(--g500)">${todayOpen>0?'Need coverage today':'All covered'}</div>
       </div>
-      <div class="stat-card" title="Overtime hours scheduled (>40 hrs/wk per hourly employee). Updates with Month / Week / Day view.">
+      <div class="stat-card clickable" onclick="App.toggleOtHighlight()" title="Click to highlight OT shifts on calendar" style="${this.S.otHighlight?'border-color:#D97706;box-shadow:0 0 0 2px #FDE68A':''}">
         <div class="stat-value" style="color:${otColor}">${otHours.toFixed(1)}</div>
         <div class="stat-label">${otScopeLabel}</div>
-        <div class="stat-change" style="color:var(--g500)">${otSubLabel}</div>
+        <div class="stat-change" style="color:var(--g500)">${this.S.otHighlight?'Highlighting OT shifts':otSubLabel}</div>
       </div>
       <div class="stat-card clickable" onclick="App.openMissedPunches()" title="Open missed-punches report">
         <div class="stat-value" style="color:${punchSummary.missed>0?'#DC2626':'var(--g600)'}">${punchSummary.missed}</div>
@@ -17847,6 +18221,23 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const daysInMonth = new Date(viewYear,viewMonth+1,0).getDate();
     const prevDays = new Date(viewYear,viewMonth,0).getDate();
 
+    // OT highlight: compute set of shift IDs belonging to OT employees
+    let otShiftIds = null;
+    if (this.S.otHighlight) {
+      const mStart = `${viewYear}-${String(viewMonth+1).padStart(2,'0')}-01`;
+      const mEnd   = `${viewYear}-${String(viewMonth+1).padStart(2,'0')}-${String(daysInMonth).padStart(2,'0')}`;
+      const bId    = this.S.user?.buildingId || 'b1';
+      const g      = this.S.selectedGroup || null;
+      const showAll = this.S._statAllBuildings;
+      const bIds   = showAll ? (this.S.buildings||[]).map(b=>b.id) : [bId];
+      otShiftIds = new Set();
+      for (const bid of bIds) {
+        for (const id of this._getOtShiftIds(bid, mStart, mEnd, showAll ? null : g)) {
+          otShiftIds.add(id);
+        }
+      }
+    }
+
     let cells = '';
     for (let i=firstDay-1;i>=0;i--) {
       cells += `<div class="cal-cell other-month"><div class="cal-date">${prevDays-i}</div></div>`;
@@ -17931,7 +18322,10 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
             const emp = this._empLookup(slot.employeeId);
             if (emp) {
               const firstName = emp.name.split(' ')[0];
-              pills += `<span class="shift-emp" title="${sanitize(emp.name)} — click to manage" style="max-width:54px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer" onclick="event.stopPropagation();App.openRemoveShiftModal('${ds}','${slot.id}','${sh.type}','${emp.id}')">${sanitize(firstName)}</span>`;
+              const isOt = otShiftIds && otShiftIds.has(slot.id);
+              const otStyle = isOt ? 'background:#FEF3C7;border:1.5px solid #D97706;color:#92400E;' : '';
+              const otLabel = isOt ? ' (OT)' : '';
+              pills += `<span class="shift-emp" title="${sanitize(emp.name)}${otLabel} — click to manage" style="${otStyle}max-width:${isOt?'64':'54'}px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer" onclick="event.stopPropagation();App.openRemoveShiftModal('${ds}','${slot.id}','${sh.type}','${emp.id}')">${sanitize(firstName)}${otLabel}</span>`;
             }
           });
           // Empty slot indicators — click opens the Assign Employee modal
@@ -18610,11 +19004,34 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.S._adminsForBuildingId = bId;     // remember for any inline subactions
     const building = this.S.buildings.find(b=>b.id===bId);
     const admins = this.S.accounts.filter(a=>a.buildingId===bId&&a.role==='admin');
-    let rows = admins.map(a=>`
+    let rows = admins.map(a=>{
+      const corrCount = this._adminCorrectionCount(a.email);
+      // Collect correction details for this admin
+      const corrDetails = [];
+      if (corrCount > 0) {
+        for (const r of (this.S.hrTimeClock || [])) {
+          if (!Array.isArray(r.events)) continue;
+          for (const ev of r.events) {
+            if (ev.action === 'admin-edit' && ev.editor === a.email) {
+              const empObj = (this.S.employees||[]).find(e=>e.id===r.empId);
+              corrDetails.push({ date: r.date, empName: empObj?.name || r.empId, before: ev.before, after: ev.after, note: ev.note, at: ev.at });
+            }
+          }
+        }
+        corrDetails.sort((x,y) => (y.at||y.date||'').localeCompare(x.at||x.date||''));
+      }
+      const corrBadge = corrCount > 0
+        ? `<span style="background:#DBEAFE;color:#1E40AF;font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;margin-left:6px;cursor:pointer" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'" title="Click to expand correction history">${corrCount} correction${corrCount===1?'':'s'}</span><div style="display:none;margin-top:6px;max-height:180px;overflow-y:auto">${corrDetails.slice(0,20).map(c=>{
+          const bStr = c.before ? (c.before.in||'—')+' → '+(c.before.out||'—') : '—';
+          const aStr = c.after  ? (c.after.in ||'—')+' → '+(c.after.out ||'—') : '—';
+          return '<div style="font-size:10px;padding:4px 8px;background:#F0F9FF;border:1px solid #BAE6FD;border-radius:4px;margin-bottom:3px"><strong>'+sanitize(c.empName)+'</strong> · '+sanitize(c.date||'—')+'<br><span style="color:var(--g500)">'+sanitize(bStr)+' &rarr; '+sanitize(aStr)+'</span>'+(c.note?' · '+sanitize(c.note):'')+'</div>';
+        }).join('')}${corrDetails.length>20?'<div style="font-size:10px;color:var(--g500);padding:2px 8px">+'+(corrDetails.length-20)+' more</div>':''}</div>`
+        : '';
+      return `
       <tr>
         <td><div style="display:flex;align-items:center;gap:8px">
           <div class="emp-avatar" style="background:var(--blue);width:30px;height:30px;font-size:11px">${sanitize(a.name.split(' ').map(w=>w[0]).join('').slice(0,2))}</div>
-          <div><div style="font-weight:600">${sanitize(a.name)}</div></div>
+          <div><div style="font-weight:600">${sanitize(a.name)}${corrBadge}</div></div>
         </div></td>
         <td style="color:var(--g600)">${sanitize(a.email)}</td>
         <td>${a.schedulerOnly
@@ -18624,7 +19041,8 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           ${a.id!==u.id?`<button class="btn btn-ghost btn-sm" onclick="App.toggleAdminScheduler('${a.id}')" style="color:var(--g600);margin-right:4px" title="Toggle access level">↔ ${a.schedulerOnly?'Grant Full':'Limit to Scheduler'}</button>`:''}
           ${a.id!==u.id?`<button class="btn btn-ghost btn-sm" onclick="App.removeAdmin('${a.id}')" style="color:var(--red)">Remove</button>`:''}
         </td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
 
     const div = document.createElement('div');
     div.className = 'modal-overlay open';
@@ -18712,6 +19130,11 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.renderHRMain();
   },
 
+  toggleOtHighlight() {
+    this.S.otHighlight = !this.S.otHighlight;
+    this.renderMain();
+  },
+
   toggleAdminScheduler(id) {
     const a = this.S.accounts.find(x => x.id === id);
     if (!a) return;
@@ -18730,6 +19153,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.S.rosterView = false;
     this.S.eventsView = false;
     this.S.textsView  = false;
+    this.S.otHighlight = false;
     this.render();
   },
   setCalView(v) { this.S.calView=v; if(v==='day'&&!this.S.selectedDate) this.S.selectedDate=TODAY; this.renderMain(); },
@@ -19981,6 +20405,8 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       buildingShiftTypes:this.S.buildingShiftTypes,
       ppdDailyCensus:this.S.ppdDailyCensus,
       staffEvents:this.S.staffEvents,
+      discharges:this.S.discharges,
+      dischargeTemplates:this.S.dischargeTemplates,
       shiftTrades:this.S.shiftTrades,
       directMessages:this.S.directMessages,
       prospects:this.S.prospects,
@@ -20014,6 +20440,8 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
           buildingShiftTypes:this.S.buildingShiftTypes,
           ppdDailyCensus:this.S.ppdDailyCensus,
           staffEvents:this.S.staffEvents,
+          discharges:this.S.discharges,
+          dischargeTemplates:this.S.dischargeTemplates,
           shiftTrades:this.S.shiftTrades,
           directMessages:this.S.directMessages,
           prospects:this.S.prospects,
@@ -20329,6 +20757,8 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (data.ppdDailyCensus && typeof data.ppdDailyCensus === 'object') this.S.ppdDailyCensus = data.ppdDailyCensus;
     if (Array.isArray(data.hrTimeClock))      this.S.hrTimeClock      = data.hrTimeClock;
     if (Array.isArray(data.staffEvents))      this.S.staffEvents      = data.staffEvents;
+    if (Array.isArray(data.discharges))       this.S.discharges       = data.discharges;
+    if (Array.isArray(data.dischargeTemplates)) this.S.dischargeTemplates = data.dischargeTemplates;
     if (Array.isArray(data.alertLog))         this.S.alertLog         = data.alertLog;
     if (Array.isArray(data.shiftTrades))      this.S.shiftTrades      = data.shiftTrades;
     if (Array.isArray(data.reportSubscriptions)) this.S.reportSubscriptions = data.reportSubscriptions;

@@ -1664,6 +1664,8 @@ function getDataForUser(user, fullData) {
     alertLog:         (scrubbed.alertLog || []).filter(e => !e.buildingId || bIds.has(e.buildingId)),
     directMessages:   (scrubbed.directMessages || []).filter(dmsForMe),
     prospects:        (scrubbed.prospects || []).filter(p => !p.buildingId || bIds.has(p.buildingId)),
+    discharges:       (scrubbed.discharges || []).filter(d => !d.buildingId || bIds.has(d.buildingId)),
+    dischargeTemplates: (scrubbed.dischargeTemplates || []).filter(t => !t.buildingId || bIds.has(t.buildingId)),
   };
   return _canAccessHR(user) ? filtered : _stripHR(filtered);
 }
@@ -6944,6 +6946,88 @@ async function _maybeSendDueReports() {
 setInterval(_maybeSendDueReports, 60 * 1000);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DISCHARGE FOLLOW-UP SMS SENDER
+// ─────────────────────────────────────────────────────────────────────────────
+// Scans data.discharges[].messages[] for pending messages whose scheduled
+// time has passed, sends SMS via existing ACS infrastructure, marks as sent.
+async function _maybeSendDischargeMessages() {
+  try {
+    if (!ACS_CONNECTION_STRING) return;         // SMS not configured
+    const data = dataCache;
+    if (!data || !Array.isArray(data.discharges)) return;
+
+    const now = new Date();
+    let dirty = false;
+
+    for (const discharge of data.discharges) {
+      if (!discharge.messages || !discharge.phone) continue;
+      // Resolve the template for this building
+      const tmpl = (data.dischargeTemplates || []).find(t => t.buildingId === discharge.buildingId);
+      if (!tmpl || !tmpl.body) continue;        // no template → skip (admin hasn't set one up)
+
+      const dischargeDate = new Date(discharge.date + 'T00:00:00');
+      if (isNaN(dischargeDate.getTime())) continue;
+
+      for (const msg of discharge.messages) {
+        if (msg.status !== 'pending') continue;
+
+        // Calculate when this message should fire
+        const sendDate = new Date(dischargeDate);
+        sendDate.setDate(sendDate.getDate() + msg.offsetDays);
+        sendDate.setHours(msg.hour, 0, 0, 0);
+
+        if (now < sendDate) continue;           // not yet due
+
+        // Compose the SMS
+        const smsBody = `${tmpl.greeting || 'Hi'} ${discharge.residentName}, ${tmpl.body}`.slice(0, 1600);
+        const sender = _smsFromForBuilding(discharge.buildingId, data);
+        if (!sender) continue;
+
+        try {
+          const { SmsClient } = require('@azure/communication-sms');
+          const smsClient = new SmsClient(ACS_CONNECTION_STRING);
+          const results = await smsClient.send({
+            from: sender,
+            to: [discharge.phone],
+            message: smsBody,
+          });
+          if (results[0]?.successful) {
+            msg.status = 'sent';
+            msg.sentAt = now.toISOString();
+            dirty = true;
+            auditLog('DISCHARGE_SMS_SENT', { id: 'system', role: 'system' }, {
+              dischargeId: discharge.id,
+              residentName: discharge.residentName,
+              to: discharge.phone,
+              offsetDays: msg.offsetDays,
+              hour: msg.hour,
+            });
+            logger.info('discharge_sms_sent', { dischargeId: discharge.id, offsetDays: msg.offsetDays, hour: msg.hour });
+          } else {
+            logger.error('discharge_sms_failed', {
+              dischargeId: discharge.id,
+              error: results[0]?.errorMessage || 'unknown',
+            });
+          }
+        } catch (e) {
+          logger.error('discharge_sms_error', { dischargeId: discharge.id, err: e.message });
+        }
+      }
+    }
+
+    if (dirty) {
+      // Persist updated message statuses
+      dataCache = data;
+      _writeSnapshot().catch(e => logger.error('discharge_snapshot_failed', { err: e.message }));
+    }
+  } catch (e) {
+    logger.error('discharge_scheduler_error', { msg: e.message });
+  }
+}
+// Check once a minute for discharge follow-up messages to send.
+setInterval(_maybeSendDischargeMessages, 60 * 1000);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ONBOARDING → EMPLOYEE ROSTER (push completed onboardee into the staff list)
 // ─────────────────────────────────────────────────────────────────────────────
 // When a prospect/candidate finishes onboarding paperwork, admin clicks
@@ -8263,6 +8347,31 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   if (Array.isArray(payload.staffEvents)) {
     const inScopeEvent = e => !e.buildingId || callerBIds.has(e.buildingId);
     data.staffEvents = mergeScoped(data.staffEvents || [], payload.staffEvents, inScopeEvent);
+  }
+
+  // Discharge follow-up records. Per-building scoped.
+  if (Array.isArray(payload.discharges)) {
+    const inScopeDischarge = d => !d.buildingId || callerBIds.has(d.buildingId);
+    data.discharges = mergeScoped(data.discharges || [], payload.discharges, inScopeDischarge);
+  }
+
+  // Discharge message templates. Per-building; keyed by buildingId (one per building).
+  if (Array.isArray(payload.dischargeTemplates)) {
+    // Templates don't have an `id` field — they key by buildingId. Use a manual
+    // merge: caller's version wins for their buildings, preserve others.
+    const incoming = payload.dischargeTemplates || [];
+    const existing = data.dischargeTemplates || [];
+    const result = [];
+    const seen = new Set();
+    for (const t of incoming) {
+      if (isSA || (t.buildingId && callerBIds.has(t.buildingId))) {
+        result.push(t); seen.add(t.buildingId);
+      }
+    }
+    for (const t of existing) {
+      if (!seen.has(t.buildingId)) result.push(t);
+    }
+    data.dischargeTemplates = result;
   }
 
   // Recruiting prospects (incoming applicants). Per-building scoped — building
