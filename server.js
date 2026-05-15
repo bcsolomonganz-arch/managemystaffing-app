@@ -1185,10 +1185,20 @@ async function applyMigrations(data) {
   }
   if (data.buildings) {
     data.buildings.forEach(b => {
-      if (b.name === 'Kirkland Court' && !b.companyId) {
-        b.companyId = 'co_skyblue';
-        console.log('[mms] Restored companyId on Kirkland Court.');
-        dirty = true;
+      if (b.name === 'Kirkland Court') {
+        if (!b.companyId) {
+          b.companyId = 'co_skyblue';
+          console.log('[mms] Restored companyId on Kirkland Court.');
+          dirty = true;
+        }
+        // Link Azure Communication Services SMS number to Kirkland Court
+        if (!b.smsFromPhone) {
+          b.smsFromPhone = '+18063185030';
+          b.smsProvisionStatus = 'active';
+          b.smsProvisionedAt = new Date().toISOString();
+          console.log('[mms] Linked SMS number +18063185030 to Kirkland Court.');
+          dirty = true;
+        }
       }
     });
   }
