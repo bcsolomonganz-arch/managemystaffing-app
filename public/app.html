@@ -1039,22 +1039,12 @@ function showApp() {
     }
   }
 
+  // /app PWA: everyone gets Schedule | Messages tabs, default to Messages.
+  // Admin features (add shift, month/week toggle) live on the full site.
   $('#admin-tabs').classList.remove('hidden');
-  if (isAdmin()) {
-    $('#menu-btn').classList.remove('hidden');
-    // Admin tabs: Schedule | Messages
-    $('#tab-schedule').querySelector('.tab-label').textContent = 'Schedule';
-    $('#tab-messages').querySelector('.tab-label').textContent = 'Messages';
-    State.view = State.view || 'schedule';
-    setActiveTab(State.view);
-  } else {
-    $('#menu-btn').classList.add('hidden');
-    // Employee tabs: Schedule | Messages (default to messages on first load)
-    $('#tab-schedule').querySelector('.tab-label').textContent = 'Schedule';
-    $('#tab-messages').querySelector('.tab-label').textContent = 'Messages';
-    State.view = State.view || 'messages';
-    setActiveTab(State.view);
-  }
+  $('#menu-btn').classList.add('hidden');
+  State.view = State.view || 'messages';
+  setActiveTab(State.view);
   render();
 }
 
@@ -1083,19 +1073,16 @@ function setActiveTab(name) {
 }
 
 // ── Render dispatcher ───────────────────────────────────────────
+// The /app PWA always uses the employee schedule experience (3-way
+// toggle: My Shifts / Open / Nearby) regardless of role. Admin
+// schedule features (month/week toggle, add-shift FAB, week view)
+// live on the full site only (managemystaffing.html).
 function render() {
   if (!State.user) { showLogin(); return; }
-  if (!isAdmin()) {
-    // Employee views: messages or schedule (with 3-way toggle)
-    if (State.view === 'messages') {
-      renderMessagesView();
-    } else {
-      renderEmployeeView();
-    }
-  } else if (State.view === 'messages') {
+  if (State.view === 'messages') {
     renderMessagesView();
   } else {
-    renderAdminScheduleView();
+    renderEmployeeView();
   }
   updateMessageBadge();
 }
