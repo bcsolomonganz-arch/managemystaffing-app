@@ -1728,8 +1728,9 @@ app.use(helmet({
       defaultSrc:    ["'self'"],
       scriptSrc:     ["'self'", (req, res) => `'nonce-${res.locals.cspNonce}'`],
       scriptSrcAttr: ["'unsafe-inline'"],               // onclick handlers — future: migrate to addEventListener
-      styleSrc:      ["'self'", "'unsafe-inline'"],      // inline style= attributes throughout SPA
-      imgSrc:        ["'self'", 'data:'],
+      styleSrc:      ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'], // inline style= + Google Fonts CSS
+      fontSrc:       ["'self'", 'https://fonts.gstatic.com', 'data:'],           // Google Fonts woff2 files
+      imgSrc:        ["'self'", 'data:', 'blob:'],
       connectSrc:    ["'self'"],
       frameAncestors: ["'none'"],
       objectSrc:     ["'none'"],
