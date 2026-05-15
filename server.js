@@ -7727,10 +7727,13 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
   await clearFailedAttempts(acct);
 
-  // TOTP gating: required for privileged roles (admin/SA) only.
+  // TOTP gating: required for privileged roles on the full website only.
   // Employees don't access PHI, so HIPAA §164.312 doesn't require 2FA for them.
-  // Skip TOTP entirely → straight to token.
-  if (!isDemo && !isPrivilegedRole(acct.role)) {
+  // The /app companion PWA exposes only the user's own schedule, open shifts,
+  // and messaging — no roster, HR, audit log, or PHI-bearing admin views —
+  // so 2FA is not required there either.
+  const isPwa = req.body?.surface === 'pwa';
+  if (!isDemo && (!isPrivilegedRole(acct.role) || isPwa)) {
     return _issueToken(req, res, acct, data);
   }
   if (!isDemo) {
