@@ -2090,9 +2090,25 @@ app.get('/', async (req, res) => {
 // Single-page PWA at /app — talks to the same /api/* endpoints as the main
 // site. Designed mobile-first; installable via "Add to Home Screen".
 const APP_HTML_FILE = path.join(__dirname, 'public', 'app.html');
-app.get('/app', (_req, res) => {
+let _cachedAppHtml = null;
+let _cachedAppHtmlMtime = null;
+app.get('/app', async (_req, res) => {
   res.setHeader('Cache-Control', 'no-cache, must-revalidate');
-  res.sendFile(APP_HTML_FILE);
+  try {
+    const stat = await fs.stat(APP_HTML_FILE);
+    const mtime = stat.mtimeMs;
+    if (!_cachedAppHtml || mtime !== _cachedAppHtmlMtime) {
+      _cachedAppHtml = await fs.readFile(APP_HTML_FILE, 'utf8');
+      _cachedAppHtmlMtime = mtime;
+    }
+    const nonce = res.locals.cspNonce;
+    const html = _cachedAppHtml.replace(/<script(?=[>\s])/gi, `<script nonce="${nonce}"`);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (e) {
+    logger.error('app_html_serve_failed', { err: e.message });
+    res.sendFile(APP_HTML_FILE);
+  }
 });
 app.get('/app/manifest.webmanifest', (_req, res) => {
   res.setHeader('Content-Type', 'application/manifest+json');
