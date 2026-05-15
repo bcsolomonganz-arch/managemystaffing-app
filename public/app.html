@@ -73,7 +73,7 @@ a:active{opacity:.6}
 .app-header button.icon-btn{padding:6px 8px;border-radius:7px;color:#fff}
 .app-header button.icon-btn:active{background:rgba(255,255,255,.15)}
 
-/* Tab bar (admin only: schedule | messages) */
+/* Tab bar (schedule | messages — shown for all roles) */
 .tabs{display:flex;background:#fff;border-bottom:1px solid var(--g200);flex-shrink:0}
 .tabs button{flex:1;padding:13px 8px;font-size:13px;font-weight:700;color:var(--g500);
   border-bottom:3px solid transparent;transition:color .15s, border-color .15s;
@@ -600,16 +600,16 @@ a:active{opacity:.6}
     </div>
   </header>
 
-  <!-- Admin only: tabs -->
+  <!-- Schedule / Messages tabs (shown for all roles) -->
   <nav class="tabs hidden" id="admin-tabs" role="tablist">
     <button id="tab-schedule" class="active" data-tab="schedule" role="tab" aria-selected="true" aria-controls="main">
       <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="2" y="3" width="16" height="14" rx="1.5"/><path d="M2 7h16M6 3v4M14 3v4"/></svg>
-      Schedule
+      <span class="tab-label">Schedule</span>
       <span id="tab-sched-badge" class="tab-badge hidden" style="background:var(--orange)">0</span>
     </button>
     <button id="tab-messages" data-tab="messages" role="tab" aria-selected="false" aria-controls="main">
       <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 4h16v11H6l-4 4z"/></svg>
-      Messages
+      <span class="tab-label">Messages</span>
       <span id="tab-msg-badge" class="tab-badge hidden">0</span>
     </button>
   </nav>
@@ -705,7 +705,7 @@ function brandLogoSVG(variant) {
 const State = {
   user: null,
   data: null,         // {employees, shifts, accounts, buildings, directMessages, ...}
-  view: 'schedule',   // admin only: 'schedule' | 'messages'
+  view: null,          // 'schedule' | 'messages' — set in showApp() per role
   // Schedule
   selectedGroup: null,    // for admin sidebar filter
   scheduleMode: 'month',  // 'month' | 'week'
@@ -719,6 +719,10 @@ const State = {
   activeOtherId: null,
   newMessageMode: false,
   pollTimer: null,
+  // Employee schedule mode (3-way toggle)
+  empScheduleMode: 'myshifts', // 'myshifts' | 'open' | 'nearby'
+  nearbyShifts: null,          // cached result from /api/shifts/nearby
+  nearbyLoading: false,
 };
 
 const GROUPS = ['Nurse Management','Charge Nurse','CNA','CMA','Housekeeping','Laundry','Cook','Dietary Aid','Therapy','Office','Maintenance','Marketing'];
@@ -973,12 +977,17 @@ async function loadData() {
   // Ensure user object has up-to-date fields used later
   State.user = Object.assign({}, State.user, State.data.user || {});
   // Default selected group for admin = first DISPLAY group with employees
-  if (isAdmin() && !State.selectedGroup) {
-    State.selectedGroup = DISPLAY_GROUPS.find(g => {
-      const ag = getActualGroups(g);
-      return (State.data.employees || []).some(e => ag.includes(e.group) && !e.inactive
-        && e.buildingId === effectiveBuildingId());
-    }) || DISPLAY_GROUPS[0];
+  if (!State.selectedGroup) {
+    if (isAdmin()) {
+      State.selectedGroup = DISPLAY_GROUPS.find(g => {
+        const ag = getActualGroups(g);
+        return (State.data.employees || []).some(e => ag.includes(e.group) && !e.inactive
+          && e.buildingId === effectiveBuildingId());
+      }) || DISPLAY_GROUPS[0];
+    } else {
+      // Employee: default to their own group
+      State.selectedGroup = State.user?.group || DISPLAY_GROUPS[0];
+    }
   }
 }
 
@@ -1030,15 +1039,21 @@ function showApp() {
     }
   }
 
+  $('#admin-tabs').classList.remove('hidden');
   if (isAdmin()) {
-    $('#admin-tabs').classList.remove('hidden');
     $('#menu-btn').classList.remove('hidden');
+    // Admin tabs: Schedule | Messages
+    $('#tab-schedule').querySelector('.tab-label').textContent = 'Schedule';
+    $('#tab-messages').querySelector('.tab-label').textContent = 'Messages';
     State.view = State.view || 'schedule';
     setActiveTab(State.view);
   } else {
-    $('#admin-tabs').classList.add('hidden');
     $('#menu-btn').classList.add('hidden');
-    State.view = 'employee';
+    // Employee tabs: Schedule | Messages (default to messages on first load)
+    $('#tab-schedule').querySelector('.tab-label').textContent = 'Schedule';
+    $('#tab-messages').querySelector('.tab-label').textContent = 'Messages';
+    State.view = State.view || 'messages';
+    setActiveTab(State.view);
   }
   render();
 }
@@ -1071,7 +1086,12 @@ function setActiveTab(name) {
 function render() {
   if (!State.user) { showLogin(); return; }
   if (!isAdmin()) {
-    renderEmployeeView();
+    // Employee views: messages or schedule (with 3-way toggle)
+    if (State.view === 'messages') {
+      renderMessagesView();
+    } else {
+      renderEmployeeView();
+    }
   } else if (State.view === 'messages') {
     renderMessagesView();
   } else {
@@ -1081,17 +1101,13 @@ function render() {
 }
 
 // ════════════════════════════════════════════════════════════
-//  EMPLOYEE VIEW — My Shifts (top) + Open Shifts (bottom)
+//  EMPLOYEE VIEW — 3-way toggle: My Shifts / Open / Nearby
 // ════════════════════════════════════════════════════════════
 function renderEmployeeView() {
   const u = State.user;
   const today = TODAY();
   const shifts = State.data?.shifts || [];
 
-  // Initialize the employee-view month state on first render. Reuses the
-  // same MONTHS list as the admin view but lives in its own State keys
-  // (empViewYear / empViewMonth) so toggling between roles in tests
-  // doesn't cross-contaminate cursors.
   if (State.empViewYear == null || State.empViewMonth == null) {
     const t = new Date();
     State.empViewYear  = t.getFullYear();
@@ -1102,27 +1118,31 @@ function renderEmployeeView() {
     s.employeeId === u.id && s.status === 'scheduled');
 
   const myGroup = u.group;
-  // Open shifts: today or future only — claiming a past open shift is
-  // meaningless. My scheduled shifts intentionally include past dates so
-  // the employee can scroll back and see what they've actually worked.
-  const openShifts = shifts.filter(s =>
-    s.status === 'open' && s.group === myGroup && s.date >= today &&
-    (!s.buildingId || s.buildingId === effectiveBuildingId()));
 
-  // "This week" hours banner — kept as the at-a-glance orientation strip
-  // above the calendars. Uses ALL my scheduled shifts, not just future
-  // ones, so a Monday-morning glance still reflects what was just worked.
+  // "This week" hours banner
   const ws = startOfWeek(today);
   const we = addDays(ws, 6);
   const thisWeek = myShifts.filter(s => s.date >= ws && s.date <= we);
   const hours = thisWeek.reduce((sum, s) => sum + shiftHours(s), 0);
 
-  // Counts shown in the section headers reflect the currently-visible
-  // month, not the entire dataset, so the header matches what the user
-  // sees in the grid.
-  const monthPrefix = `${State.empViewYear}-${String(State.empViewMonth+1).padStart(2,'0')}-`;
-  const myInMonth   = myShifts.filter(s => s.date.startsWith(monthPrefix)).length;
-  const openInMonth = openShifts.filter(s => s.date.startsWith(monthPrefix)).length;
+  const mode = State.empScheduleMode || 'myshifts';
+  const toggleBtn = (key, label) =>
+    `<button data-emp-mode="${key}" class="${mode===key?'on':''}">${escapeHTML(label)}</button>`;
+
+  // Build sub-view content based on mode
+  let subContent = '';
+  if (mode === 'myshifts') {
+    subContent = renderEmpMyShiftsContent(myShifts, today);
+  } else if (mode === 'open') {
+    const browseGroup = State.selectedGroup || myGroup;
+    const ag = getActualGroups(browseGroup);
+    const openShifts = shifts.filter(s =>
+      s.status === 'open' && ag.includes(s.group) && s.date >= today &&
+      (!s.buildingId || s.buildingId === effectiveBuildingId()));
+    subContent = renderEmpOpenShiftsContent(openShifts, browseGroup, today);
+  } else if (mode === 'nearby') {
+    subContent = renderEmpNearbyShiftsContent();
+  }
 
   const main = $('#main');
   main.innerHTML = `
@@ -1135,31 +1155,150 @@ function renderEmployeeView() {
       </div>
     </div>
 
-    <div class="emp-cal-nav">
-      <button id="emp-prev" aria-label="Previous month">‹</button>
-      <div class="month">${escapeHTML(MONTHS[State.empViewMonth] + ' ' + State.empViewYear)}</div>
-      <button id="emp-next" aria-label="Next month">›</button>
-      <button id="emp-today" class="btn-ghost" style="font-size:12px">Today</button>
+    <div style="padding:8px 14px;background:#fff;border-bottom:1px solid var(--g200);font-size:12px;color:var(--g600);display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span style="font-weight:700;color:var(--g700)">Group:</span>
+      <span class="group-pill" onclick="openSidebar()" style="background:var(--green-l);color:var(--green-d);font-weight:700;padding:3px 10px;border-radius:99px;cursor:pointer">${escapeHTML(groupLabel(State.selectedGroup || myGroup || '—'))}</span>
     </div>
 
+    <div style="padding:8px 14px;background:#fff;border-bottom:1px solid var(--g200);display:flex;justify-content:center">
+      <div class="view-toggle" id="emp-mode-toggle">
+        ${toggleBtn('myshifts','My Shifts')}
+        ${toggleBtn('open','Open')}
+        ${toggleBtn('nearby','Nearby')}
+      </div>
+    </div>
+
+    ${subContent}
+  `;
+
+  // Wire toggle buttons
+  $$('#emp-mode-toggle button').forEach(b => b.addEventListener('click', () => {
+    const newMode = b.dataset.empMode;
+    if (State.empScheduleMode !== newMode) {
+      State.empScheduleMode = newMode;
+      State.empSelectedDate = null;
+      // Trigger nearby fetch when switching to nearby tab
+      if (newMode === 'nearby' && !State.nearbyLoading) {
+        fetchNearbyShifts();
+      }
+      render();
+    }
+  }));
+
+  // Wire month nav + cell taps (shared by myshifts and open modes)
+  wireEmpCalendarEvents();
+}
+
+function renderEmpMyShiftsContent(myShifts, today) {
+  const monthPrefix = `${State.empViewYear}-${String(State.empViewMonth+1).padStart(2,'0')}-`;
+  const myInMonth = myShifts.filter(s => s.date.startsWith(monthPrefix)).length;
+  return `
+    <div class="emp-cal-nav">
+      <button id="emp-prev" aria-label="Previous month">&#8249;</button>
+      <div class="month">${escapeHTML(MONTHS[State.empViewMonth] + ' ' + State.empViewYear)}</div>
+      <button id="emp-next" aria-label="Next month">&#8250;</button>
+      <button id="emp-today" class="btn-ghost" style="font-size:12px">Today</button>
+    </div>
     <div class="emp-cal-section">
       <div class="head">
         <span class="ttl">My schedule</span>
         <span class="meta">${myInMonth} this month</span>
       </div>
       ${renderEmpMonthCal(myShifts, { variant:'mine', today })}
+      <div id="emp-day-panel"></div>
     </div>
+  `;
+}
 
-    <div class="emp-cal-section" style="border-top:8px solid var(--g100);background:var(--g50);padding-bottom:16px">
+function renderEmpOpenShiftsContent(openShifts, myGroup, today) {
+  const monthPrefix = `${State.empViewYear}-${String(State.empViewMonth+1).padStart(2,'0')}-`;
+  const openInMonth = openShifts.filter(s => s.date.startsWith(monthPrefix)).length;
+  return `
+    <div class="emp-cal-nav">
+      <button id="emp-prev" aria-label="Previous month">&#8249;</button>
+      <div class="month">${escapeHTML(MONTHS[State.empViewMonth] + ' ' + State.empViewYear)}</div>
+      <button id="emp-next" aria-label="Next month">&#8250;</button>
+      <button id="emp-today" class="btn-ghost" style="font-size:12px">Today</button>
+    </div>
+    <div class="emp-cal-section" style="background:var(--g50);padding-bottom:16px">
       <div class="head">
-        <span class="ttl">Open shifts · ${escapeHTML(groupLabel(myGroup||'your role'))}</span>
+        <span class="ttl">Open shifts &middot; ${escapeHTML(groupLabel(myGroup||'your role'))}</span>
         <span class="meta">${openInMonth} this month</span>
       </div>
       ${renderEmpMonthCal(openShifts, { variant:'open', today })}
       <div id="emp-day-panel"></div>
     </div>
   `;
+}
 
+function renderEmpNearbyShiftsContent() {
+  if (State.nearbyLoading) {
+    return `<div class="section" style="text-align:center;padding:40px 16px">
+      <span class="spinner" style="display:inline-block;width:24px;height:24px"></span>
+      <div style="font-size:13px;color:var(--g500);margin-top:8px">Loading nearby shifts&hellip;</div>
+    </div>`;
+  }
+  const shifts = State.nearbyShifts || [];
+  if (!shifts.length) {
+    return emptyBlock('calendar', 'No nearby shifts', 'No open shifts found at nearby facilities.');
+  }
+  // Group by date, then within each date group by shift type (Day/Evening/Night)
+  const byDate = new Map();
+  for (const s of shifts) {
+    if (!byDate.has(s.date)) byDate.set(s.date, []);
+    byDate.get(s.date).push(s);
+  }
+  const dates = Array.from(byDate.keys()).sort();
+  const typeOrder = { 'Day':0, 'Morning':1, 'Evening':2, 'Afternoon':3, 'Night':4 };
+
+  let html = '';
+  for (const date of dates) {
+    const dayShifts = byDate.get(date).sort((a,b) =>
+      (typeOrder[a.type] ?? 9) - (typeOrder[b.type] ?? 9) || (a.start||'').localeCompare(b.start||''));
+    html += `<div class="section" style="padding-bottom:4px">
+      <div class="section-head"><span class="section-title">${escapeHTML(fmtDateLong(date))}</span></div>`;
+
+    // Sub-group by type
+    const byType = new Map();
+    for (const s of dayShifts) {
+      const t = s.type || 'Other';
+      if (!byType.has(t)) byType.set(t, []);
+      byType.get(t).push(s);
+    }
+    for (const [type, group] of byType) {
+      html += `<div style="font-size:11px;font-weight:700;color:var(--g500);text-transform:uppercase;letter-spacing:.05em;margin:6px 0 4px;padding:0 2px">${escapeHTML(type)}</div>`;
+      for (const s of group) {
+        const time = (s.start && s.end) ? `${s.start} – ${s.end}` : (s.type || '');
+        const isPending = !!s.claimRequest;
+        const isMineClaim = isPending && s.claimRequest?.empId === State.user?.id;
+        let pill = '';
+        if (isMineClaim) pill = '<span class="pill pending">Your request pending</span>';
+        else if (isPending) pill = '<span class="pill pending">Claim pending</span>';
+        else pill = '<span class="pill open">Open</span>';
+        const claimable = !isPending && s.status === 'open';
+        const right = claimable
+          ? `<button class="claim-btn" data-claim-id="${escapeHTML(s.id)}" data-cross="1">Claim</button>`
+          : '';
+        html += `
+          <div class="shift-card">
+            <div class="date-blk" style="font-size:10px;line-height:1.2">
+              <div style="font-weight:800;color:var(--green-d)">${escapeHTML(s.buildingName || '')}</div>
+              <div style="color:var(--g500)">${s.distanceMiles != null ? s.distanceMiles.toFixed(1) + ' mi' : ''}</div>
+            </div>
+            <div class="info">
+              <div class="ttl">${escapeHTML(s.type || '')} ${escapeHTML(groupLabel(s.group || ''))} ${pill}</div>
+              <div class="meta">${escapeHTML(time)} &middot; ${escapeHTML(s.buildingName || '')}</div>
+            </div>
+            <div class="right">${right}</div>
+          </div>`;
+      }
+    }
+    html += `</div>`;
+  }
+  return html;
+}
+
+function wireEmpCalendarEvents() {
   // Month nav
   $('#emp-prev')?.addEventListener('click', () => navEmpMonth(-1));
   $('#emp-next')?.addEventListener('click', () => navEmpMonth(1));
@@ -1171,15 +1310,12 @@ function renderEmployeeView() {
     render();
   });
 
-  // Cell taps → open per-day panel listing the shifts (mine + claimable
-  // opens) for that day, using the existing shift-card UI so claim
-  // buttons and times stay consistent with the rest of the app.
+  // Cell taps → open per-day panel
   $$('.cal-cell.emp[data-date]').forEach(el => {
     el.addEventListener('click', () => renderEmpDayPanel(el.dataset.date));
   });
 
-  // Open-shift chips inside cells — tap to claim directly without
-  // having to expand the day panel first.
+  // Claim buttons (calendar chips + nearby cards)
   $$('[data-claim-id]').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
@@ -1187,11 +1323,30 @@ function renderEmployeeView() {
     });
   });
 
-  // Re-render the day panel if one was previously open and it's still
-  // in the visible month — keeps state stable across re-renders.
+  // Re-render the day panel if one was previously open
+  const monthPrefix = `${State.empViewYear}-${String(State.empViewMonth+1).padStart(2,'0')}-`;
   if (State.empSelectedDate && State.empSelectedDate.startsWith(monthPrefix)) {
     renderEmpDayPanel(State.empSelectedDate);
   }
+}
+
+async function fetchNearbyShifts() {
+  if (State.nearbyLoading) return;
+  State.nearbyLoading = true;
+  render();
+  try {
+    const r = await apiFetch('/api/shifts/nearby');
+    if (r.ok) {
+      const j = await r.json();
+      State.nearbyShifts = j.shifts || [];
+    } else {
+      State.nearbyShifts = [];
+    }
+  } catch (e) {
+    State.nearbyShifts = [];
+  }
+  State.nearbyLoading = false;
+  render();
 }
 
 // "7:00 AM" → "7a", "11:30 PM" → "11:30p". Compact for tight cells.
@@ -1393,18 +1548,29 @@ function emptyBlock(icon, ttl, sub) {
 }
 
 async function claimShift(shiftId) {
-  const shift = (State.data?.shifts || []).find(s => s.id === shiftId);
+  // Look in local shifts first, then nearby cache
+  const shift = (State.data?.shifts || []).find(s => s.id === shiftId)
+    || (State.nearbyShifts || []).find(s => s.id === shiftId);
   if (!shift) return;
-  if (!await confirmAction('Claim Shift', "Request to claim this " + (shift.type||"") + " " + (groupLabel(shift.group||"")) + " shift on " + fmtDateLong(shift.date) + "?\n\nYour supervisor will review before it's confirmed.", 'Submit Claim')) return;
+  const bldNote = shift.buildingName ? ` at ${shift.buildingName}` : '';
+  if (!await confirmAction('Claim Shift', "Request to claim this " + (shift.type||"") + " " + (groupLabel(shift.group||"")) + " shift on " + fmtDateLong(shift.date) + bldNote + "?\n\nYour supervisor will review before it's confirmed.", 'Submit Claim')) return;
 
   try {
     const r = await apiFetch('/api/shifts/' + encodeURIComponent(shiftId) + '/claim', { method:'POST', body:{} });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { toast(j.error || 'Claim failed', 'warn'); return; }
     // Patch local state so UI updates instantly
-    Object.assign(shift, j.shift || {});
+    if (State.data?.shifts) {
+      const local = State.data.shifts.find(s => s.id === shiftId);
+      if (local) Object.assign(local, j.shift || {});
+    }
     toast('Claim submitted — waiting for approval');
-    render();
+    // Re-fetch nearby shifts to remove claimed shift from the list
+    if (State.empScheduleMode === 'nearby') {
+      fetchNearbyShifts();
+    } else {
+      render();
+    }
   } catch (e) {
     toast('Network error', 'error');
   }
@@ -1448,7 +1614,6 @@ function renderAdminScheduleView() {
     if (State.selectedDate) renderDayPanel(State.selectedDate);
   }
   if (State.scheduleMode === 'week') wireWeekViewClicks();
-  $('#open-sb')?.addEventListener('click', openSidebar);
   $('#fab-add-shift')?.addEventListener('click', () => openAddShiftSheet(State.selectedDate));
   $('#jump-today')?.addEventListener('click', () => {
     const t = new Date();
@@ -1507,8 +1672,7 @@ function renderWeekFilterBar() {
   return `
     <div style="padding:8px 14px;background:#fff;border-bottom:1px solid var(--g200);font-size:12px;color:var(--g600);display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <span style="font-weight:700;color:var(--g700)">Group:</span>
-      <span style="background:var(--green-l);color:var(--green-d);font-weight:700;padding:3px 10px;border-radius:99px">${escapeHTML(groupLabel(State.selectedGroup||'—'))}</span>
-      <button id="open-sb" class="btn-ghost" style="margin-left:auto;font-size:12px">Change</button>
+      <span class="group-pill" onclick="openSidebar()" style="background:var(--green-l);color:var(--green-d);font-weight:700;padding:3px 10px;border-radius:99px;cursor:pointer">${escapeHTML(groupLabel(State.selectedGroup||'—'))}</span>
     </div>
   `;
 }
@@ -3217,26 +3381,30 @@ document.addEventListener('keydown', e => {
 // ── Tab badges ────────────────────────────────────────────────
 function updateMessageBadge() {
   const me = State.user;
-  if (!me || !isAdmin()) return;
+  if (!me) return;
   const dms = State.data?.directMessages || [];
   const unread = dms.filter(m => m.toId === me.id && !m.readAt).length;
   const badge = $('#tab-msg-badge');
-  if (unread > 0) {
-    badge.textContent = unread > 99 ? '99+' : String(unread);
-    badge.classList.remove('hidden');
-  } else {
-    badge.classList.add('hidden');
+  if (badge) {
+    if (unread > 0) {
+      badge.textContent = unread > 99 ? '99+' : String(unread);
+      badge.classList.remove('hidden');
+    } else {
+      badge.classList.add('hidden');
+    }
   }
-  // Schedule tab badge: count of pending claims + pending trades
-  const u = State.user;
-  const callerBIds = new Set([u.buildingId, ...(u.buildingIds||[]), effectiveBuildingId()].filter(Boolean));
-  const claims = (State.data?.shifts || []).filter(s => s.claimRequest && (u.role === 'superadmin' || callerBIds.has(s.buildingId))).length;
-  const trades = (State.data?.shiftTrades || []).filter(t => t.status === 'pending' && (u.role === 'superadmin' || callerBIds.has(t.buildingId))).length;
-  const total = claims + trades;
-  const sb = $('#tab-sched-badge');
-  if (sb) {
-    if (total > 0) { sb.textContent = total > 99 ? '99+' : String(total); sb.classList.remove('hidden'); }
-    else sb.classList.add('hidden');
+  // Schedule tab badge: count of pending claims + pending trades (admin only)
+  if (isAdmin()) {
+    const u = State.user;
+    const callerBIds = new Set([u.buildingId, ...(u.buildingIds||[]), effectiveBuildingId()].filter(Boolean));
+    const claims = (State.data?.shifts || []).filter(s => s.claimRequest && (u.role === 'superadmin' || callerBIds.has(s.buildingId))).length;
+    const trades = (State.data?.shiftTrades || []).filter(t => t.status === 'pending' && (u.role === 'superadmin' || callerBIds.has(t.buildingId))).length;
+    const total = claims + trades;
+    const sb = $('#tab-sched-badge');
+    if (sb) {
+      if (total > 0) { sb.textContent = total > 99 ? '99+' : String(total); sb.classList.remove('hidden'); }
+      else sb.classList.add('hidden');
+    }
   }
   // PWA app badge (icon badge on home screen / taskbar)
   if ('setAppBadge' in navigator) {
@@ -3255,6 +3423,11 @@ function startPolling() {
       if (r.status === 401) { showLogin(); return; }
       if (r.ok) {
         State.data = await r.json();
+        // Piggyback nearby shifts refresh when employee is on the Nearby tab
+        if (!isAdmin() && State.empScheduleMode === 'nearby' && State.view === 'schedule') {
+          fetchNearbyShifts();
+          return; // fetchNearbyShifts() will call render() when done
+        }
         // Only re-render if we're not mid-typing in a textarea
         const active = document.activeElement;
         if (active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')) {

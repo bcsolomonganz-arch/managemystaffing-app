@@ -5588,6 +5588,66 @@ app.post('/api/employees/:id/access', requireAuth, requireAdmin, async (req, res
 //   rejected — admin rejected, no change
 //   cancelled — A withdrew before admin decision
 
+// GET /api/shifts/nearby — open shifts from other buildings in the same
+// company within 30 miles. Used by the companion app Nearby tab.
+app.get('/api/shifts/nearby', requireAuth, async (req, res) => {
+  const me = req.user;
+  const data = await loadData();
+  const myBld = (data.buildings || []).find(b => b.id === me.buildingId);
+  if (!myBld || myBld.lat == null || myBld.lng == null) {
+    return res.json({ shifts: [] });
+  }
+  if (!myBld.companyId) {
+    return res.json({ shifts: [] });
+  }
+
+  const NEARBY_RADIUS_METERS = 30 * 1609.34; // 30 miles in meters
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Find other buildings in the same company within 30 miles
+  const nearbyBuildings = (data.buildings || []).filter(b =>
+    b.id !== myBld.id &&
+    b.companyId === myBld.companyId &&
+    b.lat != null && b.lng != null &&
+    _haversineMeters(myBld.lat, myBld.lng, b.lat, b.lng) <= NEARBY_RADIUS_METERS
+  );
+  if (!nearbyBuildings.length) {
+    return res.json({ shifts: [] });
+  }
+
+  const nearbyBldIds = new Set(nearbyBuildings.map(b => b.id));
+  const bldMap = new Map(nearbyBuildings.map(b => [b.id, b]));
+
+  // Collect open shifts from nearby buildings matching employee's group
+  const myGroup = me.group;
+  const nearbyShifts = (data.shifts || []).filter(s =>
+    s.status === 'open' &&
+    s.group === myGroup &&
+    s.date >= today &&
+    nearbyBldIds.has(s.buildingId) &&
+    !s.claimRequest // Exclude shifts already being claimed
+  );
+
+  const result = nearbyShifts.map(s => {
+    const bld = bldMap.get(s.buildingId);
+    const distMeters = bld ? _haversineMeters(myBld.lat, myBld.lng, bld.lat, bld.lng) : 0;
+    return {
+      id: s.id,
+      date: s.date,
+      type: s.type,
+      start: s.start,
+      end: s.end,
+      group: s.group,
+      status: s.status,
+      buildingId: s.buildingId,
+      buildingName: bld?.name || '',
+      distanceMiles: Math.round((distMeters / 1609.34) * 10) / 10,
+    };
+  }).sort((a, b) => a.date.localeCompare(b.date) || (a.start || '').localeCompare(b.start || ''));
+
+  res.json({ shifts: result });
+});
+
 // POST /api/shifts/:id/claim — employee requests to claim an open shift
 // Used by the companion app (/app) so employees don't need /api/data POST
 // rights. Mirrors the in-page claim flow (managemystaffing.html ~15921):
@@ -5601,40 +5661,62 @@ app.post('/api/shifts/:id/claim', requireAuth, async (req, res) => {
   if (shift.claimRequest)      return res.status(409).json({ error: 'Shift already has a pending claim' });
 
   const me = req.user;
-  // Authz: employee must be in same building + same group as the shift.
-  // Admins/superadmins can also claim (e.g. floating between facilities)
-  // but they're typically using the main UI.
+  // Authz: employee must be in same building + same group as the shift,
+  // OR the shift can be from a nearby building (same company, ≤30 miles)
+  // for cross-building claims.
+  let crossBuilding = false;
   if (shift.buildingId && shift.buildingId !== me.buildingId &&
       !(me.buildingIds || []).includes(shift.buildingId) &&
       me.role !== 'superadmin') {
-    return res.status(403).json({ error: 'Not authorized for this building' });
+    // Check if this is a valid cross-building claim
+    const myBld = (data.buildings || []).find(b => b.id === me.buildingId);
+    const shiftBld = (data.buildings || []).find(b => b.id === shift.buildingId);
+    const NEARBY_RADIUS_METERS = 30 * 1609.34;
+    if (myBld && shiftBld &&
+        myBld.companyId && shiftBld.companyId &&
+        myBld.companyId === shiftBld.companyId &&
+        myBld.lat != null && myBld.lng != null &&
+        shiftBld.lat != null && shiftBld.lng != null &&
+        _haversineMeters(myBld.lat, myBld.lng, shiftBld.lat, shiftBld.lng) <= NEARBY_RADIUS_METERS) {
+      crossBuilding = true;
+    } else {
+      return res.status(403).json({ error: 'Not authorized for this building' });
+    }
   }
   if (me.role === 'employee' && me.group !== shift.group) {
     return res.status(403).json({ error: 'Not authorized for this shift group' });
   }
 
+  const myBldName = crossBuilding
+    ? ((data.buildings || []).find(b => b.id === me.buildingId)?.name || '')
+    : '';
+
   shift.claimRequest = {
     empId: me.id,
     empName: me.name || me.email,
     requestedAt: new Date().toISOString(),
+    ...(crossBuilding ? { crossBuilding: true, homeBuildingId: me.buildingId, homeBuildingName: myBldName } : {}),
   };
   try { await flushNow(); } catch (e) {
     return res.status(500).json({ error: 'Failed to persist shift claim. Please retry.' });
   }
   auditLog('SHIFT_CLAIM_REQUESTED', me, {
     shiftId, date: shift.date, type: shift.type, group: shift.group,
+    crossBuilding: crossBuilding || undefined,
   });
-  // Push to building admins so they can approve from the app
+  // Push to the shift's building admins so they can approve from the app.
+  // For cross-building claims, this notifies the OTHER building's admins.
   try {
     const adminAccts = (data.accounts || []).filter(a =>
       ['admin','hradmin','superadmin','regionaladmin'].includes(a.role) &&
       (a.role === 'superadmin' ||
        a.buildingId === shift.buildingId ||
        (Array.isArray(a.buildingIds) && a.buildingIds.includes(shift.buildingId))));
-    const summary = `${me.name || 'An employee'} wants the ${shift.type || ''} ${shift.group || ''} shift on ${shift.date}.`.replace(/\s+/g,' ').trim();
+    const fromNote = crossBuilding ? ` from ${myBldName}` : '';
+    const summary = `${me.name || 'An employee'}${fromNote} wants the ${shift.type || ''} ${shift.group || ''} shift on ${shift.date}.`.replace(/\s+/g,' ').trim();
     for (const a of adminAccts) {
       sendPushTo(a.id, {
-        title: 'New shift claim',
+        title: crossBuilding ? 'Cross-building shift claim' : 'New shift claim',
         body: summary,
         tag: 'claim-req:' + shift.id,
         url: '/app',
