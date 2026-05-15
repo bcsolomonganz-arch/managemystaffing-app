@@ -6293,7 +6293,7 @@ const App = {
 
   // ── SHIFT MANAGER (headcount + employee assignment + rotation) ─
   openShiftManagerModal() {
-    const bId = this.S.user?.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     const g = this.S.selectedGroup;
     const groups = g ? [g] : DISPLAY_GROUPS;
     const slots = (this.S.staffingSlots || {})[bId] || {};
@@ -6360,7 +6360,7 @@ const App = {
 
   _smUpdateSlots(grp, shiftType, val) {
     // Dynamically update slot count display
-    const bId = this.S.user?.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     if (!this.S.staffingSlots) this.S.staffingSlots = {};
     if (!this.S.staffingSlots[bId]) this.S.staffingSlots[bId] = {};
     if (!this.S.staffingSlots[bId][grp]) this.S.staffingSlots[bId][grp] = {};
@@ -6370,7 +6370,7 @@ const App = {
   },
 
   saveShiftManager() {
-    const bId = this.S.user?.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     if (!this.S.staffingSlots) this.S.staffingSlots = {};
     if (!this.S.staffingSlots[bId]) this.S.staffingSlots[bId] = {};
     const ROTATIONS = ['Every Day','Mon–Fri','Tue–Sat','Sun–Thu','3 On / 2 Off','2 On / 2 Off','Every Other Day','Custom'];
@@ -7510,7 +7510,7 @@ const App = {
 
   // ── ASSIGN SHIFT (14-day rotation picker) ───────────────────
   openAssignShiftModal(date, group, shiftType, shiftId) {
-    const bId = this.S.user?.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     // If the caller didn't specify a shift id, fall back to the first OPEN
     // shift matching this date+group+type+building. The Assign Employee modal
     // applies actions to whichever specific slot was clicked; we need an id
@@ -7979,7 +7979,7 @@ const App = {
     this.S._coverShiftId = shiftId;
     this.S._coverShiftEmpId = empId;
 
-    const bId = this.S.user?.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     const g = this.S.selectedGroup || shift.group;
     const ag = getActualGroups(g);
 
@@ -8185,7 +8185,7 @@ const App = {
   // either for one specific date or for every shift of that type on the
   // current calendar (same building + group + type, all dates).
   openEditShiftTimesModal(date, group, shiftType) {
-    const bId = this.S.user?.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     const shiftDef = this.resolveShiftDef(group, shiftType, bId) || {};
     // Pull start/end from the first matching shift on this date if present;
     // fall back to the type's default. This way the dialog shows the user's
@@ -8279,7 +8279,7 @@ const App = {
       this.showToast('Invalid shift times — end must be after start and shift must be 24 hours or less', 'warn');
       return;
     }
-    const bId = this.S.user?.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
 
     let updated = 0;
     for (const s of (this.S.shifts || [])) {
@@ -8555,7 +8555,7 @@ const App = {
   },
 
   openStaffPicker(date, shiftType, group) {
-    const bId = this.S.user?.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     const ag = getActualGroups(group);
     // Same eligibility filter as the Available Staff list above
     const workingIds = new Set(
@@ -8689,7 +8689,7 @@ const App = {
   },
 
   async sendCoverageAlert(date, shiftType, group) {
-    const bId = this.S.user?.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     const ag = getActualGroups(group);
     const msg = document.getElementById('cover-sms-body')?.value || '';
     const workingIds = new Set(
@@ -8742,7 +8742,7 @@ const App = {
   },
 
   openSlotsModal() {
-    const bId = this.S.user?.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     const slots = (this.S.staffingSlots || {})[bId] || {};
     const g = this.S.selectedGroup;
 
@@ -8782,7 +8782,7 @@ const App = {
   },
 
   saveStaffingSlots() {
-    const bId = this.S.user?.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     if (!this.S.staffingSlots) this.S.staffingSlots = {};
     if (!this.S.staffingSlots[bId]) this.S.staffingSlots[bId] = {};
     DISPLAY_GROUPS.forEach(grp => {
@@ -9260,7 +9260,7 @@ const App = {
 
     // Resolve to the effective per-building flow — building override if set,
     // else the state default. _getEffectiveBuildingFlow handles this for us.
-    const empBld = (this.S.buildings || []).find(b => b.id === (this.S.user?.buildingId || this.S.activeBuildingId));
+    const empBld = (this.S.buildings || []).find(b => b.id === (this.S.activeBuildingId || this.S.user?.buildingId));
     const effFlow = empBld ? this._getEffectiveBuildingFlow(empBld.id) : null;
     let pkg = null;
     if (effFlow && effFlow.steps?.length) {
@@ -9510,7 +9510,7 @@ const App = {
     if (!emp) return;
 
     // Resolve package using same path as renderCandidatePortal
-    const empBld = (this.S.buildings || []).find(b => b.id === (this.S.user?.buildingId || this.S.activeBuildingId));
+    const empBld = (this.S.buildings || []).find(b => b.id === (this.S.activeBuildingId || this.S.user?.buildingId));
     const effFlow = empBld ? this._getEffectiveBuildingFlow(empBld.id) : null;
     let pkg = null;
     if (effFlow && effFlow.steps?.length) {
@@ -12619,7 +12619,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   },
 
   renderHRBilling() {
-    const bId = this.S.user?.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     const b = this.S.buildings.find(x => x.id === bId);
     const bd = (this.S.billingData || {})[bId] || {};
     const plan = (bd.plan||'professional').toLowerCase();
@@ -12826,7 +12826,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const last4 = number.slice(-4);
     const first = number[0];
     const brand = first==='4'?'VISA':first==='5'?'MC':first==='3'?'AMEX':first==='6'?'DISC':'CARD';
-    const bId = this.S.user?.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     if (!this.S.billingData) this.S.billingData = {};
     if (!this.S.billingData[bId]) this.S.billingData[bId] = {};
     this.S.billingData[bId].paymentMethod = { brand, last4, name, expiry, autopay, savedAt: new Date().toISOString() };
@@ -12853,7 +12853,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const phone = document.getElementById('bc-phone')?.value.trim();
     const title = document.getElementById('bc-title')?.value.trim();
     if (!name || !email) { this.showToast('Name and email are required', 'warn'); return; }
-    const bId = this.S.user?.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     if (!this.S.billingData) this.S.billingData = {};
     if (!this.S.billingData[bId]) this.S.billingData[bId] = {};
     this.S.billingData[bId].billingContact = { name, email, phone, title };
@@ -12862,7 +12862,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.navigateHR('billing');
   },
   toggleAutopay(val) {
-    const bId = this.S.user?.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     if (!this.S.billingData?.[bId]?.paymentMethod) return;
     this.S.billingData[bId].paymentMethod.autopay = val;
     this.persistData();
@@ -12872,7 +12872,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.showToast(val ? 'Autopay enabled' : 'Autopay disabled');
   },
   exportBillingCSV() {
-    const bId = this.S.user?.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     const bd = (this.S.billingData||{})[bId] || {};
     const invoices = bd.invoices || [];
     const rows = [['Invoice','Date','Due','Amount','Status'],...invoices.map(i=>[i.id,i.date,i.due||i.date,i.amount,i.status])];
@@ -16420,7 +16420,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   // Open the kiosk URL for the current building. SA can also pull it for any
   // building via the SA building card. Admin gets a copy-to-clipboard prompt.
   async showKioskUrl(buildingId) {
-    const b = this.S.buildings.find(x => x.id === (buildingId || this.S.user?.buildingId || 'b1'));
+    const b = this.S.buildings.find(x => x.id === (buildingId || this.S.activeBuildingId || this.S.user?.buildingId || 'b1'));
     if (!b) return;
     const url = (window.location.origin || 'https://www.managemystaffing.com') + '/kiosk/' + encodeURIComponent(b.id);
     const ok = await this.mmsConfirm({
@@ -16753,7 +16753,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (nursingEl) { nursingEl.style.fontSize='16px'; nursingEl.style.fontWeight='800'; }
 
     // ── Daily staffing cost per position + OT panel ────────────────────────
-    const bId  = this.S.user?.buildingId || 'b1';
+    const bId  = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     const date = this.S.ppdDate || TODAY;
     const money = (n) => '$' + (Math.round(n * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const setCost = (id, n) => { const el = document.getElementById(id); if (el) el.textContent = money(n); };
@@ -18171,7 +18171,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (this.S.otHighlight) {
       const mStart = `${viewYear}-${String(viewMonth+1).padStart(2,'0')}-01`;
       const mEnd   = `${viewYear}-${String(viewMonth+1).padStart(2,'0')}-${String(daysInMonth).padStart(2,'0')}`;
-      const bId    = this.S.user?.buildingId || 'b1';
+      const bId    = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
       const g      = this.S.selectedGroup || null;
       const showAll = this.S._statAllBuildings;
       const bIds   = showAll ? (this.S.buildings||[]).map(b=>b.id) : [bId];
@@ -18196,7 +18196,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       const sched = dayShifts.filter(s=>s.status==='scheduled');
       const g = this.S.selectedGroup;
 
-      const bId = this.S.user?.buildingId || 'b1';
+      const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
       let content = '';
       // Track whether ANY OPEN tag (real or virtual) shows on this cell so
       // the cell-highlight follows the visual state, not just the row count.
@@ -18325,7 +18325,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const dayShifts = this.getDayShifts(date);
     const d = new Date(date+'T12:00:00');
     const label = d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
-    const bId = this.S.user?.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
 
     // Pick groups + shift types based on the user's sidebar selection.
     //   • clinical group selected → show just that group with Day/Eve/Night
@@ -19500,7 +19500,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (!['admin','superadmin','hradmin','regionaladmin'].includes(this.S.user?.role)) { this.showToast('Unauthorized','warn'); return; }
     const emp = this._empLookup(empId);
     if (!emp) return;
-    const bId = this.S.user?.buildingId || 'b1';
+    const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     // Guard: prevent duplicate assignment for same employee on same date/group/type
     if (this.S.shifts.find(s => s.date === date && matchesGroup(s, group) && s.type === shiftType && s.employeeId === empId && (s.buildingId === bId || !s.buildingId))) {
       this.showToast('Already scheduled for this shift', 'warn'); return;
