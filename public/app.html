@@ -1026,12 +1026,13 @@ function showApp() {
   const bld = currentBuilding();
   $('#who-text').innerHTML = `${escapeHTML(u.name || u.email || '')}<br><span style="opacity:.7">${escapeHTML(u.role || '')}</span>`;
 
-  // Building chip — show if user has 2+ buildings or is superadmin (has all)
+  // Building chip — show for any user with 2+ visible buildings so they
+  // can switch which facility they're viewing/sending from.
   const buildings = adminVisibleBuildings();
   const chipName = $('#bld-chip-name');
   const chip = $('#bld-chip');
   if (chip && chipName) {
-    if (isAdmin() && buildings.length >= 2 && bld) {
+    if (buildings.length >= 2 && bld) {
       chipName.textContent = bld.name;
       chip.classList.remove('hidden');
     } else {
@@ -2683,7 +2684,16 @@ function renderMessagesView() {
 
   // ── Group messages (each row opens the group composer for a one-shot
   //     blast — groups don't carry persistent threads, by design) ──────────
-  const groups = (State.data?.textGroups || []).filter(g => !g.inactive);
+  // Filter to groups that have reachable members in the current building
+  // so each facility sees only its own groups — not a global pool.
+  const bId = effectiveBuildingId();
+  const bldEmps = (State.data?.employees || []).filter(e => !e.inactive && e.buildingId === bId);
+  const bldEmpIds = new Set(bldEmps.map(e => e.id));
+  const groups = (State.data?.textGroups || []).filter(g => {
+    if (g.inactive) return false;
+    const memberIds = resolveGroupMemberIds(g);
+    return memberIds.some(id => bldEmpIds.has(id));
+  });
 
   // Filter tab state. Default 'all' so admins see both kinds at a glance.
   // Persists for the session via State.msgFilter so tab navigation feels
@@ -2783,9 +2793,12 @@ function renderMessagesView() {
 // One row in the unified messages list representing a Group (one-shot blast
 // target). Clicking it opens the group composer sheet.
 function groupRow(g) {
-  const memberCount = (typeof resolveGroupMemberIds === 'function')
-    ? resolveGroupMemberIds(g).length
-    : (g.memberIds || []).length;
+  // Show member count scoped to the current building
+  const allMembers = resolveGroupMemberIds(g);
+  const bId = effectiveBuildingId();
+  const bldMembers = (State.data?.employees || []).filter(e =>
+    allMembers.includes(e.id) && !e.inactive && e.buildingId === bId);
+  const memberCount = bldMembers.length;
   const subtitle = (g.autoFromGroups || []).map(groupLabel).join(', ') || 'Custom list';
   return `
     <div class="thread-row" data-gid="${escapeHTML(g.id)}">
