@@ -10,7 +10,7 @@
 <meta http-equiv="Referrer-Policy" content="no-referrer">
 <meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=()">
 <meta name="robots" content="noindex, nofollow">
-<title>ManageMyStaffing — HIPAA Compliant</title>
+<title>ManageMyStaffing</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg viewBox='0 0 100 92' xmlns='http://www.w3.org/2000/svg'><rect x='70' y='2' width='14' height='26' rx='5' fill='%236B9E7A'/><path d='M50 5 L0 52 Q0 56 4 56 L96 56 Q100 56 100 52 Z' fill='%236B9E7A'/><rect x='3' y='50' width='94' height='42' rx='6' fill='%236B9E7A'/><rect x='38' y='20' width='9' height='9' rx='2' fill='white'/><rect x='52' y='20' width='9' height='9' rx='2' fill='white'/><rect x='38' y='32' width='9' height='9' rx='2' fill='white'/><rect x='52' y='32' width='9' height='9' rx='2' fill='white'/><rect x='63' y='57' width='10' height='9' rx='2' fill='white'/><rect x='76' y='57' width='10' height='9' rx='2' fill='white'/><rect x='63' y='69' width='10' height='9' rx='2' fill='white'/><rect x='76' y='69' width='10' height='9' rx='2' fill='white'/><rect x='7' y='71' width='26' height='8' rx='4' fill='white'/><rect x='16' y='62' width='8' height='26' rx='4' fill='white'/><rect x='41' y='70' width='18' height='22' rx='3' fill='white'/></svg>">
 <link rel="apple-touch-icon" href="data:image/svg+xml,<svg viewBox='0 0 100 92' xmlns='http://www.w3.org/2000/svg'><rect width='100' height='100' rx='20' fill='%23F0F7F3'/><rect x='70' y='2' width='14' height='26' rx='5' fill='%236B9E7A'/><path d='M50 5 L0 52 Q0 56 4 56 L96 56 Q100 56 100 52 Z' fill='%236B9E7A'/><rect x='3' y='50' width='94' height='42' rx='6' fill='%236B9E7A'/><rect x='38' y='20' width='9' height='9' rx='2' fill='white'/><rect x='52' y='20' width='9' height='9' rx='2' fill='white'/><rect x='38' y='32' width='9' height='9' rx='2' fill='white'/><rect x='52' y='32' width='9' height='9' rx='2' fill='white'/><rect x='63' y='57' width='10' height='9' rx='2' fill='white'/><rect x='76' y='57' width='10' height='9' rx='2' fill='white'/><rect x='63' y='69' width='10' height='9' rx='2' fill='white'/><rect x='76' y='69' width='10' height='9' rx='2' fill='white'/><rect x='7' y='71' width='26' height='8' rx='4' fill='white'/><rect x='16' y='62' width='8' height='26' rx='4' fill='white'/><rect x='41' y='70' width='18' height='22' rx='3' fill='white'/></svg>">
 <link rel="manifest" href="/manifest.json">
@@ -187,7 +187,7 @@ select:not(.select-bare):focus{outline:none;border-color:var(--blue-d);box-shado
 .mode-toggle-btn.active{background:var(--blue);color:#fff;box-shadow:0 2px 6px rgba(107,158,122,.35)}
 .mode-toggle-btn:hover:not(.active){color:var(--g700)}
 /* HR Module */
-.hr-hipaa-bar{background:#FFFBEB;border:1px solid #FCD34D;border-radius:8px;padding:9px 14px;display:flex;align-items:center;gap:8px;font-size:12px;color:#92400E;font-weight:500;margin-bottom:20px}
+.hr-hipaa-bar{display:none}
 .hr-stat-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:24px}
 .hr-stat-card{background:#fff;border:1px solid var(--g200);border-radius:12px;padding:18px 16px;box-shadow:var(--shadow)}
 .hr-stat-icon{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;margin-bottom:10px}
@@ -537,9 +537,8 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
 .lock-card p{color:#9CA3AF;font-size:13px;text-align:center;margin:0;line-height:1.6}
 .lock-input{width:100%;padding:12px 14px;border:2px solid #374151;background:#111827;color:#F9FAFB;border-radius:8px;font-size:15px;font-family:inherit;outline:none;transition:border-color .15s}
 .lock-input:focus{border-color:var(--blue-d)}
-/* HIPAA privacy notice */
-.hipaa-banner{display:flex;align-items:center;gap:8px;background:#ECFDF5;border:1px solid #6EE7B7;border-radius:6px;padding:8px 12px;margin-bottom:16px;font-size:12px;color:#065F46;font-weight:500}
-.hipaa-badge-sm{display:inline-flex;align-items:center;gap:4px;background:#ECFDF5;border:1px solid #6EE7B7;color:#065F46;font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px;letter-spacing:.3px}
+.hipaa-banner{display:none}
+.hipaa-badge-sm{display:none}
 /* CMS Star Rating */
 .cms-star-section{background:#fff;border:1.5px solid var(--g200);border-radius:12px;overflow:hidden;margin-bottom:16px}
 .cms-star-header{padding:14px 16px;background:linear-gradient(135deg,#1A3C34 0%,#2D6A4F 100%);display:flex;align-items:center;justify-content:space-between}
@@ -584,11 +583,54 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
 .pw-strength-bar.weak{background:var(--red);width:33%}
 .pw-strength-bar.medium{background:var(--blue-m);width:66%}
 .pw-strength-bar.strong{background:var(--blue);width:100%}
-/* HIPAA footer */
-.hipaa-footer{background:#111827;color:#6B7280;font-size:11px;padding:10px 20px;display:flex;align-items:center;justify-content:center;gap:16px;flex-wrap:wrap;border-top:1px solid #1F2937}
-.hipaa-footer a{color:#4B5563;text-decoration:underline;cursor:pointer}
-/* Force-hide print for sensitive data */
-@media print{.no-print{display:none!important}}
+.hipaa-footer{display:none}
+.hipaa-footer a{display:none}
+/* Force-hide print for sensitive data + high-contrast print styles */
+@media print{
+  .no-print{display:none!important}
+  /* Calendar grid: solid black borders for clear cell boundaries */
+  .cal-grid,.week14-grid{box-shadow:none!important;border:2px solid #000!important}
+  .cal-cell,.week14-cell{border-color:#000!important;border-width:1px!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .cal-header-row{border-bottom:2px solid #000!important}
+  .cal-dow{color:#000!important;font-weight:900!important;font-size:13px!important}
+  .cal-date{color:#000!important;font-weight:800!important;font-size:14px!important}
+  .cal-cell.today .cal-date{background:#000!important;color:#fff!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .cal-cell.other-month .cal-date{color:#666!important}
+  .cal-month-title{color:#000!important;font-weight:900!important;font-size:18px!important}
+  .cal-month-banner{border-bottom:2px solid #000!important}
+  /* Shift pills: strong black text, visible borders */
+  .shift-emp{background:#E8F5E9!important;color:#000!important;font-weight:700!important;font-size:11px!important;border:1px solid #000!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .shift-open-tag{background:#FFF9C4!important;color:#000!important;font-weight:700!important;font-size:11px!important;border:2px dashed #000!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .shift-label{color:#000!important;font-weight:800!important;font-size:11px!important}
+  .shift-row{margin-bottom:3px!important}
+  /* Calendar chips / summary */
+  .cal-chip{color:#000!important;font-weight:700!important;border:1px solid #000!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .cal-chip.sched{background:#E8F5E9!important}
+  .cal-chip.open{background:#FFF9C4!important}
+  /* Week view dates */
+  .week14-date{color:#000!important;font-weight:800!important}
+  .week14-week-hdr{border-bottom:2px solid #000!important}
+  .week14-week-label{color:#000!important}
+  .week14-row{border-bottom:1px solid #000!important}
+  /* Group tabs row */
+  .group-tabs-row{display:none!important}
+  .group-tab-chip{display:none!important}
+  /* Group pill in header */
+  .group-pill{color:#000!important;border-color:#000!important;font-weight:700!important}
+  /* Day view cells */
+  [style*="grid-template-columns"] > div{border-color:#000!important}
+  /* General text contrast */
+  .cal-summary *{color:#000!important}
+  /* Hide non-essential UI controls */
+  .cal-month-nav{display:none!important}
+  .view-tabs{display:none!important}
+  .sidebar{display:none!important}
+  #sidebar{display:none!important}
+  .header{display:none!important}
+  button.btn{display:none!important}
+  /* Pattern dots: solid black */
+  .pattern-dot{background:#000!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
 </style>
 </head>
 <body>
@@ -647,7 +689,6 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
         </button>
       </div>
     </div>
-    <div class="hipaa-banner"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> HIPAA Compliant — All access is logged and monitored</div>
     <div id="login-error" class="login-error-msg" role="alert" aria-live="assertive"></div>
     <div id="saved-accounts-bar" style="display:none;margin-bottom:14px"></div>
     <div class="form-group"><label>Email</label><input type="email" id="login-email" placeholder="you@example.com" autocomplete="username" maxlength="254"></div>
@@ -680,7 +721,7 @@ hr.div{border:none;border-top:1px solid var(--g100);margin:16px 0}
       </button>
       <div id="forgot-pwd-msg" style="font-size:12px;color:var(--blue-d);margin-top:8px;display:none;text-align:center"></div>
     </div>
-    <p style="font-size:11px;color:var(--g600);text-align:center;margin-top:12px">Unauthorized access is prohibited. All sessions are monitored and audited per HIPAA 45 CFR §164.312.</p>
+    <p style="font-size:11px;color:var(--g600);text-align:center;margin-top:12px">Unauthorized access is prohibited.</p>
   </div>
 </div>
 
@@ -1226,10 +1267,13 @@ const GROUPS = ['Nurse Management','Charge Nurse','CNA','CMA','Housekeeping','La
 // 'Administration'. Add more entries here if other groups need renaming.
 const GROUP_LABEL = { 'Office': 'Administration' };
 const groupLabel = (g) => GROUP_LABEL[g] || g;
-// Sidebar display groups — Cook+Dietary Aid merged into 'Dietary'
-const DISPLAY_GROUPS = ['Nurse Management','Charge Nurse','CNA','CMA','Housekeeping','Laundry','Dietary','Therapy','Office','Maintenance','Marketing'];
-// Maps display group → actual data groups
-const GROUP_MAP = {'Dietary':['Cook','Dietary Aid']};
+// Sidebar display groups — Cook+Dietary Aid merged into 'Dietary',
+// Housekeeping+Laundry merged into 'Housekeeping'.
+// 'All Staff' is a virtual display group that shows every group on one calendar.
+const DISPLAY_GROUPS = ['All Staff','Nurse Management','Charge Nurse','CNA','CMA','Housekeeping','Dietary','Therapy','Office','Maintenance','Marketing'];
+// Maps display group → actual data groups. Charge Nurse includes Nurse
+// Management because nurse managers sometimes work the floor as charge.
+const GROUP_MAP = {'Dietary':['Cook','Dietary Aid'],'Housekeeping':['Housekeeping','Laundry'],'Charge Nurse':['Charge Nurse','Nurse Management']};
 // Returns the set of underlying group values that should match this display
 // group's filters. Always includes the display group itself so shifts saved
 // directly under the display group (e.g. group='Dietary' from the
@@ -1237,6 +1281,7 @@ const GROUP_MAP = {'Dietary':['Cook','Dietary Aid']};
 // sidebar and clicking Add Shifts would create invisible shifts because
 // the calendar filter would only look for group='Cook' or 'Dietary Aid'.
 const getActualGroups = g => {
+  if (g === 'All Staff') return GROUPS;
   const mapped = GROUP_MAP[g];
   if (!mapped) return [g];
   return mapped.includes(g) ? mapped : [g, ...mapped];
@@ -1255,6 +1300,7 @@ const CLINICAL = ['Nurse Management','Charge Nurse','CNA','CMA'];
 // "expired license" flag on schedule cells.
 const NURSING_POSITIONS = new Set(['Nurse Management','Charge Nurse','CNA','CMA']);
 const G_ICONS = {
+  'All Staff': `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M21 21v-2a4 4 0 0 0-3-3.85"/></svg>`,
   'Nurse Management': `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M6 20v-2a6 6 0 0 1 12 0v2"/><path d="M12 12v3"/><path d="M9.5 15.5l2.5 2.5 2.5-2.5"/></svg>`,
   'Charge Nurse': `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v7a7 7 0 0 0 14 0V3"/><path d="M5 3h3M16 3h3"/><path d="M12 17v2"/><circle cx="12" cy="21" r="1.5" fill="currentColor" stroke="none"/></svg>`,
   'CNA': `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7" r="4"/><path d="M5.5 21v-2a6.5 6.5 0 0 1 13 0v2"/><path d="M12 12v5M9.5 14.5h5"/></svg>`,
@@ -1274,6 +1320,7 @@ const G_ICONS = {
   'Marketing': `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>`,
 };
 const G_COLORS = {
+  'All Staff':'#374151',
   'Nurse Management':'#1A3C34','Charge Nurse':'#2D6A4F','CNA':'#6B9E7A','CMA':'#40916C',
   'Housekeeping':'#52B788','Laundry':'#3D7A52','Cook':'#1B5E3B','Dietary Aid':'#4A8A5E','Dietary':'#1B5E3B',
   'Therapy':'#7E22CE',      // purple for therapy roles (PT/OT/Speech)
@@ -1284,7 +1331,7 @@ const G_COLORS = {
 const CLINICAL_SHIFTS = [{type:'Day',start:'7:00 AM',end:'3:00 PM'},{type:'Evening',start:'3:00 PM',end:'11:00 PM'},{type:'Night',start:'11:00 PM',end:'7:00 AM'}];
 const NON_CLINICAL_SHIFTS = [{type:'Morning',start:'6:00 AM',end:'2:00 PM'},{type:'Afternoon',start:'2:00 PM',end:'10:00 PM'}];
 const SHIFT_TYPES = g => CLINICAL.includes(g) ? CLINICAL_SHIFTS : NON_CLINICAL_SHIFTS;
-const SLOTS = {'Nurse Management':[1,0,0],'Charge Nurse':[1,1,1],'CNA':[3,3,2],'CMA':[1,1,1],'Housekeeping':[2,1],'Laundry':[1,1],'Cook':[2,1],'Dietary Aid':[2,1],'Maintenance':[1,0],'Marketing':[1]};
+const SLOTS = {'Nurse Management':[1,0,0],'Charge Nurse':[1,1,1],'CNA':[3,3,2],'CMA':[1,1,1],'Housekeeping':[3,2],'Laundry':[1,1],'Cook':[2,1],'Dietary Aid':[2,1],'Maintenance':[1,0],'Marketing':[1]};
 // LOCAL-date YYYY-MM-DD. Was `new Date().toISOString().slice(0,10)` (UTC),
 // which made TODAY drift ahead of the user's actual day for any timezone
 // west of UTC — at 7pm CST on Sunday May 8 this returned "2026-05-09" even
@@ -2128,7 +2175,7 @@ const App = {
     document.getElementById('modal-totp-body').innerHTML = `
       <div style="text-align:center">
         <p style="font-size:13px;color:var(--g600);margin-bottom:14px">
-          Two-factor authentication is required to access PHI under HIPAA. Scan the QR code below with Google Authenticator, Microsoft Authenticator, or any TOTP app.
+          Two-factor authentication is required for security. Scan the QR code below with Google Authenticator, Microsoft Authenticator, or any TOTP app.
         </p>
         <div style="display:inline-block;padding:14px;background:#fff;border:1px solid var(--g200);border-radius:10px;margin-bottom:14px">
           <img src="${qrDataUrl}" alt="TOTP QR Code" width="200" height="200" style="display:block">
@@ -2689,16 +2736,8 @@ const App = {
     Audit.log('SESSION_UNLOCKED', 'Session unlocked successfully', this.S.user?.id, 'medium');
   },
 
-  // ── PRIVACY NOTICE (HIPAA §164.520) ──────────────────────
+  // ── PRIVACY NOTICE ──────────────────────
   _checkPrivacyNotice() {
-    if (!this.S.user) return false;
-    // Demo accounts skip the HIPAA notice
-    if (this.S.user._demo || this.S.user.demo || this.S.user.id === 'sa-demo') return true;
-    const k = SEC.PRIVACY_PFX + fnv32(this.S.user.email || this.S.user.id);
-    if (!localStorage.getItem(k)) {
-      document.getElementById('modal-privacy').classList.add('open');
-      return false;
-    }
     return true;
   },
 
@@ -2875,7 +2914,7 @@ const App = {
           <div class="avatar-dd-sub">${sanitize(u.email)}</div>
           <div class="avatar-dd-divider"></div>
           ${u.role === 'admin' ? `<div class="avatar-dd-item" onclick="App.openManageAdmins()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg> Manage Admins</div>` : ''}
-          ${['admin','superadmin'].includes(u.role) ? `<div class="avatar-dd-item" onclick="App.openAuditLog()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8"/></svg> HIPAA Audit Log</div>` : ''}
+          ${['admin','superadmin'].includes(u.role) ? `<div class="avatar-dd-item" onclick="App.openAuditLog()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8"/></svg> Audit Log</div>` : ''}
           <div class="avatar-dd-divider"></div>
           <div class="avatar-dd-item" onclick="App.logout()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> Sign Out</div>
         </div>
@@ -4900,7 +4939,7 @@ const App = {
   },
 
   hrHipaaBar() {
-    return `<div class="hr-hipaa-bar"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M8 1L2 4v5c0 3.5 2.7 6.7 6 7.4 3.3-.7 6-3.9 6-7.4V4z"/></svg><strong>HIPAA Protected</strong> — Encrypted in transit &amp; at rest · Auto-lock 15 min</div>`;
+    return '';
   },
 
   renderHRDashboard() {
@@ -6296,7 +6335,8 @@ const App = {
   openShiftManagerModal() {
     const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     const g = this.S.selectedGroup;
-    const groups = g ? [g] : DISPLAY_GROUPS;
+    const realGroups = DISPLAY_GROUPS.filter(x => x !== 'All Staff');
+    const groups = (g && g !== 'All Staff') ? [g] : realGroups;
     const slots = (this.S.staffingSlots || {})[bId] || {};
     const emps = this.S.employees.filter(e => e.buildingId === bId && !e.inactive);
     const ROTATIONS = ['Every Day','Mon–Fri','Tue–Sat','Sun–Thu','3 On / 2 Off','2 On / 2 Off','Every Other Day','Custom'];
@@ -6376,7 +6416,8 @@ const App = {
     if (!this.S.staffingSlots[bId]) this.S.staffingSlots[bId] = {};
     const ROTATIONS = ['Every Day','Mon–Fri','Tue–Sat','Sun–Thu','3 On / 2 Off','2 On / 2 Off','Every Other Day','Custom'];
     const g = this.S.selectedGroup;
-    const groups = g ? [g] : DISPLAY_GROUPS;
+    const realGroups = DISPLAY_GROUPS.filter(x => x !== 'All Staff');
+    const groups = (g && g !== 'All Staff') ? [g] : realGroups;
 
     groups.forEach(grp => {
       const key = grp.replace(/ /g,'_');
@@ -6484,7 +6525,7 @@ const App = {
   // ── ADD SHIFTS (14-day rotation picker) ─────────────────────
   openAddShiftsModal() {
     const g = this.S.selectedGroup;
-    if (!g) { this.showToast('Select a department from the sidebar first', 'warn'); return; }
+    if (!g || g === 'All Staff') { this.showToast('Select a specific department first', 'warn'); return; }
     const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     // Start on Monday of current week
     const startD = new Date(TODAY + 'T12:00:00');
@@ -7265,7 +7306,7 @@ const App = {
   // dispatches to saveRemoveShifts when mode === 'remove'.
   openRemoveShiftsModal() {
     const g = this.S.selectedGroup;
-    if (!g) { this.showToast('Select a department from the sidebar first', 'warn'); return; }
+    if (!g || g === 'All Staff') { this.showToast('Select a specific department first', 'warn'); return; }
     const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     // Picker always starts at TODAY (not Monday-of-the-week). Past days
     // are no longer "removable" — the day has already happened, so showing
@@ -8747,10 +8788,12 @@ const App = {
     const slots = (this.S.staffingSlots || {})[bId] || {};
     const g = this.S.selectedGroup;
 
-    // Build form — if a group is selected, lead with it; show all groups
-    const groups = g
-      ? [g, ...DISPLAY_GROUPS.filter(x => x !== g)]
-      : DISPLAY_GROUPS;
+    // Build form — if a group is selected, lead with it; show all groups.
+    // Exclude 'All Staff' since it's a virtual view, not a real department.
+    const realGroups = DISPLAY_GROUPS.filter(x => x !== 'All Staff');
+    const groups = (g && g !== 'All Staff')
+      ? [g, ...realGroups.filter(x => x !== g)]
+      : realGroups;
 
     let html = '';
     groups.forEach(grp => {
@@ -8786,7 +8829,7 @@ const App = {
     const bId = this.S.activeBuildingId || this.S.user?.buildingId || 'b1';
     if (!this.S.staffingSlots) this.S.staffingSlots = {};
     if (!this.S.staffingSlots[bId]) this.S.staffingSlots[bId] = {};
-    DISPLAY_GROUPS.forEach(grp => {
+    DISPLAY_GROUPS.filter(x => x !== 'All Staff').forEach(grp => {
       const shiftDefs = SHIFT_TYPES(grp);
       const key = grp.replace(/ /g,'_');
       this.S.staffingSlots[bId][grp] = {};
@@ -9805,7 +9848,7 @@ const App = {
         <div id="reset-pw-match" style="font-size:12px;margin-top:6px;display:none"></div>
       </div>
       <button class="btn btn-primary btn-full" onclick="App.completePasswordReset('${sanitize(token)}','${sanitize(uid)}','${sanitize(email)}')">Set New Password</button>
-      <p style="font-size:11px;color:var(--g600);text-align:center;margin-top:12px">All sessions are monitored and audited per HIPAA 45 CFR §164.312.</p>`;
+      <p style="font-size:11px;color:var(--g600);text-align:center;margin-top:12px">All sessions are monitored and audited.</p>`;
     const logoEl = document.getElementById('reset-logo');
     if (logoEl) logoEl.innerHTML = LOGO_SVG;
     setTimeout(() => document.getElementById('reset-pass')?.focus(), 100);
@@ -9961,7 +10004,7 @@ const App = {
         <div id="invite-pw-match" style="font-size:12px;margin-top:6px;display:none"></div>
       </div>
       <button class="btn btn-primary btn-full" onclick="App.acceptInvite('${token}','${sanitize(email)}')">Set Password &amp; Sign In</button>
-      <p style="font-size:11px;color:var(--g600);text-align:center;margin-top:12px">All sessions are monitored and audited per HIPAA 45 CFR §164.312.</p>`;
+      <p style="font-size:11px;color:var(--g600);text-align:center;margin-top:12px">All sessions are monitored and audited.</p>`;
   },
 
   async acceptInvite(token, email) {
@@ -10473,7 +10516,7 @@ What you'll do:
 What you bring:
 • Strong organization skills (sticky notes welcome but not required)
 • Comfort with email, scheduling tools, and the occasional last-minute fire drill
-• Discretion — you'll see HIPAA-protected information daily`,
+• Discretion — you'll see sensitive information daily`,
         requirements:
 `• 2+ years in an office or admin role
 • Strong written and verbal communication
@@ -12590,7 +12633,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     return `
       ${this.hrHipaaBar()}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
-        <div><div class="hr-page-title">Audit Log</div><div class="hr-page-sub">HIPAA §164.312(b) compliance trail — all admin actions logged</div></div>
+        <div><div class="hr-page-title">Audit Log</div><div class="hr-page-sub">All admin actions logged</div></div>
         <span style="font-size:12px;color:var(--g500);background:var(--g100);padding:4px 10px;border-radius:8px">${log.length} entries</span>
       </div>
       <div class="hr-section" style="overflow:auto;max-height:70vh">
@@ -12627,10 +12670,10 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const planNames = {basic:'Basic',professional:'Professional',enterprise:'Enterprise',trial:'Trial'};
     const planPrices = {basic:'$149',professional:'$299',enterprise:'$599',trial:'$0'};
     const planFeatures = {
-      basic: ['Up to 25 employees','Scheduling','HIPAA Compliant'],
-      professional: ['Up to 100 employees','Scheduling + HR','SmartLinx Integration','HIPAA Compliant'],
-      enterprise: ['Unlimited employees','Full Platform','Priority Support','Custom Integrations','HIPAA Compliant'],
-      trial: ['Full feature access during trial','Up to 25 employees','HIPAA Compliant'],
+      basic: ['Up to 25 employees','Scheduling'],
+      professional: ['Up to 100 employees','Scheduling + HR','SmartLinx Integration'],
+      enterprise: ['Unlimited employees','Full Platform','Priority Support','Custom Integrations'],
+      trial: ['Full feature access during trial','Up to 25 employees'],
     };
     const status = bd.payStatus || 'trial';
     const statusColor = status==='current'?'var(--green)':status==='overdue'?'var(--red)':'var(--amber)';
@@ -16037,7 +16080,77 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     editor.style.display  = 'none';
     display.style.display = 'inline';
   },
-  empCardSaveField(empId, fieldKey, value, inputType) {
+
+  // Shared helper: persists current state to server with ETag conflict retry,
+  // _persistInFlight coordination, and rollback on failure. Returns true on
+  // success, false on failure (rollbackFn already called).
+  async _directPersist(rollbackFn) {
+    if (IS_SERVER_MODE && !this.S.user?.demo) {
+      if (this._persistInFlight) {
+        if (rollbackFn) rollbackFn();
+        this.showToast('A save is in progress — please try again in a moment.', 'warn');
+        return false;
+      }
+      this._persistInFlight = true;
+      try {
+        const headers = { 'Content-Type': 'application/json' };
+        if (this.S._dataVersion) headers['If-Match'] = '"' + this.S._dataVersion + '"';
+        const payload = {
+          v:1, savedAt:Date.now(),
+          companies:this.S.companies, buildings:this.S.buildings, accounts:this.S.accounts,
+          employees:this.S.employees, shifts:this.S.shifts,
+          schedulePatterns:this.S.schedulePatterns,
+          hrEmployees:this.S.hrEmployees, hrOnboarding:this.S.hrOnboarding,
+          hrAccounts:this.S.hrAccounts, hrTimeClock:this.S.hrTimeClock,
+          jobPostings:this.S.jobPostings, demos:this.S.demos,
+          billingData:this.S.billingData, shiftTemplates:this.S.shiftTemplates,
+          staffingSlots:this.S.staffingSlots, buildingShiftTypes:this.S.buildingShiftTypes,
+          ppdDailyCensus:this.S.ppdDailyCensus, staffEvents:this.S.staffEvents,
+          discharges:this.S.discharges, dischargeTemplates:this.S.dischargeTemplates,
+          shiftTrades:this.S.shiftTrades, directMessages:this.S.directMessages,
+          prospects:this.S.prospects,
+        };
+        let r = await fetch('/api/data', { method: 'POST', headers, body: JSON.stringify(payload) });
+        if (r.status === 412) {
+          try {
+            const dResp = await fetch('/api/data');
+            if (dResp.ok) {
+              const etag = dResp.headers.get('ETag');
+              if (etag) this.S._dataVersion = etag.replace(/"/g, '');
+            }
+          } catch {}
+          const rh = { 'Content-Type': 'application/json' };
+          if (this.S._dataVersion) rh['If-Match'] = '"' + this.S._dataVersion + '"';
+          payload.savedAt = Date.now();
+          r = await fetch('/api/data', { method: 'POST', headers: rh, body: JSON.stringify(payload) });
+        }
+        if (!r.ok) {
+          if (rollbackFn) rollbackFn();
+          const b = await r.json().catch(() => ({}));
+          this.showToast(b.error || 'Failed to save. Please retry.', 'warn');
+          return false;
+        }
+        const etag = r.headers.get('ETag');
+        if (etag) this.S._dataVersion = etag.replace(/"/g, '');
+        return true;
+      } catch (e) {
+        if (rollbackFn) rollbackFn();
+        this.showToast('Network error — change not saved. Please retry.', 'warn');
+        return false;
+      } finally {
+        this._persistInFlight = false;
+        if (this._persistQueued) {
+          const q = this._persistQueued; this._persistQueued = null;
+          this.persistData(q);
+        }
+      }
+    } else {
+      this.persistData();
+      return true;
+    }
+  },
+
+  async empCardSaveField(empId, fieldKey, value, inputType) {
     const emp = (this.S.employees || []).find(e => e.id === empId);
     if (!emp) { this.showToast('Employee not found', 'warn'); return; }
     const val = (value || '').trim();
@@ -16081,16 +16194,22 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       const newBld = (this.S.buildings || []).find(b => b.id === val);
       emp.buildingId = val;
       const today = new Date().toISOString().slice(0, 10);
-      let moved = 0;
+      const movedShiftIds = [];
       for (const s of (this.S.shifts || [])) {
         if (s.employeeId !== empId || s.date < today) continue;
-        if (s.buildingId === oldVal) { s.buildingId = val; moved++; }
+        if (s.buildingId === oldVal) { s.buildingId = val; movedShiftIds.push(s.id); }
       }
-      this.persistData();
+      const saved = await this._directPersist(() => {
+        emp.buildingId = oldVal;
+        for (const s of (this.S.shifts || [])) {
+          if (movedShiftIds.includes(s.id)) s.buildingId = oldVal;
+        }
+      });
+      if (!saved) return;
       Audit.log('EMP_BUILDING_CHANGED',
-        `${sanitize(emp.name)} moved from ${oldBld?.name||oldVal} to ${newBld?.name||val}. ${moved} future shift${moved===1?'':'s'} updated.`,
+        `${sanitize(emp.name)} moved from ${oldBld?.name||oldVal} to ${newBld?.name||val}. ${movedShiftIds.length} future shift${movedShiftIds.length===1?'':'s'} updated.`,
         this.S.user?.id, 'high');
-      this.showToast(`${emp.name.split(' ')[0]} → ${newBld?.name||val}${moved ? ' · '+moved+' shift'+(moved===1?'':'s')+' moved' : ''}`);
+      this.showToast(`${emp.name.split(' ')[0]} → ${newBld?.name||val}${movedShiftIds.length ? ' · '+movedShiftIds.length+' shift'+(movedShiftIds.length===1?'':'s')+' moved' : ''}`);
       document.getElementById('modal-employee-card')?.remove();
       this.openEmployeeCard(empId);
       this.renderMain();
@@ -16106,7 +16225,8 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     };
     const fieldLabel = FIELD_LABELS[fieldKey] || fieldKey.replace(/([A-Z])/g, ' $1').toLowerCase().replace(/^./, c => c.toUpperCase());
     setField(emp, fieldKey, val);
-    this.persistData();
+    const saved = await this._directPersist(() => { setField(emp, fieldKey, oldVal); });
+    if (!saved) return;
     Audit.log('EMP_FIELD_UPDATED',
       `${sanitize(emp.name)} ${fieldLabel}: "${oldVal||'—'}" → "${val||'—'}"`,
       this.S.user?.id, 'low');
@@ -16132,7 +16252,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     editor.style.display  = 'none';
     display.style.display = 'block';
   },
-  empCardSaveName(empId) {
+  async empCardSaveName(empId) {
     const emp = (this.S.employees || []).find(e => e.id === empId);
     if (!emp) return;
     const input = document.getElementById('empcard-name-input-' + empId);
@@ -16150,7 +16270,16 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     for (const p of (this.S.hrTimeClock || [])) {
       if (p.empId === empId && p.name) p.name = val;
     }
-    this.persistData();
+    const saved = await this._directPersist(() => {
+      emp.name = oldName;
+      for (const s of (this.S.shifts || [])) {
+        if (s.employeeId === empId && s.name) s.name = oldName;
+      }
+      for (const p of (this.S.hrTimeClock || [])) {
+        if (p.empId === empId && p.name) p.name = oldName;
+      }
+    });
+    if (!saved) return;
     Audit.log('EMP_NAME_CHANGED',
       `Employee name changed: "${sanitize(oldName)}" → "${sanitize(val)}"`,
       this.S.user?.id, 'medium');
@@ -16208,16 +16337,101 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     // Move future shifts assigned to this employee to the new group
     const today = new Date().toISOString().slice(0, 10);
     let shiftsMoved = 0;
+    const movedShiftIds = [];
     for (const s of (this.S.shifts || [])) {
       if (s.employeeId !== empId) continue;
       if (s.date < today) continue;
       if (s.group === oldGroup) {
         s.group = newGroup;
         shiftsMoved++;
+        movedShiftIds.push(s.id);
       }
     }
 
-    this.persistData();
+    // Persist with proper error handling — bypasses fire-and-forget persistData()
+    // so we can revert on failure instead of showing a false success toast.
+    // Coordinates with _persistInFlight to avoid racing concurrent saves.
+    if (IS_SERVER_MODE && !this.S.user?.demo) {
+      if (this._persistInFlight) {
+        // Another save is in flight — revert and ask user to retry
+        emp.group = oldGroup;
+        for (const s of (this.S.shifts || [])) {
+          if (movedShiftIds.includes(s.id)) s.group = oldGroup;
+        }
+        this.showToast('A save is in progress — please try again in a moment.', 'warn');
+        sel.value = oldGroup;
+        return;
+      }
+      this._persistInFlight = true;
+      try {
+        const headers = { 'Content-Type': 'application/json' };
+        if (this.S._dataVersion) headers['If-Match'] = '"' + this.S._dataVersion + '"';
+        const payload = {
+          v:1, savedAt:Date.now(),
+          companies:this.S.companies, buildings:this.S.buildings, accounts:this.S.accounts,
+          employees:this.S.employees, shifts:this.S.shifts,
+          schedulePatterns:this.S.schedulePatterns,
+          hrEmployees:this.S.hrEmployees, hrOnboarding:this.S.hrOnboarding,
+          hrAccounts:this.S.hrAccounts, hrTimeClock:this.S.hrTimeClock,
+          jobPostings:this.S.jobPostings, demos:this.S.demos,
+          billingData:this.S.billingData, shiftTemplates:this.S.shiftTemplates,
+          staffingSlots:this.S.staffingSlots, buildingShiftTypes:this.S.buildingShiftTypes,
+          ppdDailyCensus:this.S.ppdDailyCensus, staffEvents:this.S.staffEvents,
+          discharges:this.S.discharges, dischargeTemplates:this.S.dischargeTemplates,
+          shiftTrades:this.S.shiftTrades, directMessages:this.S.directMessages,
+          prospects:this.S.prospects,
+        };
+        let r = await fetch('/api/data', { method: 'POST', headers, body: JSON.stringify(payload) });
+        // Handle 412 ETag conflict — refetch version and retry once
+        if (r.status === 412) {
+          try {
+            const dResp = await fetch('/api/data');
+            if (dResp.ok) {
+              const etag = dResp.headers.get('ETag');
+              if (etag) this.S._dataVersion = etag.replace(/"/g, '');
+            }
+          } catch {}
+          const retryHeaders = { 'Content-Type': 'application/json' };
+          if (this.S._dataVersion) retryHeaders['If-Match'] = '"' + this.S._dataVersion + '"';
+          payload.savedAt = Date.now();
+          r = await fetch('/api/data', { method: 'POST', headers: retryHeaders, body: JSON.stringify(payload) });
+        }
+        if (!r.ok) {
+          // Revert local changes
+          emp.group = oldGroup;
+          for (const s of (this.S.shifts || [])) {
+            if (movedShiftIds.includes(s.id)) s.group = oldGroup;
+          }
+          const b = await r.json().catch(() => ({}));
+          this.showToast(b.error || 'Failed to save position change. Please retry.', 'warn');
+          sel.value = oldGroup;
+          this.renderMain();
+          return;
+        }
+        const etag = r.headers.get('ETag');
+        if (etag) this.S._dataVersion = etag.replace(/"/g, '');
+      } catch (e) {
+        // Revert local changes on network error
+        emp.group = oldGroup;
+        for (const s of (this.S.shifts || [])) {
+          if (movedShiftIds.includes(s.id)) s.group = oldGroup;
+        }
+        this.showToast('Network error — position change not saved. Please retry.', 'warn');
+        sel.value = oldGroup;
+        this.renderMain();
+        return;
+      } finally {
+        this._persistInFlight = false;
+        // Drain any queued persist that accumulated while we held the lock
+        if (this._persistQueued) {
+          const q = this._persistQueued; this._persistQueued = null;
+          this.persistData(q);
+        }
+      }
+    } else {
+      this.persistData();
+    }
+
     Audit.log('EMP_POSITION_CHANGED',
       `${sanitize(emp.name)} position changed: ${oldGroup} → ${newGroup}. ${shiftsMoved} future shift${shiftsMoved===1?'':'s'} updated.`,
       this.S.user?.id, 'high');
@@ -16229,7 +16443,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     this.renderMain();
   },
 
-  empCardSaveRate(empId) {
+  async empCardSaveRate(empId) {
     const emp = (this.S.employees || []).find(e => e.id === empId);
     if (!emp) { this.showToast('Employee not found', 'warn'); return; }
     if (!this.canViewFinancials?.()) { this.showToast('Not allowed to edit pay rates', 'warn'); return; }
@@ -16244,7 +16458,8 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (raw === '') {
       const oldVal = emp[fieldKey];
       delete emp[fieldKey];
-      this.persistData();
+      const saved = await this._directPersist(() => { if (oldVal != null) emp[fieldKey] = oldVal; });
+      if (!saved) return;
       Audit.log('EMP_RATE_CLEARED',
         `Cleared ${fieldLabel} for ${sanitize(emp.name)} (was $${oldVal ?? '—'})`,
         this.S.user?.id, 'medium');
@@ -16263,7 +16478,8 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       }
       const oldVal = emp[fieldKey] ?? 0;
       emp[fieldKey] = parsed;
-      this.persistData();
+      const saved = await this._directPersist(() => { if (oldVal) emp[fieldKey] = oldVal; else delete emp[fieldKey]; });
+      if (!saved) return;
       const fmtNew = isSalaried
         ? '$' + parsed.toLocaleString('en-US', { maximumFractionDigits: 0 }) + '/yr'
         : '$' + parsed.toFixed(2) + '/hr';
@@ -16325,6 +16541,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       confirmLabel: `Switch to ${newType}`,
     });
     if (!okSwitch) return;
+    const oldPayType = emp.payType;
     emp.payType = newType;
     // Auto-populate the new pay field from the converted rate
     if (wasSalaried && convertedRate > 0 && !oldHourly) {
@@ -16333,7 +16550,71 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     if (!wasSalaried && convertedRate > 0 && !oldAnnual) {
       emp.annualSalary = Math.round(convertedRate);
     }
-    this.persistData();
+
+    // Persist with proper error handling — direct server call so we can
+    // revert on failure instead of showing false success.
+    if (IS_SERVER_MODE && !this.S.user?.demo) {
+      if (this._persistInFlight) {
+        emp.payType = oldPayType;
+        this.showToast('A save is in progress — please try again in a moment.', 'warn');
+        return;
+      }
+      this._persistInFlight = true;
+      try {
+        const headers = { 'Content-Type': 'application/json' };
+        if (this.S._dataVersion) headers['If-Match'] = '"' + this.S._dataVersion + '"';
+        const payload = {
+          v:1, savedAt:Date.now(),
+          companies:this.S.companies, buildings:this.S.buildings, accounts:this.S.accounts,
+          employees:this.S.employees, shifts:this.S.shifts,
+          schedulePatterns:this.S.schedulePatterns,
+          hrEmployees:this.S.hrEmployees, hrOnboarding:this.S.hrOnboarding,
+          hrAccounts:this.S.hrAccounts, hrTimeClock:this.S.hrTimeClock,
+          jobPostings:this.S.jobPostings, demos:this.S.demos,
+          billingData:this.S.billingData, shiftTemplates:this.S.shiftTemplates,
+          staffingSlots:this.S.staffingSlots, buildingShiftTypes:this.S.buildingShiftTypes,
+          ppdDailyCensus:this.S.ppdDailyCensus, staffEvents:this.S.staffEvents,
+          discharges:this.S.discharges, dischargeTemplates:this.S.dischargeTemplates,
+          shiftTrades:this.S.shiftTrades, directMessages:this.S.directMessages,
+          prospects:this.S.prospects,
+        };
+        let r = await fetch('/api/data', { method: 'POST', headers, body: JSON.stringify(payload) });
+        if (r.status === 412) {
+          try {
+            const dResp = await fetch('/api/data');
+            if (dResp.ok) {
+              const etag = dResp.headers.get('ETag');
+              if (etag) this.S._dataVersion = etag.replace(/"/g, '');
+            }
+          } catch {}
+          const rh = { 'Content-Type': 'application/json' };
+          if (this.S._dataVersion) rh['If-Match'] = '"' + this.S._dataVersion + '"';
+          payload.savedAt = Date.now();
+          r = await fetch('/api/data', { method: 'POST', headers: rh, body: JSON.stringify(payload) });
+        }
+        if (!r.ok) {
+          emp.payType = oldPayType;
+          const b = await r.json().catch(() => ({}));
+          this.showToast(b.error || 'Failed to save pay type change. Please retry.', 'warn');
+          return;
+        }
+        const etag = r.headers.get('ETag');
+        if (etag) this.S._dataVersion = etag.replace(/"/g, '');
+      } catch (e) {
+        emp.payType = oldPayType;
+        this.showToast('Network error — pay type change not saved. Please retry.', 'warn');
+        return;
+      } finally {
+        this._persistInFlight = false;
+        if (this._persistQueued) {
+          const q = this._persistQueued; this._persistQueued = null;
+          this.persistData(q);
+        }
+      }
+    } else {
+      this.persistData();
+    }
+
     Audit.log('EMP_PAY_TYPE_SWITCHED',
       `${sanitize(emp.name)} pay type → ${newType}${convertNote ? '. ' + convertNote : ''}`,
       this.S.user?.id, 'high');
@@ -16444,9 +16725,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
   // legacy accounts that were entered before hourly was introduced.
   _isSalaried(emp) {
     if (!emp) return false;
-    return emp.payType === 'salaried' &&
-           emp.annualSalary != null && emp.annualSalary !== '' &&
-           parseFloat(emp.annualSalary) > 0;
+    return emp.payType === 'salaried';
   },
   _empAnnualSalary(emp) {
     if (!emp) return 0;
@@ -18205,7 +18484,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
       // staffing requirement wouldn't get the yellow tint, even though the
       // admin clearly sees uncovered slots.
       let cellHasOpenDisplayed = open.length > 0;
-      if (g) {
+      if (g && g !== 'All Staff') {
         const ag       = getActualGroups(g);
         const shiftDefs = SHIFT_TYPES(g);
         const slotReqs  = this.getSlotReqs(bId, g);
@@ -18339,7 +18618,10 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     // view showed an empty grid.
     const selGroup = this.S.selectedGroup;
     let grps;
-    if (selGroup) {
+    if (selGroup === 'All Staff') {
+      // All Staff view: show every department except the virtual 'All Staff' itself
+      grps = DISPLAY_GROUPS.filter(g => g !== 'All Staff');
+    } else if (selGroup) {
       grps = [selGroup];
     } else {
       grps = ['Charge Nurse','CNA','CMA'];
@@ -18347,7 +18629,11 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     // Build the row list dynamically per selected group so non-clinical
     // groups get Morning/Afternoon, clinical groups get Day/Eve/Night,
     // and custom shift templates show up too.
+    // For All Staff view, show all shift types (clinical + non-clinical).
     const rowShiftTypes = (() => {
+      if (selGroup === 'All Staff') {
+        return [...CLINICAL_SHIFTS, ...NON_CLINICAL_SHIFTS.filter(nc => !CLINICAL_SHIFTS.some(cs => cs.type === nc.type))];
+      }
       if (grps.length === 1) {
         return this.getEffectiveShiftTypes(bId, grps[0]);
       }
@@ -18478,7 +18764,10 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     const g = this.S.selectedGroup;
     const filter = this.S.filter;
     const actualGroups = getActualGroups(g);
-    const shiftDefs = SHIFT_TYPES(g);
+    // 'All Staff' combines all shift types; individual groups use their own
+    const shiftDefs = (g === 'All Staff')
+      ? [...CLINICAL_SHIFTS, ...NON_CLINICAL_SHIFTS.filter(nc => !CLINICAL_SHIFTS.some(cs => cs.type === nc.type))]
+      : SHIFT_TYPES(g);
     const col = G_COLORS[g] || 'var(--blue)';
     const u = this.S.user;
     const bId = this.S.activeBuildingId || u.buildingId || 'b1';
@@ -18511,7 +18800,8 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
 
     const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
-    const slotReqs = this.getSlotReqs(bId, g);
+    // 'All Staff' is a virtual aggregate — no per-slot requirements apply
+    const slotReqs = (g === 'All Staff') ? {} : this.getSlotReqs(bId, g);
     const hasReqs  = Object.values(slotReqs).some(v => v > 0);
 
     const renderCell = (ds) => {
@@ -20992,7 +21282,7 @@ App.init().catch(e => {
   <div class="lock-card">
     <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="#6B9E7A" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
     <h2>Session Locked</h2>
-    <p>Your session was automatically locked due to 15 minutes of inactivity (HIPAA §164.312(a)(2)(iii)).</p>
+    <p>Your session was automatically locked due to 15 minutes of inactivity.</p>
     <input type="password" id="lock-pass" class="lock-input" placeholder="Re-enter your password" maxlength="128"
       onkeydown="if(event.key==='Enter')App.unlockSession()" autocomplete="current-password">
     <button class="btn btn-primary btn-full" onclick="App.unlockSession()">Unlock Session</button>
@@ -21292,13 +21582,12 @@ App.init().catch(e => {
     <div class="modal-header">
       <span class="modal-title" style="display:flex;align-items:center;gap:8px">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
-        HIPAA Audit Log
+        Audit Log
       </span>
       <button class="modal-close" aria-label="Close" onclick="App.closeModal('modal-audit')">✕</button>
     </div>
     <div style="padding:10px 16px;background:var(--g50);border-bottom:1px solid var(--g200);font-size:12px;color:var(--g500);display:flex;justify-content:space-between;align-items:center">
-      <span>All access to PHI is logged per HIPAA 45 CFR §164.312(b). Retention: 6 years minimum.</span>
-      <span class="hipaa-badge-sm">HIPAA §164.312(b)</span>
+      <span>All access is logged. Retention: 6 years minimum.</span>
     </div>
     <div id="audit-log-list" style="max-height:55vh;overflow-y:auto"></div>
     <div class="modal-footer">

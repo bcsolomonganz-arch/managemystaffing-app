@@ -6088,8 +6088,31 @@ app.post('/api/shifts/delete-batch', requireAuth, requireAdmin, async (req, res)
     }
   }
 
-  // Push notify any assigned employees whose shifts disappeared. Fire-and-
-  // forget — don't block the response on push delivery.
+  try { await flushNow(); } catch (e) {
+    // Rollback: restore removed shifts and undo pattern removedDates additions.
+    // Use the same matching filters as the forward deletion loop above so we
+    // only reverse the exact patterns that were touched, not unrelated ones.
+    data.shifts.push(...allowed);
+    if (Array.isArray(data.schedulePatterns)) {
+      for (const s of allowed) {
+        for (const p of data.schedulePatterns) {
+          if (p.group !== s.group) continue;
+          if (p.shiftType !== s.type) continue;
+          if (p.buildingId !== s.buildingId) continue;
+          if (p.empId && s.employeeId && p.empId !== s.employeeId) continue;
+          if (Array.isArray(p.removedDates)) {
+            const ri = p.removedDates.indexOf(s.date);
+            if (ri >= 0) p.removedDates.splice(ri, 1);
+          }
+        }
+      }
+    }
+    return res.status(500).json({ error: 'Failed to persist batch deletion. Please retry.' });
+  }
+
+  // Push notify any assigned employees whose shifts disappeared. Sent AFTER
+  // successful flush so employees are never notified of a deletion that was
+  // rolled back. Fire-and-forget — don't block the response on push delivery.
   for (const s of allowed) {
     if (!s.employeeId) continue;
     sendPushTo(s.employeeId, {
@@ -6098,9 +6121,6 @@ app.post('/api/shifts/delete-batch', requireAuth, requireAdmin, async (req, res)
       tag: 'deleted:' + s.id,
       url: '/app',
     }).catch(() => {});
-  }
-  try { await flushNow(); } catch (e) {
-    return res.status(500).json({ error: 'Failed to persist batch deletion. Please retry.' });
   }
   auditLog('SHIFTS_DELETED_BATCH', req.user, {
     requestedCount: ids.length,
