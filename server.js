@@ -143,22 +143,29 @@ const logger = {
   error: (msg, meta) => log('error', msg, meta),
 };
 
-// ── MESSAGING CONFIG — Azure Communication Services ───────────────────────────
+// ── MESSAGING CONFIG — Azure Communication Services (email only) ──────────────
 const ACS_CONNECTION_STRING = process.env.ACS_CONNECTION_STRING || null;
 const ACS_FROM_EMAIL        = process.env.ACS_FROM_EMAIL || 'noreply@751842ed-e753-4e35-9ace-4f2a879b45b7.azurecomm.net';
-const ACS_FROM_PHONE        = process.env.ACS_FROM_PHONE || null;
 
-// ── Per-building SMS number provisioning ────────────────────────────────────
+// ── TWILIO CONFIG — SMS provisioning + sending ────────────────────────────────
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || null;
+const TWILIO_AUTH_TOKEN   = process.env.TWILIO_AUTH_TOKEN  || null;
+const TWILIO_FROM_PHONE   = process.env.TWILIO_FROM_PHONE || process.env.ACS_FROM_PHONE || null;
+
+let _twilio = null;
+function _twilioClient() {
+  if (!_twilio) {
+    if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) throw new Error('Twilio credentials not configured');
+    _twilio = require('twilio')(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+  }
+  return _twilio;
+}
+
+// ── Per-building SMS number provisioning (Twilio) ───────────────────────────
 // Each building can have its own local-area-code SMS number so staff at that
 // facility see a familiar local caller ID. Numbers are purchased on demand
 // (admin presses "Activate SMS" after a building is fully set up — never on
 // creation, to avoid wasted spend on incomplete onboarding).
-//
-// 10DLC NOTE: US local-area-code SMS numbers require a registered 10DLC
-// brand + campaign. Without one, ACS will reject the SMS send even if the
-// number is purchased. The provisioning endpoint logs a clear error message
-// so the SA knows to register first via Azure portal → Communication
-// Service → Phone numbers → Regulatory documents.
 //
 // ZIP-to-area-code lookup. Approximate (ZIP regions don't align perfectly
 // with NPAs); covers common SNF/LTC operator states. Falls back to null,
@@ -205,14 +212,21 @@ function _buildingIsFullySetUp(buildingId, data) {
 }
 
 // Resolve which FROM phone number to use for outbound SMS to a given
-// building's staff. Falls back to the global ACS_FROM_PHONE if no
+// building's staff. Falls back to the global TWILIO_FROM_PHONE if no
 // per-building number is provisioned.
 function _smsFromForBuilding(buildingId, data) {
   if (buildingId) {
     const b = (data?.buildings || dataCache?.buildings || []).find(x => x.id === buildingId);
     if (b?.smsFromPhone && b.smsProvisionStatus === 'active') return b.smsFromPhone;
   }
-  return ACS_FROM_PHONE;
+  return TWILIO_FROM_PHONE;
+}
+
+// ── Shared Twilio SMS sender ──────────────────────────────────────────────────
+async function _sendSMSviaTwilio(from, to, body) {
+  const client = _twilioClient();
+  const msg = await client.messages.create({ from, to, body: body.slice(0, 1600) });
+  return { successful: msg.status !== 'failed', sid: msg.sid, errorMessage: msg.errorMessage };
 }
 
 // ── PCC (PointClickCare) CONFIG ───────────────────────────────────────────────
@@ -1879,7 +1893,7 @@ app.get('/health/ready', async (_req, res) => {
     messaging: {
       acs:   !!ACS_CONNECTION_STRING,
       email: !!ACS_FROM_EMAIL,
-      sms:   !!ACS_FROM_PHONE,
+      sms:   !!TWILIO_ACCOUNT_SID,
     },
   };
   try {
@@ -2666,10 +2680,10 @@ self.addEventListener('notificationclick', e => {
 });
 
 // ── PUBLIC LEGAL PAGES (privacy, terms) ───────────────────────────────────
-// Required for A2P 10DLC SMS brand registration with Azure Communication
-// Services — carriers (T-Mobile, AT&T, Verizon) verify these URLs are live
-// before approving a campaign. Both render inline so there are no extra
-// static files to host. Update copy here if your privacy posture changes.
+// Required for A2P SMS compliance — carriers (T-Mobile, AT&T, Verizon)
+// verify these URLs are live before approving messaging campaigns. Both
+// render inline so there are no extra static files to host. Update copy
+// here if your privacy posture changes.
 const _legalPageStyles = `
   body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;line-height:1.6;color:#1f2937;max-width:780px;margin:0 auto;padding:32px 24px}
   h1{font-size:28px;color:#0f172a;margin:0 0 8px;border-bottom:2px solid #e5e7eb;padding-bottom:12px}
@@ -2760,8 +2774,7 @@ app.get('/privacy', (_req, res) => {
 `));
 });
 
-// SMS opt-in evidence page — referenced by Azure Communication Services
-// regulatory documents (toll-free verification + 10DLC campaign) as the
+// SMS opt-in evidence page — referenced by Twilio A2P registration as the
 // "where do subscribers opt in" URL. Carriers require a publicly-viewable
 // page showing the consent UI and the call-to-action language. This page
 // renders a high-fidelity SVG mockup of the in-app onboarding checkbox so
@@ -3514,7 +3527,7 @@ app.post('/api/indeed/event',
 // Numbers come from the building's own area code (looked up from its ZIP) so
 // staff at that facility see a familiar caller ID.
 //
-// SAFETY: provisioning charges $1–2 / month per number plus 10DLC overhead.
+// SAFETY: provisioning charges ~$1.15 / month per number via Twilio.
 // Endpoint requires (a) superadmin role and (b) the building to be "fully
 // set up" (has admin + at least one employee). The frontend confirms the
 // charge before posting.
@@ -4581,7 +4594,7 @@ app.post('/api/admin/fix-salaried-rates', requireAuth, requireSuperAdmin, async 
 //   Body (optional): { areaCode: "918" }   — overrides ZIP-derived area code
 // Returns: { ok, phoneNumber, monthlyCost, areaCode } on success.
 app.post('/api/buildings/:id/provision-sms', requireAuth, requireSuperAdmin, async (req, res) => {
-  if (!ACS_CONNECTION_STRING) return res.status(503).json({ error: 'ACS not configured' });
+  if (!TWILIO_ACCOUNT_SID) return res.status(503).json({ error: 'Twilio not configured' });
   const buildingId = req.params.id;
   const data = await loadData();
   const b = (data.buildings || []).find(x => x.id === buildingId);
@@ -4607,37 +4620,35 @@ app.post('/api/buildings/:id/provision-sms', requireAuth, requireSuperAdmin, asy
 
   let result;
   try {
-    const { PhoneNumbersClient } = require('@azure/communication-phone-numbers');
-    const client = new PhoneNumbersClient(ACS_CONNECTION_STRING);
+    const client = _twilioClient();
     // Search for one available local number in the area code.
-    const searchPoller = await client.beginSearchAvailablePhoneNumbers({
-      countryCode:    'US',
-      phoneNumberType:'geographic',
-      assignmentType: 'application',
-      capabilities:   { sms: 'inbound+outbound', calling: 'none' },
+    const available = await client.availablePhoneNumbers('US').local.list({
       areaCode,
-      quantity:       1,
+      smsEnabled: true,
+      limit: 1,
     });
-    const searchResult = await searchPoller.pollUntilDone();
-    if (!searchResult.phoneNumbers?.length) {
+    if (!available.length) {
       b.smsProvisionStatus = 'failed';
       markDirty();
       return res.status(503).json({ error: `No local numbers available in area code ${areaCode}. Try a different code.` });
     }
-    // Purchase the search.
-    const purchasePoller = await client.beginPurchasePhoneNumbers(searchResult.searchId);
-    await purchasePoller.pollUntilDone();
-    // Result has the purchased number.
-    const purchased = searchResult.phoneNumbers[0];
-    b.smsFromPhone = purchased;
+    // Purchase the number and configure the inbound SMS webhook.
+    const smsWebhookUrl = `${APP_URL}/api/sms/inbound`;
+    const purchased = await client.incomingPhoneNumbers.create({
+      phoneNumber: available[0].phoneNumber,
+      smsUrl: smsWebhookUrl,
+      smsMethod: 'POST',
+    });
+    b.smsFromPhone = purchased.phoneNumber;
+    b.smsFromPhoneSid = purchased.sid;
     b.smsProvisionStatus = 'active';
     b.smsProvisionedAt = new Date().toISOString();
-    b.smsCostUsd = searchResult.cost?.amount || 2.0;
+    b.smsCostUsd = 1.15; // Twilio local number monthly cost
     markDirty();
-    auditLog('SMS_NUMBER_PROVISIONED', req.user, { buildingId, phoneNumber: purchased, areaCode });
+    auditLog('SMS_NUMBER_PROVISIONED', req.user, { buildingId, phoneNumber: purchased.phoneNumber, sid: purchased.sid, areaCode });
     result = {
       ok: true,
-      phoneNumber: purchased,
+      phoneNumber: purchased.phoneNumber,
       areaCode,
       monthlyCost: b.smsCostUsd,
     };
@@ -4646,33 +4657,32 @@ app.post('/api/buildings/:id/provision-sms', requireAuth, requireSuperAdmin, asy
     b.smsProvisionError = e.message?.slice(0, 200) || 'unknown';
     markDirty();
     logger.error('sms_provision_failed', { buildingId, areaCode, msg: e.message });
-    // Common failure: no 10DLC campaign registered.
-    const isTenDlc = /campaign|10dlc|brand/i.test(e.message || '');
-    return res.status(502).json({
-      error: isTenDlc
-        ? '10DLC brand + campaign must be registered in Azure portal before local SMS numbers can be activated. ACS Phone numbers → Regulatory documents.'
-        : `Number purchase failed: ${e.message}`,
-    });
+    return res.status(502).json({ error: `Number purchase failed: ${e.message}` });
   }
   res.json(result);
 });
 
 // DELETE /api/buildings/:id/provision-sms
-//   Releases the building's SMS number back to ACS (stops billing).
+//   Releases the building's SMS number from Twilio (stops billing).
 app.delete('/api/buildings/:id/provision-sms', requireAuth, requireSuperAdmin, async (req, res) => {
-  if (!ACS_CONNECTION_STRING) return res.status(503).json({ error: 'ACS not configured' });
+  if (!TWILIO_ACCOUNT_SID) return res.status(503).json({ error: 'Twilio not configured' });
   const buildingId = req.params.id;
   const data = await loadData();
   const b = (data.buildings || []).find(x => x.id === buildingId);
   if (!b) return res.status(404).json({ error: 'Building not found' });
   if (!b.smsFromPhone) return res.status(409).json({ error: 'Building has no SMS number to release' });
   try {
-    const { PhoneNumbersClient } = require('@azure/communication-phone-numbers');
-    const client = new PhoneNumbersClient(ACS_CONNECTION_STRING);
-    const releasePoller = await client.beginReleasePhoneNumber(b.smsFromPhone);
-    await releasePoller.pollUntilDone();
+    const client = _twilioClient();
+    if (b.smsFromPhoneSid) {
+      await client.incomingPhoneNumbers(b.smsFromPhoneSid).remove();
+    } else {
+      // Fallback: look up the number by phone number if SID isn't stored.
+      const nums = await client.incomingPhoneNumbers.list({ phoneNumber: b.smsFromPhone, limit: 1 });
+      if (nums.length) await client.incomingPhoneNumbers(nums[0].sid).remove();
+    }
     auditLog('SMS_NUMBER_RELEASED', req.user, { buildingId, phoneNumber: b.smsFromPhone });
     delete b.smsFromPhone;
+    delete b.smsFromPhoneSid;
     delete b.smsProvisionedAt;
     delete b.smsCostUsd;
     delete b.smsProvisionError;
@@ -7104,14 +7114,8 @@ async function _maybeSendDischargeMessages() {
         if (!sender) continue;
 
         try {
-          const { SmsClient } = require('@azure/communication-sms');
-          const smsClient = new SmsClient(ACS_CONNECTION_STRING);
-          const results = await smsClient.send({
-            from: sender,
-            to: [discharge.phone],
-            message: smsBody,
-          });
-          if (results[0]?.successful) {
+          const smsResult = await _sendSMSviaTwilio(sender, discharge.phone, smsBody);
+          if (smsResult.successful) {
             msg.status = 'sent';
             msg.sentAt = now.toISOString();
             dirty = true;
@@ -9998,19 +10002,15 @@ async function _processAlertJob(job) {
     auditLog('ALERT_JOB_DONE', null, { jobId, kind, sent, failed: errors.length });
   } else if (kind === 'sms') {
     if (!fromPhone) return;
-    const { SmsClient } = require('@azure/communication-sms');
-    const sc = new SmsClient(ACS_CONNECTION_STRING);
     let sent = 0; const errors = [];
     for (const r of (recipients || [])) {
       const to = toE164(r.phone);
       if (!to) { errors.push({ name: r.name, err: 'invalid phone' }); continue; }
       try {
-        const results = await sc.send({
-          from: fromPhone, to: [to],
-          message: message.replace(/\[Name\]/g, r.name || '').slice(0, 1600),
-        });
-        if (results[0]?.successful) sent++;
-        else errors.push({ name: r.name, err: results[0]?.errorMessage || 'failed' });
+        const smsResult = await _sendSMSviaTwilio(fromPhone, to,
+          message.replace(/\[Name\]/g, r.name || ''));
+        if (smsResult.successful) sent++;
+        else errors.push({ name: r.name, err: smsResult.errorMessage || 'failed' });
       } catch (e) { errors.push({ name: r.name, err: e.message }); }
     }
     auditLog('ALERT_JOB_DONE', null, { jobId, kind, sent, failed: errors.length });
@@ -10095,7 +10095,7 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
 
   if (smsList.length) {
     // Use the building's local SMS number if it's been provisioned and
-    // activated; otherwise fall back to the global ACS_FROM_PHONE. Staff at
+    // activated; otherwise fall back to the global TWILIO_FROM_PHONE. Staff at
     // a facility see a familiar local caller ID this way.
     const sender = _smsFromForBuilding(scopedBId, data);
     if (!sender) {
@@ -10280,14 +10280,12 @@ app.post('/api/sms', requireAuth, requireAdmin, async (req, res) => {
   }
 
   try {
-    const { SmsClient } = require('@azure/communication-sms');
-    const smsClient = new SmsClient(ACS_CONNECTION_STRING);
-    const results   = await smsClient.send({ from: sender, to: [normalized], message: message.slice(0, 1600) });
-    if (results[0]?.successful) {
-      auditLog('SMS_SENT', req.user, { to: normalized });
+    const smsResult = await _sendSMSviaTwilio(sender, normalized, message);
+    if (smsResult.successful) {
+      auditLog('SMS_SENT', req.user, { to: normalized, sid: smsResult.sid });
       res.json({ ok: true });
     } else {
-      res.status(502).json({ error: results[0]?.errorMessage || 'SMS send failed' });
+      res.status(502).json({ error: smsResult.errorMessage || 'SMS send failed' });
     }
   } catch (e) {
     logger.error('sms_send_failed', { reqId: req.id, err: e.message });
@@ -10369,7 +10367,7 @@ let _server;
   }
 
   if (!ACS_CONNECTION_STRING) logger.warn('acs_not_configured');
-  if (!ACS_FROM_PHONE)        logger.warn('acs_sms_not_configured');
+  if (!TWILIO_ACCOUNT_SID)    logger.warn('twilio_not_configured');
   if (IS_PROD && DATA_FILE.toLowerCase().includes('onedrive')) {
     logger.error('PHI_DATA_FILE_ON_ONEDRIVE_NOT_PERMITTED_IN_PRODUCTION');
     process.exit(1);

@@ -1560,7 +1560,7 @@ const SEED_HR_ONBOARDING = {
       {id:'tx9',type:'video',title:'Training Videos',desc:'Orientation, safety, HIPAA compliance'},
       {id:'tx10',type:'form',title:'Policy Acknowledgment',desc:'Employee handbook, HIPAA confidentiality'},
       // ── LOCKED FINAL STEP — cannot be removed or skipped ─────────────────
-      // Required for A2P 10DLC + Toll-Free Verification compliance. Captures
+      // Required for A2P messaging compliance. Captures
       // the employee's express written consent to receive SMS, plus the phone
       // number they want texts at and a signature. Auto-appended to every
       // package via SMS_CONSENT_STEP_ID and _ensureSmsConsentStep().
@@ -4208,7 +4208,7 @@ const App = {
     return `<div style="display:flex;align-items:center;gap:8px;margin:8px 0;font-size:11px;color:var(--g600)">
       <button onclick="event.stopPropagation();App.provisionBuildingSMS('${b.id}')"
         class="btn btn-secondary btn-sm" style="padding:4px 10px;font-size:11px">
-        + Activate SMS (${areaCode}) ~$2/mo
+        + Activate SMS (${areaCode}) ~$1.15/mo
       </button>
       <span style="color:var(--g500)">Local-area-code text number for this facility</span>
     </div>`;
@@ -4247,7 +4247,7 @@ const App = {
     } else {
       confirmMsg += `No area code derived from ZIP. You'll be asked to enter one.\n`;
     }
-    confirmMsg += `Approximate cost: $2/month\n\nNote: requires 10DLC brand + campaign registration in Azure portal.`;
+    confirmMsg += `Approximate cost: ~$1.15/month`;
     const proceed = await this.mmsConfirm({
       title: 'Activate SMS number',
       message: confirmMsg,
@@ -8748,11 +8748,10 @@ const App = {
   },
 
   // ── DIRECT SMS via /api/sms ────────────────────────────────────
-  // Sends from the current building's local Azure ACS number when one has
+  // Sends from the current building's local Twilio number when one has
   // been provisioned (b.smsFromPhone). Server should resolve the FROM
   // number from buildingId — falls back to the org-level toll-free number
-  // only when the building's local number isn't configured yet (e.g. brand
-  // new building still waiting on A2P 10DLC approval).
+  // only when the building's local number isn't configured yet.
   // Returns true on success, false on failure (shows toast on error).
   async _sendSMS(phone, message, opts) {
     if (!phone || !message) return false;
@@ -20301,20 +20300,19 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
     ['b-name','b-addr','b-phone','b-beds','b-admin-name','b-admin-email','b-zip','b-ccn'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
     document.getElementById('b-admin-pass').value=genTempPw();
     this.renderSAMain();
-    // Auto-provision a local Azure Communication Services SMS number for the
-    // new facility. Runs in the background — UI doesn't wait. The server
-    // (POST /api/buildings/:id/provision-sms with autoProvision:true) will
-    // skip the user-confirm path, derive the area code from ZIP, and write
-    // smsFromPhone + smsFromPhoneSid back to the building. If A2P 10DLC
-    // isn't yet registered, it falls back to the toll-free number for now.
+    // Auto-provision a local Twilio SMS number for the new facility. Runs in
+    // the background — UI doesn't wait. The server (POST
+    // /api/buildings/:id/provision-sms with autoProvision:true) will skip the
+    // user-confirm path, derive the area code from ZIP, and write
+    // smsFromPhone + smsFromPhoneSid back to the building.
     this._autoProvisionBuildingSMS(bId);
   },
 
-  // ── AZURE SMS — auto-provisioning hooks ────────────────────────────
+  // ── TWILIO SMS — auto-provisioning hooks ────────────────────────────
   // Fires after a building is created. Skips the confirm() prompt that the
   // manual `provisionBuildingSMS` uses. Tolerates failures silently — the
   // SA can retry from the building card if the auto-attempt didn't land
-  // (e.g. ACS is rate-limited or the area code has no inventory today).
+  // (e.g. Twilio is rate-limited or the area code has no inventory today).
   async _autoProvisionBuildingSMS(buildingId) {
     if (!IS_SERVER_MODE) return;       // skip in local/demo mode
     const b = (this.S.buildings || []).find(x => x.id === buildingId);
@@ -20327,7 +20325,7 @@ If you bring a strong work ethic and a sense of humor, you're already halfway th
         body: JSON.stringify({
           autoProvision: true,
           areaCode: areaCode || null,
-          source: 'azure-acs',
+          source: 'twilio',
           purpose: 'building-create',
         }),
       });

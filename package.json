@@ -13,8 +13,6 @@
   },
   "dependencies": {
     "@azure/communication-email": "^1.1.0",
-    "@azure/communication-phone-numbers": "^1.5.0",
-    "@azure/communication-sms": "^1.2.0-beta.4",
     "@azure/identity": "^4.13.1",
     "@azure/keyvault-secrets": "^4.11.2",
     "@azure/service-bus": "^7.9.5",
@@ -35,6 +33,7 @@
     "pg": "^8.20.0",
     "pino": "^10.3.1",
     "qrcode": "^1.5.4",
+    "twilio": "^5.13.1",
     "web-push": "^3.6.7"
   }
 }
