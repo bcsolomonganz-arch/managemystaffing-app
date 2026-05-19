@@ -327,6 +327,25 @@ async function ensureSchema() {
 
   // ── Unique constraint: no duplicate active employees per building+email (Issue #15) ──
   await c.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_building_email_unique ON employees(building_id, email) WHERE email IS NOT NULL AND inactive = FALSE`);
+
+  // ── Change Journal — durable mutation log for crash recovery ──────────
+  // Each API mutation writes a journal entry BEFORE modifying dataCache.
+  // After saveAllIndependent() succeeds, entries are marked applied.
+  // On startup, unapplied entries are replayed to recover mutations that
+  // were journaled but lost when the container crashed before the save.
+  await c.query(`
+    CREATE TABLE IF NOT EXISTS change_journal (
+      id          BIGSERIAL PRIMARY KEY,
+      ts          TIMESTAMPTZ NOT NULL DEFAULT now(),
+      table_name  TEXT NOT NULL,
+      entity_id   TEXT NOT NULL,
+      op          TEXT NOT NULL CHECK (op IN ('INSERT','UPDATE','DELETE')),
+      payload     JSONB NOT NULL,
+      applied     BOOLEAN NOT NULL DEFAULT false,
+      applied_at  TIMESTAMPTZ
+    )
+  `);
+  await c.query(`CREATE INDEX IF NOT EXISTS idx_change_journal_unapplied ON change_journal (applied, ts) WHERE NOT applied`);
   }); // end withTx
 }
 
@@ -531,6 +550,11 @@ function _strip(obj, keys) {
   return o;
 }
 
+// Sanitize employment_type to match the DB CHECK constraint.
+// Only 'fulltime', 'parttime', 'prn' are allowed; anything else → NULL.
+const _VALID_EMP_TYPES = new Set(['fulltime', 'parttime', 'prn']);
+function _safeEmpType(v) { return _VALID_EMP_TYPES.has(v) ? v : null; }
+
 const MAX_METADATA_BYTES = 32 * 1024; // 32KB cap on JSONB metadata
 function _validateMetadata(md, context) {
   const json = JSON.stringify(md);
@@ -651,7 +675,7 @@ async function saveScopedData(data) {
             license_state = COALESCE(EXCLUDED.license_state, employees.license_state),
             updated_at=now()`,
           [e.id, e.buildingId, e.accountId || null, e.name, e.email || null, e.phone || null, e.group,
-           e.employmentType || null, e.hourlyRate || null, e.hireDate || null,
+           _safeEmpType(e.employmentType), e.hourlyRate || null, e.hireDate || null,
            !!e.inactive, e.notifEmail !== false, e.phone ? (e.notifSMS !== false) : !!e.notifSMS,
            _validateMetadata(md, `employee:${e.id}`), JSON.stringify(e.terminationLog || []),
            e.licenseNumber || null, e.licenseExpiresAt || null, e.licenseState || null]);
@@ -765,6 +789,286 @@ async function _upsertAccountInTx(c, a) {
   ]);
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Independent per-table saves — each table in its own transaction.
+// If one table fails, the others still commit. Returns a detailed report.
+// ──────────────────────────────────────────────────────────────────────────
+async function saveAllIndependent(data) {
+  const results = [];
+  async function _runTable(table, fn) {
+    try {
+      const r = await withTx(fn);
+      results.push({ table, ok: true, rowCount: r || 0 });
+    } catch (e) {
+      console.error(`[saveAllIndependent] ${table} FAILED:`, e.message);
+      results.push({ table, ok: false, error: e.message });
+    }
+  }
+
+  // ── Companies ──
+  if (Array.isArray(data.companies)) {
+    await _runTable('companies', async (c) => {
+      for (const co of data.companies) {
+        await c.query(`INSERT INTO companies (id, name, color) VALUES ($1, $2, $3)
+          ON CONFLICT (id) DO UPDATE SET name=$2, color=$3, updated_at=now()`,
+          [co.id, co.name, co.color]);
+      }
+      const keepCompanyIds = data.companies.map(co => co.id);
+      if (keepCompanyIds.length > 0) {
+        await c.query('DELETE FROM companies WHERE id != ALL($1::text[])', [keepCompanyIds]);
+      }
+      return data.companies.length;
+    });
+  }
+
+  // ── Buildings ──
+  if (Array.isArray(data.buildings)) {
+    await _runTable('buildings', async (c) => {
+      for (const b of data.buildings) {
+        const md = _strip(b, ['id','name','address','color','beds','companyId']);
+        await c.query(`INSERT INTO buildings (id, company_id, name, address, color, beds, metadata)
+          VALUES ($1,$2,$3,$4,$5,$6,$7)
+          ON CONFLICT (id) DO UPDATE SET company_id=$2, name=$3, address=$4, color=$5, beds=$6, metadata=$7, updated_at=now()`,
+          [b.id, b.companyId || null, b.name, b.address || null, b.color || null, b.beds || null, _validateMetadata(md, `building:${b.id}`)]);
+      }
+      const keepBuildingIds = data.buildings.map(b => b.id);
+      if (keepBuildingIds.length > 0) {
+        await c.query('DELETE FROM buildings WHERE id != ALL($1::text[])', [keepBuildingIds]);
+      }
+      return data.buildings.length;
+    });
+  }
+
+  // ── Accounts ──
+  if (Array.isArray(data.accounts)) {
+    await _runTable('accounts', async (c) => {
+      for (const a of data.accounts) await _upsertAccountInTx(c, a);
+      const keepAccountIds = data.accounts.map(a => a.id);
+      if (keepAccountIds.length > 0) {
+        await c.query('DELETE FROM accounts WHERE id != ALL($1::text[])', [keepAccountIds]);
+      }
+      return data.accounts.length;
+    });
+  }
+
+  // ── Employees (with shrink guard + HWM) ──
+  if (Array.isArray(data.employees)) {
+    await _runTable('employees', async (c) => {
+      let _skipEmployeeSave = false;
+      const incomingByBld = new Map();
+      for (const e of data.employees) {
+        if (!e.building_id && !e.buildingId) continue;
+        const bid = e.building_id || e.buildingId;
+        incomingByBld.set(bid, (incomingByBld.get(bid) || 0) + 1);
+      }
+      const dbCounts = await c.query(`SELECT building_id, COUNT(*)::int AS n FROM employees GROUP BY building_id`);
+      for (const row of dbCounts.rows) {
+        const incoming = incomingByBld.get(row.building_id) || 0;
+        if (incoming < row.n) {
+          console.warn(
+            `[saveAllIndependent] employee shrink guard: skipping employee save for building ${row.building_id} ` +
+            `(db has ${row.n}, incoming has ${incoming}).`
+          );
+          _skipEmployeeSave = true;
+          break;
+        }
+      }
+      if (!_skipEmployeeSave) {
+        for (const [bid, n] of incomingByBld) {
+          const scope = `employees:${bid}`;
+          const hw = await c.query(`SELECT max_count FROM row_high_water WHERE scope = $1 FOR UPDATE`, [scope]);
+          const prev = hw.rows[0]?.max_count || 0;
+          if (n < prev) {
+            console.warn(
+              `[saveAllIndependent] employee HWM guard: skipping employee save ` +
+              `(${bid} would drop to ${n}, below HWM ${prev}).`
+            );
+            _skipEmployeeSave = true;
+            break;
+          }
+          if (n > prev) {
+            await c.query(
+              `INSERT INTO row_high_water (scope, max_count) VALUES ($1, $2)
+               ON CONFLICT (scope) DO UPDATE SET max_count = GREATEST(row_high_water.max_count, $2),
+               observed_at = now()`,
+              [scope, n]
+            );
+          }
+        }
+      }
+      if (_skipEmployeeSave) return 0;
+      for (const e of data.employees) {
+        const md = _strip(e, ['id','buildingId','accountId','name','email','phone','group','employmentType','hourlyRate','hireDate','inactive','notifEmail','notifSMS','terminationLog','licenseNumber','licenseExpiresAt','licenseState']);
+        await c.query(`INSERT INTO employees (id, building_id, account_id, name, email, phone, "group",
+            employment_type, hourly_rate, hire_date, inactive, notif_email, notif_sms,
+            metadata, termination_log,
+            license_number, license_expires_at, license_state)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+          ON CONFLICT (id) DO UPDATE SET
+            building_id=$2, account_id=$3, name=$4, email=$5, phone=$6, "group"=$7,
+            employment_type=$8, hourly_rate=$9, hire_date=$10, inactive=$11,
+            notif_email=$12, notif_sms=$13, metadata=$14, termination_log=$15,
+            license_number = COALESCE(EXCLUDED.license_number, employees.license_number),
+            license_expires_at = COALESCE(EXCLUDED.license_expires_at, employees.license_expires_at),
+            license_state = COALESCE(EXCLUDED.license_state, employees.license_state),
+            updated_at=now()`,
+          [e.id, e.buildingId, e.accountId || null, e.name, e.email || null, e.phone || null, e.group,
+           _safeEmpType(e.employmentType), e.hourlyRate || null, e.hireDate || null,
+           !!e.inactive, e.notifEmail !== false, e.phone ? (e.notifSMS !== false) : !!e.notifSMS,
+           _validateMetadata(md, `employee:${e.id}`), JSON.stringify(e.terminationLog || []),
+           e.licenseNumber || null, e.licenseExpiresAt || null, e.licenseState || null]);
+      }
+      return data.employees.length;
+    });
+  }
+
+  // ── Shifts (with HWM guard + batch upsert) ──
+  if (Array.isArray(data.shifts)) {
+    await _runTable('shifts', async (c) => {
+      // HWM tracking (non-blocking — doesn't prevent saves)
+      const incomingByBld = new Map();
+      for (const s of data.shifts) {
+        const bid = s.building_id || s.buildingId;
+        if (!bid) continue;
+        incomingByBld.set(bid, (incomingByBld.get(bid) || 0) + 1);
+      }
+      for (const [bid, n] of incomingByBld) {
+        const scope = `shifts:${bid}`;
+        const hw = await c.query(`SELECT max_count FROM row_high_water WHERE scope = $1 FOR UPDATE`, [scope]);
+        const prev = hw.rows[0]?.max_count || 0;
+        if (n > prev) {
+          await c.query(
+            `INSERT INTO row_high_water (scope, max_count) VALUES ($1, $2)
+             ON CONFLICT (scope) DO UPDATE SET max_count = GREATEST(row_high_water.max_count, $2),
+             observed_at = now()`,
+            [scope, n]
+          );
+        }
+      }
+      // Batch upsert
+      const BATCH = 500;
+      for (let i = 0; i < data.shifts.length; i += BATCH) {
+        const batch = data.shifts.slice(i, i + BATCH);
+        const ids = [], bIds = [], eIds = [], dates = [], types = [], groups = [];
+        const starts = [], ends = [], statuses = [], claims = [], metas = [], versions = [];
+        for (const s of batch) {
+          const md = _strip(s, ['id','buildingId','employeeId','date','type','group','start','end','status','claimRequest','_version']);
+          ids.push(s.id); bIds.push(s.buildingId); eIds.push(s.employeeId || null);
+          dates.push(s.date); types.push(s.type); groups.push(s.group);
+          starts.push(s.start || null); ends.push(s.end || null);
+          statuses.push(s.status || 'open');
+          claims.push(s.claimRequest ? JSON.stringify(s.claimRequest) : null);
+          metas.push(_validateMetadata(md, `shift:${s.id}`)); versions.push(s._version || 1);
+        }
+        await c.query(`INSERT INTO shifts (id, building_id, employee_id, shift_date, shift_type, "group",
+            start_time, end_time, status, claim_request, metadata, version)
+          SELECT * FROM unnest(
+            $1::text[], $2::text[], $3::text[], $4::date[], $5::text[], $6::text[],
+            $7::text[], $8::text[], $9::text[], $10::jsonb[], $11::jsonb[], $12::int[])
+          ON CONFLICT (id) DO UPDATE SET
+            building_id=EXCLUDED.building_id, employee_id=EXCLUDED.employee_id,
+            shift_date=EXCLUDED.shift_date, shift_type=EXCLUDED.shift_type, "group"=EXCLUDED."group",
+            start_time=EXCLUDED.start_time, end_time=EXCLUDED.end_time,
+            status=EXCLUDED.status, claim_request=EXCLUDED.claim_request,
+            metadata=EXCLUDED.metadata, version = shifts.version + 1, updated_at=now()`,
+          [ids, bIds, eIds, dates, types, groups, starts, ends, statuses, claims, metas, versions]);
+      }
+      // DELETE orphaned shifts
+      const keepShiftIds = data.shifts.map(s => s.id);
+      if (keepShiftIds.length > 0) {
+        await c.query('DELETE FROM shifts WHERE id != ALL($1::text[])', [keepShiftIds]);
+      }
+      return data.shifts.length;
+    });
+  }
+
+  // ── Schedule Patterns ──
+  if (Array.isArray(data.schedulePatterns)) {
+    await _runTable('schedulePatterns', async (c) => {
+      for (const p of data.schedulePatterns) {
+        let bId = p.buildingId || null;
+        if (!bId && p.empId) {
+          const empRow = (await c.query('SELECT building_id FROM employees WHERE id = $1', [p.empId])).rows[0];
+          bId = empRow?.building_id || null;
+        }
+        const meta = _strip(p, ['id','buildingId','empId','shiftType','group','startDate','endDate','active']);
+        if (Object.keys(meta).length === 0 && p.id) {
+          console.warn('[repo] pattern_empty_jsonb:', p.id, '— metadata fields lost, pattern will be non-functional');
+        }
+        await c.query(`INSERT INTO schedule_patterns (id, building_id, emp_id, shift_type, "group", pattern, start_date, end_date, active)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+          ON CONFLICT (id) DO UPDATE SET
+            building_id=$2, shift_type=$4, "group"=$5, pattern=$6, start_date=$7, end_date=$8, active=$9`,
+          [p.id || `pat_${p.empId || 'open'}_${Date.now()}`, bId, p.empId || null,
+           p.shiftType || null, p.group || null, JSON.stringify(meta),
+           p.startDate || null, p.endDate || null, p.active !== false]);
+      }
+      const keepPatIds = data.schedulePatterns.filter(p => p.id).map(p => p.id);
+      if (keepPatIds.length > 0) {
+        await c.query('DELETE FROM schedule_patterns WHERE id != ALL($1::text[])', [keepPatIds]);
+      }
+      return data.schedulePatterns.length;
+    });
+  }
+
+  // ── app_state blobs ──
+  await _runTable('appState', async (c) => {
+    const keysToWrite = Object.entries(APP_STATE_KEYS).filter(([k]) => data[k] !== undefined).map(([k]) => k);
+    if (keysToWrite.length > 0) {
+      await c.query(`SELECT key FROM app_state WHERE key = ANY($1) FOR UPDATE`, [keysToWrite]);
+    }
+    let count = 0;
+    for (const [k, def] of Object.entries(APP_STATE_KEYS)) {
+      if (data[k] === undefined) continue;
+      const expectArray = Array.isArray(def);
+      const v = expectArray
+        ? (Array.isArray(data[k]) ? data[k] : [])
+        : (data[k] && typeof data[k] === 'object' && !Array.isArray(data[k]) ? data[k] : {});
+      await c.query(
+        `INSERT INTO app_state (key, value) VALUES ($1, $2::jsonb)
+         ON CONFLICT (key) DO UPDATE SET value = $2::jsonb, updated_at = now()`,
+        [k, JSON.stringify(v)]
+      );
+      count++;
+    }
+    return count;
+  });
+
+  const failedTables = results.filter(r => !r.ok).map(r => r.table);
+  const allOk = failedTables.length === 0;
+  return { results, allOk, failedTables };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Post-save count verification — lightweight check that data actually landed.
+// ──────────────────────────────────────────────────────────────────────────
+async function verifyCounts(data) {
+  if (!_pool) return [];
+  const checks = [];
+  const tableCounts = [
+    { table: 'companies',         key: 'companies',        sql: 'SELECT COUNT(*)::int AS n FROM companies' },
+    { table: 'buildings',         key: 'buildings',         sql: 'SELECT COUNT(*)::int AS n FROM buildings' },
+    { table: 'accounts',          key: 'accounts',          sql: 'SELECT COUNT(*)::int AS n FROM accounts' },
+    { table: 'employees',         key: 'employees',         sql: 'SELECT COUNT(*)::int AS n FROM employees' },
+    { table: 'shifts',            key: 'shifts',            sql: 'SELECT COUNT(*)::int AS n FROM shifts' },
+    { table: 'schedule_patterns', key: 'schedulePatterns',  sql: 'SELECT COUNT(*)::int AS n FROM schedule_patterns' },
+  ];
+  for (const { table, key, sql } of tableCounts) {
+    const arr = data[key];
+    if (!Array.isArray(arr)) continue;
+    try {
+      const r = await _pool.query(sql);
+      const actual = r.rows[0]?.n || 0;
+      const expected = arr.length;
+      checks.push({ table, expected, actual, match: actual === expected });
+    } catch (e) {
+      checks.push({ table, expected: arr.length, actual: -1, match: false, error: e.message });
+    }
+  }
+  return checks;
+}
+
+// Legacy saveAll — retained for reference but no longer called from persistCache.
 // Save full payload — wraps everything in a single transaction.
 //
 // CRITICAL SAFETY: this function is UPSERT-only. It NEVER deletes rows.
@@ -775,7 +1079,7 @@ async function _upsertAccountInTx(c, a) {
 // than the count currently in postgres for any building in scope. This
 // is the last line of defense — even if every other tripwire fails, a
 // shrinking employees collection cannot make it through this function.
-async function saveAll(data) {
+async function saveAllLegacy(data) {
   return withTx(async (c) => {
     // ── Employee shrink guard ────────────────────────────────────────────
     // Compare incoming employees count to what's currently in postgres.
@@ -918,7 +1222,7 @@ async function saveAll(data) {
             license_state = COALESCE(EXCLUDED.license_state, employees.license_state),
             updated_at=now()`,
           [e.id, e.buildingId, e.accountId || null, e.name, e.email || null, e.phone || null, e.group,
-           e.employmentType || null, e.hourlyRate || null, e.hireDate || null,
+           _safeEmpType(e.employmentType), e.hourlyRate || null, e.hireDate || null,
            !!e.inactive, e.notifEmail !== false, e.phone ? (e.notifSMS !== false) : !!e.notifSMS,
            _validateMetadata(md, `employee:${e.id}`), JSON.stringify(e.terminationLog || []),
            e.licenseNumber || null, e.licenseExpiresAt || null, e.licenseState || null]);
@@ -944,7 +1248,7 @@ async function saveAll(data) {
         await c.query(`INSERT INTO shifts (id, building_id, employee_id, shift_date, shift_type, "group",
             start_time, end_time, status, claim_request, metadata, version)
           SELECT * FROM unnest(
-            $1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[],
+            $1::text[], $2::text[], $3::text[], $4::date[], $5::text[], $6::text[],
             $7::text[], $8::text[], $9::text[], $10::jsonb[], $11::jsonb[], $12::int[])
           ON CONFLICT (id) DO UPDATE SET
             building_id=EXCLUDED.building_id, employee_id=EXCLUDED.employee_id,
@@ -1025,6 +1329,76 @@ async function saveAll(data) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Change Journal — durable mutation log written before in-memory changes.
+// Each mutation is a single INSERT (autocommit), no transaction needed.
+// Survives container crashes between debounced saves.
+// ──────────────────────────────────────────────────────────────────────────
+async function appendJournal(tableName, entityId, op, payload) {
+  if (!_pool) return null;
+  try {
+    const r = await _pool.query(
+      `INSERT INTO change_journal (table_name, entity_id, op, payload)
+       VALUES ($1, $2, $3, $4::jsonb) RETURNING id`,
+      [tableName, entityId, op, JSON.stringify(payload)]
+    );
+    return r.rows[0]?.id || null;
+  } catch (e) {
+    console.error('[repo] journal_append_failed:', e.message);
+    return null;
+  }
+}
+
+async function markJournalApplied(ids) {
+  if (!_pool || !ids || ids.length === 0) return;
+  try {
+    await _pool.query(
+      `UPDATE change_journal SET applied = true, applied_at = now() WHERE id = ANY($1::bigint[])`,
+      [ids]
+    );
+  } catch (e) {
+    console.error('[repo] journal_mark_applied_failed:', e.message);
+  }
+}
+
+async function loadUnappliedJournal() {
+  if (!_pool) return [];
+  try {
+    const r = await _pool.query(
+      `SELECT id, ts, table_name, entity_id, op, payload FROM change_journal
+       WHERE applied = false ORDER BY ts ASC`
+    );
+    return r.rows;
+  } catch (e) {
+    console.error('[repo] journal_load_unapplied_failed:', e.message);
+    return [];
+  }
+}
+
+async function pruneJournal(olderThanDays = 7) {
+  if (!_pool) return 0;
+  try {
+    const r = await _pool.query(
+      `DELETE FROM change_journal WHERE applied = true AND ts < now() - $1::int * interval '1 day'`,
+      [olderThanDays]
+    );
+    return r.rowCount || 0;
+  } catch (e) {
+    console.error('[repo] journal_prune_failed:', e.message);
+    return 0;
+  }
+}
+
+async function countUnappliedJournal() {
+  if (!_pool) return 0;
+  try {
+    const r = await _pool.query(`SELECT COUNT(*)::int AS n FROM change_journal WHERE applied = false`);
+    return r.rows[0]?.n || 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Audit chain mirror (the WORM blob is the legal record; this is for query)
 // ──────────────────────────────────────────────────────────────────────────
 async function appendAuditEntry(entry) {
@@ -1057,7 +1431,9 @@ async function ping() {
 module.exports = {
   init, isEnabled, close, ensureSchema,
   withTx, setContext,
-  loadAll, saveAll,
+  loadAll, saveAllIndependent, saveAll: saveAllIndependent, saveAllLegacy,
+  verifyCounts,
+  appendJournal, markJournalApplied, loadUnappliedJournal, pruneJournal, countUnappliedJournal,
   loadMigrationFlags, setMigrationFlag,
   getAccountByEmail, getAccountById, upsertAccount, clearAccountTotp,
   appendAuditEntry,

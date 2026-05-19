@@ -161,6 +161,26 @@ function _twilioClient() {
   return _twilio;
 }
 
+// ── STRIPE CONFIG — payment processing ────────────────────────────────────────
+const STRIPE_SECRET_KEY      = process.env.STRIPE_SECRET_KEY || null;
+const STRIPE_PUBLISHABLE_KEY = process.env.STRIPE_PUBLISHABLE_KEY || null;
+const STRIPE_WEBHOOK_SECRET  = process.env.STRIPE_WEBHOOK_SECRET || null;
+let _stripe = null;
+function _stripeClient() {
+  if (!_stripe) {
+    if (!STRIPE_SECRET_KEY) throw new Error('Stripe not configured');
+    _stripe = require('stripe')(STRIPE_SECRET_KEY);
+  }
+  return _stripe;
+}
+
+// Map plan names to Stripe Price IDs (set via env or stripe-setup.js output)
+const STRIPE_PRICES = {
+  basic:        process.env.STRIPE_PRICE_BASIC        || null,
+  professional: process.env.STRIPE_PRICE_PROFESSIONAL  || null,
+  enterprise:   process.env.STRIPE_PRICE_ENTERPRISE    || null,
+};
+
 // ── Per-building SMS number provisioning (Twilio) ───────────────────────────
 // Each building can have its own local-area-code SMS number so staff at that
 // facility see a familiar local caller ID. Numbers are purchased on demand
@@ -224,9 +244,23 @@ function _smsFromForBuilding(buildingId, data) {
 
 // ── Shared Twilio SMS sender ──────────────────────────────────────────────────
 async function _sendSMSviaTwilio(from, to, body) {
-  const client = _twilioClient();
-  const msg = await client.messages.create({ from, to, body: body.slice(0, 1600) });
-  return { successful: msg.status !== 'failed', sid: msg.sid, errorMessage: msg.errorMessage };
+  if (!from) throw new Error('SMS send failed: no FROM number configured');
+  if (!to) throw new Error('SMS send failed: no TO number provided');
+  logger.info('sms_attempt', { from, to: to.slice(0, 4) + '***', bodyLen: body?.length || 0 });
+  try {
+    const client = _twilioClient();
+    const msg = await client.messages.create({ from, to, body: body.slice(0, 1600) });
+    const successful = msg.status !== 'failed';
+    if (!successful) {
+      logger.error('sms_twilio_failed_status', { sid: msg.sid, status: msg.status, errorCode: msg.errorCode, errorMessage: msg.errorMessage });
+    } else {
+      logger.info('sms_sent', { sid: msg.sid, status: msg.status });
+    }
+    return { successful, sid: msg.sid, errorMessage: msg.errorMessage };
+  } catch (e) {
+    logger.error('sms_twilio_api_error', { err: e.message, code: e.code, status: e.status, from, to: to.slice(0, 4) + '***' });
+    throw e;
+  }
 }
 
 // ── PCC (PointClickCare) CONFIG ───────────────────────────────────────────────
@@ -715,13 +749,74 @@ async function flushNow() {
   await persistCache({ _calledFromFlush: true }); // throws on failure — caller catches
 }
 
-// Tracks consecutive file-mode persist failures. If we hit too many in a
-// row, we know writes are silently failing (e.g., DATA_FILE points to a
-// path whose parent dir doesn't exist) and we surface it loudly. Without
-// this counter, the 2026-05-08 incident's writes failed silently for an
-// entire session before anyone noticed the data was never persisted.
+// Tracks consecutive persist failures. If we hit too many in a row, we
+// send an SMS alert so an operator knows data is at risk.
 let _consecutiveFilePersistFailures = 0;
+let _consecutivePgPersistFailures = 0;
 let _lastSuccessfulPersistAt = null;
+let _lastSuccessfulFileWriteAt = null;
+let _lastAlertSentAt = null;
+let _journalUnappliedCount = 0;
+const ALERT_PHONE = process.env.ALERT_PHONE || null;
+const PERSIST_ALERT_THROTTLE_MS = 15 * 60 * 1000; // max 1 SMS per 15 min
+
+// Trigger SMS alert when persistence is repeatedly failing.
+async function _triggerPersistAlert(failedTables, errorMessages) {
+  const now = Date.now();
+  // Throttle: max 1 SMS per 15 minutes
+  if (_lastAlertSentAt && (now - new Date(_lastAlertSentAt).getTime()) < PERSIST_ALERT_THROTTLE_MS) return;
+
+  const msg = `MMS ALERT: Postgres save failing for [${failedTables.join(', ')}]. ` +
+    `Last success: ${_lastSuccessfulPersistAt || 'never'}. ` +
+    `Errors: ${errorMessages.slice(0, 300)}`;
+
+  console.error('[mms] PERSIST ALERT:', msg);
+
+  if (ALERT_PHONE && TWILIO_FROM_PHONE) {
+    try {
+      await _sendSMSviaTwilio(TWILIO_FROM_PHONE, ALERT_PHONE, msg);
+      _lastAlertSentAt = new Date().toISOString();
+      logger.warn('persist_alert_sms_sent', { to: ALERT_PHONE, failedTables });
+    } catch (e) {
+      logger.error('persist_alert_sms_failed', { err: e.message });
+    }
+  } else {
+    logger.warn('persist_alert_sms_skipped', { reason: 'ALERT_PHONE or TWILIO_FROM_PHONE not configured', failedTables });
+    _lastAlertSentAt = new Date().toISOString(); // still throttle log-only alerts
+  }
+}
+
+// Write encrypted data file as a fallback (dual-write in Postgres mode).
+// Uses atomic write (temp + rename) to prevent corruption.
+async function _writeDataFile(data) {
+  try {
+    const payload = { ...data, _lastSaved: new Date().toISOString() };
+    const encrypted = await encrypt(payload);
+    const tmp = DATA_FILE + '.tmp';
+    await fs.writeFile(tmp, JSON.stringify(encrypted, null, 2), 'utf8');
+    await fs.rename(tmp, DATA_FILE);
+    _lastSuccessfulFileWriteAt = new Date().toISOString();
+    return true;
+  } catch (e) {
+    logger.error('dual_write_file_failed', { err: e.message, file: DATA_FILE });
+    return false;
+  }
+}
+
+// Read and decrypt the data file, if it exists.
+async function _readDataFile() {
+  try {
+    const raw = await fs.readFile(DATA_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (parsed.iv && parsed.data && parsed.authTag) {
+      return await decrypt(parsed);
+    }
+    return parsed;
+  } catch (e) {
+    if (e.code !== 'ENOENT') logger.error('read_data_file_failed', { err: e.message });
+    return null;
+  }
+}
 
 // _calledFromFlush: when true, re-throw errors so flushNow() can propagate
 // them to the HTTP handler. When false (debounced background save), swallow
@@ -734,9 +829,80 @@ async function persistCache({ _calledFromFlush = false } = {}) {
   clearTimeout(saveTimeout);
   try {
     if (_useDB) {
-      await dbRepo.saveAll(dataCache);
-      logger.info('data_saved', { backend: 'postgres' });
-      _lastSuccessfulPersistAt = new Date().toISOString();
+      // Independent per-table saves — one bad table doesn't roll back the rest.
+      const saveResult = await dbRepo.saveAllIndependent(dataCache);
+
+      if (saveResult.allOk) {
+        _consecutivePgPersistFailures = 0;
+        _lastSuccessfulPersistAt = new Date().toISOString();
+        logger.info('data_saved', { backend: 'postgres', tables: saveResult.results.length });
+      } else {
+        _consecutivePgPersistFailures++;
+        const errors = saveResult.results.filter(r => !r.ok).map(r => `${r.table}: ${r.error}`);
+        logger.error('data_saved_partial', {
+          backend: 'postgres',
+          failedTables: saveResult.failedTables,
+          errors,
+          consecutiveFailures: _consecutivePgPersistFailures,
+        });
+        // If critical tables (shifts + employees) succeeded, still count it as partial success
+        const criticalOk = saveResult.results
+          .filter(r => r.table === 'shifts' || r.table === 'employees')
+          .every(r => r.ok);
+        if (criticalOk) {
+          _lastSuccessfulPersistAt = new Date().toISOString();
+        }
+        // Alert after 3 consecutive failures
+        if (_consecutivePgPersistFailures >= 3) {
+          _triggerPersistAlert(saveResult.failedTables, errors.join('; ')).catch(() => {});
+        }
+      }
+
+      // Post-save count verification — trust but verify.
+      // Only verify tables that actually saved (ok=true). Tables where the
+      // shrink guard skipped the save will have expected ≠ actual, which is
+      // intentional and not a failure.
+      try {
+        const savedTables = new Set(saveResult.results.filter(r => r.ok).map(r => r.table));
+        const counts = await dbRepo.verifyCounts(dataCache);
+        const mismatches = counts.filter(c => !c.match && savedTables.has(c.table === 'schedule_patterns' ? 'schedulePatterns' : c.table));
+        if (mismatches.length > 0) {
+          logger.warn('post_save_count_mismatch', { mismatches });
+          // Alert but do NOT set dataDirty here — that would cause an
+          // infinite retry loop inside the persist lock. The next markDirty()
+          // from an API mutation will trigger a re-save naturally.
+          _consecutivePgPersistFailures++;
+          if (_consecutivePgPersistFailures >= 3) {
+            _triggerPersistAlert(
+              mismatches.map(m => m.table),
+              mismatches.map(m => `${m.table}: expected ${m.expected}, actual ${m.actual}`).join('; ')
+            ).catch(() => {});
+          }
+        }
+      } catch (verifyErr) {
+        logger.error('post_save_verify_failed', { err: verifyErr.message });
+      }
+
+      // Dual-write: also write the encrypted file as a fallback.
+      // If at least shifts+employees saved, the file is worth writing.
+      const shiftsOk = saveResult.results.find(r => r.table === 'shifts')?.ok !== false;
+      const employeesOk = saveResult.results.find(r => r.table === 'employees')?.ok !== false;
+      if (saveResult.allOk || (shiftsOk && employeesOk)) {
+        _writeDataFile(dataCache).catch(e => logger.error('dual_write_failed', { err: e.message }));
+      }
+
+      // Only throw if CRITICAL tables (shifts or employees) failed.
+      // Non-critical partial failures (e.g., appState) should not return
+      // 500 to the client — the important data is safe.
+      if (!saveResult.allOk && _calledFromFlush) {
+        const criticalFailed = saveResult.failedTables.some(t =>
+          t === 'shifts' || t === 'employees' || t === 'accounts');
+        if (criticalFailed) {
+          throw new Error(`Critical table save failure: ${saveResult.failedTables.join(', ')}`);
+        }
+        // Non-critical failures: log but don't throw — caller gets 200
+        logger.warn('partial_save_noncritical', { failedTables: saveResult.failedTables });
+      }
     } else {
       const payload   = { ...dataCache, _lastSaved: new Date().toISOString() };
       const encrypted = await encrypt(payload);
@@ -746,6 +912,7 @@ async function persistCache({ _calledFromFlush = false } = {}) {
       logger.info('data_saved', { backend: 'file' });
       _consecutiveFilePersistFailures = 0;
       _lastSuccessfulPersistAt = new Date().toISOString();
+      _lastSuccessfulFileWriteAt = new Date().toISOString();
     }
     // Fire-and-forget snapshot. Restore window: every-save for 24h, hourly
     // for 30d, daily for 365d. Lets a Super Admin recover from a bad edit
@@ -765,15 +932,13 @@ async function persistCache({ _calledFromFlush = false } = {}) {
           dataFile: DATA_FILE,
           dataFileDirExists: fsSync.existsSync(path.dirname(DATA_FILE)),
         });
+        _triggerPersistAlert(['file-backend'], msg).catch(() => {});
       }
     }
     // Re-mark dirty so the next markDirty/save attempt retries this batch.
     dataDirty = true;
     // CRITICAL: When called from flushNow(), re-throw so the HTTP handler
-    // can return 500 instead of falsely reporting success. Previously this
-    // error was silently swallowed, causing the DELETE handler to return
-    // { ok: true } even though Postgres never got the update — the #1 cause
-    // of "deleted shifts reappear after container restart."
+    // can return 500 instead of falsely reporting success.
     if (_calledFromFlush) throw e;
   }
   }); // end withPersistLock
@@ -1004,6 +1169,9 @@ function _scheduleDbRecoveryPing() {
 async function loadData() {
   if (dataCache) return dataCache;
 
+  let pgData = null;
+  let fileData = null;
+
   // Initialize DB if connection string is present
   if (process.env.PG_CONN) {
     try {
@@ -1013,8 +1181,8 @@ async function loadData() {
       if (ok) {
         _useDB = true;
         await dbRepo.ensureSchema();
-        dataCache = await dbRepo.loadAll();
-        logger.info('data_loaded', { backend: 'postgres', accounts: (dataCache.accounts || []).length });
+        pgData = await dbRepo.loadAll();
+        logger.info('data_loaded', { backend: 'postgres', accounts: (pgData.accounts || []).length });
       } else {
         logger.warn('pg_ping_failed_fallback_to_file');
         if (PG_REQUIRE_ON_BOOT) {
@@ -1032,40 +1200,135 @@ async function loadData() {
     }
   }
 
-  // File-based fallback
-  if (!_useDB) {
-    try {
-      const raw    = await fs.readFile(DATA_FILE, 'utf8');
-      const parsed = JSON.parse(raw);
-      if (parsed.iv && parsed.data && parsed.authTag) {
-        dataCache = await decrypt(parsed);
-        logger.info('data_loaded', { backend: 'file' });
-      } else {
-        dataCache = parsed;
-        dataDirty = true;
-        await persistCache();
-        logger.info('data_migrated_to_encrypted_file');
-      }
-    } catch (e) {
-      if (e.code === 'ENOENT') {
-        dataCache = {
-          accounts: [SEED_SA, SEED_DEMO],
-          buildings: [], employees: [], shifts: [], schedulePatterns: [],
-          hrEmployees: [], hrAccounts: [], hrTimeClock: [],
-          companies: [], jobPostings: [],
-        };
-        dataDirty = true;
-        await persistCache();
-        logger.info('data_initialized_empty');
-      } else {
-        logger.error('data_load_failed', { err: e.message });
-        throw e;
+  // Always attempt to load the file (dual-source recovery)
+  fileData = await _readDataFile();
+
+  // ── Cross-source comparison and selection ──────────────────────────────
+  if (_useDB && pgData) {
+    dataCache = pgData;
+
+    // If the file exists and has data, compare timestamps to detect staleness
+    if (fileData) {
+      const pgShiftCount = (pgData.shifts || []).length;
+      const fileShiftCount = (fileData.shifts || []).length;
+      const pgEmpCount = (pgData.employees || []).length;
+      const fileEmpCount = (fileData.employees || []).length;
+      const pgLastSaved = fileData._lastSaved ? new Date(fileData._lastSaved).getTime() : 0;
+
+      // If the file has significantly more data than Postgres, it may be
+      // more current (e.g., Postgres had rollback issues). Log a warning.
+      if (fileShiftCount > pgShiftCount + 10 || fileEmpCount > pgEmpCount + 5) {
+        logger.warn('startup_data_divergence', {
+          pgShifts: pgShiftCount, fileShifts: fileShiftCount,
+          pgEmployees: pgEmpCount, fileEmployees: fileEmpCount,
+          fileLastSaved: fileData._lastSaved || 'unknown',
+          note: 'File has more data than Postgres — possible rollback data loss. Investigate.',
+        });
       }
     }
+
+    // ── Replay unapplied journal entries ─────────────────────────────────
+    // If the container crashed between a journal write and a save, there
+    // may be mutations that were journaled but never applied to Postgres.
+    try {
+      const journal = await dbRepo.loadUnappliedJournal();
+      if (journal.length > 0) {
+        logger.warn('startup_journal_replay', { count: journal.length });
+        const appliedIds = [];
+        for (const entry of journal) {
+          try {
+            _replayJournalEntry(dataCache, entry);
+            appliedIds.push(entry.id);
+          } catch (e) {
+            logger.error('journal_replay_entry_failed', { id: entry.id, err: e.message });
+          }
+        }
+        if (appliedIds.length > 0) {
+          // Persist the replayed changes immediately
+          dataDirty = true;
+          await persistCache();
+          await dbRepo.markJournalApplied(appliedIds);
+          logger.info('startup_journal_replayed', { applied: appliedIds.length, total: journal.length });
+        }
+      }
+    } catch (e) {
+      logger.error('startup_journal_replay_failed', { err: e.message });
+    }
+  } else if (fileData) {
+    // File-based fallback
+    dataCache = fileData;
+    logger.info('data_loaded', { backend: 'file' });
+  } else {
+    // No data from either source — initialize empty
+    dataCache = {
+      accounts: [SEED_SA, SEED_DEMO],
+      buildings: [], employees: [], shifts: [], schedulePatterns: [],
+      hrEmployees: [], hrAccounts: [], hrTimeClock: [],
+      companies: [], jobPostings: [],
+    };
+    dataDirty = true;
+    await persistCache();
+    logger.info('data_initialized_empty');
   }
 
   await applyMigrations(dataCache);
+
+  // ── Schedule daily journal cleanup ─────────────────────────────────────
+  if (_useDB) {
+    setInterval(async () => {
+      try {
+        const pruned = await dbRepo.pruneJournal(7);
+        if (pruned > 0) logger.info('journal_pruned', { deleted: pruned });
+      } catch (e) {
+        logger.error('journal_prune_failed', { err: e.message });
+      }
+    }, 24 * 60 * 60 * 1000).unref();
+
+    // Periodic journal unapplied count for health endpoint
+    setInterval(async () => {
+      try { _journalUnappliedCount = await dbRepo.countUnappliedJournal(); } catch {}
+    }, 60 * 1000).unref();
+  }
+
   return dataCache;
+}
+
+// Replay a single journal entry into the in-memory dataCache.
+// Journal entries can be:
+//   - Bulk (entity_id starts with 'bulk:'): payload.items is the full collection
+//   - Single: payload is the individual entity
+function _replayJournalEntry(data, entry) {
+  const { table_name, entity_id, op, payload } = entry;
+  const collectionMap = {
+    companies: 'companies', buildings: 'buildings', accounts: 'accounts',
+    employees: 'employees', shifts: 'shifts', schedulePatterns: 'schedulePatterns',
+  };
+  const key = collectionMap[table_name];
+  if (!key) return;
+  if (!Array.isArray(data[key])) data[key] = [];
+
+  // Bulk journal entry (from POST /api/data): contains the full collection
+  if (entity_id.startsWith('bulk:') && Array.isArray(payload?.items)) {
+    // Merge incoming items into the existing collection by ID
+    const existingById = new Map(data[key].map(item => [item.id, item]));
+    for (const item of payload.items) {
+      if (item && item.id) existingById.set(item.id, item);
+    }
+    data[key] = Array.from(existingById.values());
+    return;
+  }
+
+  // Single-entity journal entry
+  if (op === 'DELETE') {
+    data[key] = data[key].filter(item => item.id !== entity_id);
+  } else if (op === 'INSERT') {
+    const existing = data[key].find(item => item.id === entity_id);
+    if (!existing) data[key].push(payload);
+  } else if (op === 'UPDATE') {
+    const idx = data[key].findIndex(item => item.id === entity_id);
+    if (idx >= 0) Object.assign(data[key][idx], payload);
+    else data[key].push(payload);
+  }
 }
 
 async function applyMigrations(data) {
@@ -1750,12 +2013,13 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc:    ["'self'"],
-      scriptSrc:     ["'self'", (req, res) => `'nonce-${res.locals.cspNonce}'`],
+      scriptSrc:     ["'self'", (req, res) => `'nonce-${res.locals.cspNonce}'`, 'https://js.stripe.com'],
       scriptSrcAttr: ["'unsafe-inline'"],               // onclick handlers — future: migrate to addEventListener
       styleSrc:      ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'], // inline style= + Google Fonts CSS
       fontSrc:       ["'self'", 'https://fonts.gstatic.com', 'data:'],           // Google Fonts woff2 files
-      imgSrc:        ["'self'", 'data:', 'blob:'],
-      connectSrc:    ["'self'"],
+      imgSrc:        ["'self'", 'data:', 'blob:', 'https://*.stripe.com'],
+      connectSrc:    ["'self'", 'https://api.stripe.com'],
+      frameSrc:      ["'self'", 'https://js.stripe.com', 'https://hooks.stripe.com'],
       frameAncestors: ["'none'"],
       objectSrc:     ["'none'"],
       baseUri:       ["'self'"],
@@ -1771,7 +2035,7 @@ app.use(helmet({
       camera:           [],
       microphone:       [],
       geolocation:      [],
-      payment:          [],
+      payment:          ['self'],
       usb:              [],
       magnetometer:     [],
       gyroscope:        [],
@@ -1798,6 +2062,84 @@ app.use(cors({
   origin: IS_PROD ? [APP_URL] : [APP_URL, 'http://localhost:3002', 'http://localhost:3000'],
   credentials: true,
 }));
+
+// ── Stripe webhook — raw body for signature verification ───────────────────
+// MUST be registered before express.json() so the raw body is available.
+app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  if (!STRIPE_WEBHOOK_SECRET || !STRIPE_SECRET_KEY) {
+    return res.status(501).json({ error: 'Stripe not configured' });
+  }
+  const sig = req.headers['stripe-signature'];
+  let event;
+  try {
+    event = _stripeClient().webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    logger.warn('stripe_webhook_sig_failed', { err: err.message });
+    return res.status(400).json({ error: 'Webhook signature verification failed' });
+  }
+  try {
+    const data = await loadData();
+    const bd = data.billingData || {};
+    switch (event.type) {
+      case 'invoice.paid': {
+        const invoice = event.data.object;
+        const custId = invoice.customer;
+        const bId = Object.keys(bd).find(k => bd[k]?.stripeCustomerId === custId);
+        if (bId) {
+          bd[bId].payStatus = 'current';
+          bd[bId].lastPaymentAt = new Date(invoice.status_transitions?.paid_at * 1000 || Date.now()).toISOString();
+          data.billingData = bd;
+          markDirty();
+          auditLog('STRIPE_INVOICE_PAID', { buildingId: bId, invoiceId: invoice.id, amount: invoice.amount_paid });
+        }
+        break;
+      }
+      case 'invoice.payment_failed': {
+        const invoice = event.data.object;
+        const custId = invoice.customer;
+        const bId = Object.keys(bd).find(k => bd[k]?.stripeCustomerId === custId);
+        if (bId) {
+          bd[bId].payStatus = 'overdue';
+          data.billingData = bd;
+          markDirty();
+          auditLog('STRIPE_PAYMENT_FAILED', { buildingId: bId, invoiceId: invoice.id });
+        }
+        break;
+      }
+      case 'customer.subscription.updated': {
+        const sub = event.data.object;
+        const custId = sub.customer;
+        const bId = Object.keys(bd).find(k => bd[k]?.stripeCustomerId === custId);
+        if (bId) {
+          bd[bId].stripeSubscriptionId = sub.id;
+          bd[bId].stripeSubscriptionStatus = sub.status;
+          if (sub.status === 'active') bd[bId].payStatus = 'current';
+          data.billingData = bd;
+          markDirty();
+          auditLog('STRIPE_SUBSCRIPTION_UPDATED', { buildingId: bId, subId: sub.id, status: sub.status });
+        }
+        break;
+      }
+      case 'customer.subscription.deleted': {
+        const sub = event.data.object;
+        const custId = sub.customer;
+        const bId = Object.keys(bd).find(k => bd[k]?.stripeCustomerId === custId);
+        if (bId) {
+          bd[bId].stripeSubscriptionId = null;
+          bd[bId].stripeSubscriptionStatus = 'canceled';
+          data.billingData = bd;
+          markDirty();
+          auditLog('STRIPE_SUBSCRIPTION_CANCELED', { buildingId: bId, subId: sub.id });
+        }
+        break;
+      }
+    }
+    res.json({ received: true });
+  } catch (err) {
+    logger.error('stripe_webhook_handler_error', { err: err.message, type: event?.type });
+    res.status(500).json({ error: 'Webhook handler error' });
+  }
+});
 
 // Body size limit: must accommodate the full app state on /api/data POST.
 // Live data payload is ~1.3 MB at 21 buildings / 1.6k staff / 1k shifts and
@@ -1895,6 +2237,7 @@ app.get('/health/ready', async (_req, res) => {
       email: !!ACS_FROM_EMAIL,
       sms:   !!TWILIO_ACCOUNT_SID,
     },
+    stripe: !!STRIPE_SECRET_KEY,
   };
   try {
     await loadData();
@@ -1904,18 +2247,29 @@ app.get('/health/ready', async (_req, res) => {
   } catch (e) {
     return res.status(503).json({ ok: false, ...checks, error: 'data_unreachable' });
   }
-  // Surface persist-failure state so monitoring can alert. The 2026-05-08
-  // incident's writes failed silently for an entire user session because
-  // there was no visible health signal — only buried log lines.
-  checks.persistFailuresConsecutive = _consecutiveFilePersistFailures;
+  // Surface persist-failure state so monitoring can alert.
+  checks.persistence = {
+    pgFailuresConsecutive:   _consecutivePgPersistFailures,
+    fileFailuresConsecutive: _consecutiveFilePersistFailures,
+    lastSuccessfulPersistAt: _lastSuccessfulPersistAt,
+    lastSuccessfulFileWriteAt: _lastSuccessfulFileWriteAt,
+    lastAlertSentAt:         _lastAlertSentAt,
+    journalUnappliedCount:   _journalUnappliedCount,
+  };
+  // Legacy keys for backwards compat with existing monitors
+  checks.persistFailuresConsecutive = _useDB ? _consecutivePgPersistFailures : _consecutiveFilePersistFailures;
   checks.lastSuccessfulPersistAt    = _lastSuccessfulPersistAt;
-  if (_consecutiveFilePersistFailures >= 3) {
+
+  const totalFailures = _useDB ? _consecutivePgPersistFailures : _consecutiveFilePersistFailures;
+  if (totalFailures >= 3) {
     return res.status(503).json({
       ok: false,
       ...checks,
       error: 'persist_repeatedly_failing',
-      message: 'File-mode persists are failing. Edits are not being saved. ' +
-               'Investigate DATA_FILE config or set PG_REQUIRE_ON_BOOT=true.',
+      message: _useDB
+        ? `Postgres persists are failing (${_consecutivePgPersistFailures} consecutive). Edits may not be saved.`
+        : 'File-mode persists are failing. Edits are not being saved. ' +
+          'Investigate DATA_FILE config or set PG_REQUIRE_ON_BOOT=true.',
     });
   }
   const chain = await verifyAuditChain();
@@ -5717,6 +6071,7 @@ app.post('/api/shifts/:id/claim', requireAuth, async (req, res) => {
     requestedAt: new Date().toISOString(),
     ...(crossBuilding ? { crossBuilding: true, homeBuildingId: me.buildingId, homeBuildingName: myBldName } : {}),
   };
+  if (_useDB) dbRepo.appendJournal('shifts', shift.id, 'UPDATE', shift).catch(() => {});
   try { await flushNow(); } catch (e) {
     return res.status(500).json({ error: 'Failed to persist shift claim. Please retry.' });
   }
@@ -5766,6 +6121,7 @@ app.post('/api/shifts/:id/claim/approve', requireAuth, requireAdmin, async (req,
   shift.status = 'scheduled';
   shift.employeeId = empId;
   delete shift.claimRequest;
+  if (_useDB) dbRepo.appendJournal('shifts', shift.id, 'UPDATE', shift).catch(() => {});
   try { await flushNow(); } catch (e) {
     return res.status(500).json({ error: 'Failed to persist claim approval. Please retry.' });
   }
@@ -5852,6 +6208,8 @@ app.post('/api/shifts', requireAuth, requireAdmin, async (req, res) => {
   };
   if (!Array.isArray(data.shifts)) data.shifts = [];
   data.shifts.push(shift);
+  // Journal the new shift before flush for crash recovery
+  if (_useDB) dbRepo.appendJournal('shifts', shift.id, 'INSERT', shift).catch(() => {});
   try { await flushNow(); } catch (e) {
     return res.status(500).json({ error: 'Failed to persist new shift. Please retry.' });
   }
@@ -5889,6 +6247,7 @@ app.post('/api/shifts/:id/assign', requireAuth, requireAdmin, async (req, res) =
   shift.employeeId = empId;
   shift.status = 'scheduled';
   delete shift.claimRequest;
+  if (_useDB) dbRepo.appendJournal('shifts', shift.id, 'UPDATE', shift).catch(() => {});
   try { await flushNow(); } catch (e) {
     return res.status(500).json({ error: 'Failed to persist shift assignment. Please retry.' });
   }
@@ -5914,6 +6273,7 @@ app.post('/api/shifts/:id/unassign', requireAuth, requireAdmin, async (req, res)
   shift.status = 'open';
   shift._removedDate = shift.date;
   delete shift.claimRequest;
+  if (_useDB) dbRepo.appendJournal('shifts', shift.id, 'UPDATE', shift).catch(() => {});
   try { await flushNow(); } catch (e) {
     return res.status(500).json({ error: 'Failed to persist shift unassignment. Please retry.' });
   }
@@ -5990,6 +6350,8 @@ app.delete('/api/shifts/:id', requireAuth, requireAdmin, async (req, res) => {
   if (idx < 0) return res.status(404).json({ error: 'Shift not found' });
   const shift = data.shifts[idx];
   if (!_shiftAdminAuthorized(req.user, shift)) return res.status(403).json({ error: 'Out of scope' });
+  // Journal the deletion before modifying in-memory state
+  if (_useDB) dbRepo.appendJournal('shifts', shift.id, 'DELETE', shift).catch(() => {});
   data.shifts.splice(idx, 1);
 
   // Record the date as removed on ALL rotation patterns that could regenerate
@@ -7082,7 +7444,10 @@ setInterval(_maybeSendDueReports, 60 * 1000);
 // time has passed, sends SMS via existing ACS infrastructure, marks as sent.
 async function _maybeSendDischargeMessages() {
   try {
-    if (!ACS_CONNECTION_STRING) return;         // SMS not configured
+    // BUG FIX: was checking !ACS_CONNECTION_STRING (email config) instead of
+    // Twilio config. Discharge messages are SMS, not email. This blocked ALL
+    // discharge SMS when ACS was not configured, even if Twilio was.
+    if (!TWILIO_ACCOUNT_SID) return;            // SMS not configured
     const data = dataCache;
     if (!data || !Array.isArray(data.discharges)) return;
 
@@ -7111,7 +7476,10 @@ async function _maybeSendDischargeMessages() {
         // Compose the SMS
         const smsBody = `${tmpl.greeting || 'Hi'} ${discharge.residentName}, ${tmpl.body}`.slice(0, 1600);
         const sender = _smsFromForBuilding(discharge.buildingId, data);
-        if (!sender) continue;
+        if (!sender) {
+          logger.warn('discharge_sms_no_sender', { dischargeId: discharge.id, buildingId: discharge.buildingId });
+          continue;
+        }
 
         try {
           const smsResult = await _sendSMSviaTwilio(sender, discharge.phone, smsBody);
@@ -7128,12 +7496,20 @@ async function _maybeSendDischargeMessages() {
             });
             logger.info('discharge_sms_sent', { dischargeId: discharge.id, offsetDays: msg.offsetDays, hour: msg.hour });
           } else {
+            // BUG FIX: was referencing undefined `results[0]` instead of `smsResult`
+            msg.status = 'failed';
+            msg.failedAt = now.toISOString();
+            dirty = true;
             logger.error('discharge_sms_failed', {
               dischargeId: discharge.id,
-              error: results[0]?.errorMessage || 'unknown',
+              error: smsResult.errorMessage || 'unknown',
             });
           }
         } catch (e) {
+          msg.status = 'failed';
+          msg.failedAt = now.toISOString();
+          msg.failedError = e.message;
+          dirty = true;
           logger.error('discharge_sms_error', { dischargeId: discharge.id, err: e.message });
         }
       }
@@ -7142,7 +7518,7 @@ async function _maybeSendDischargeMessages() {
     if (dirty) {
       // Persist updated message statuses
       dataCache = data;
-      _writeSnapshot().catch(e => logger.error('discharge_snapshot_failed', { err: e.message }));
+      markDirty();
     }
   } catch (e) {
     logger.error('discharge_scheduler_error', { msg: e.message });
@@ -8061,6 +8437,236 @@ app.post('/api/auth/verify-password', requireAuth, authLimiter, async (req, res)
   return res.json({ ok: true });
 });
 
+// ── STRIPE BILLING ENDPOINTS ──────────────────────────────────────────────────
+
+// Public config — returns publishable key + price IDs for the frontend
+app.get('/api/billing/config', (_req, res) => {
+  if (!STRIPE_PUBLISHABLE_KEY) {
+    return res.status(501).json({ error: 'Stripe not configured' });
+  }
+  res.json({
+    publishableKey: STRIPE_PUBLISHABLE_KEY,
+    prices: STRIPE_PRICES,
+  });
+});
+
+// Create a SetupIntent + Stripe Customer for securely collecting a payment method
+app.post('/api/billing/setup-intent', requireAuth, requireAdmin, async (req, res) => {
+  if (!STRIPE_SECRET_KEY) return res.status(501).json({ error: 'Stripe not configured' });
+  try {
+    const stripe = _stripeClient();
+    const { buildingId } = req.body;
+    const bId = buildingId || req.user?.buildingId;
+    if (!bId) return res.status(400).json({ error: 'buildingId required' });
+    // Building scope authorization
+    const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds || [])].filter(Boolean));
+    if (req.user.role !== 'superadmin' && !callerBIds.has(bId)) {
+      return res.status(403).json({ error: 'Out of scope' });
+    }
+
+    const data = await loadData();
+    if (!data.billingData) data.billingData = {};
+    if (!data.billingData[bId]) data.billingData[bId] = {};
+    const bd = data.billingData[bId];
+
+    // Find building name + billing contact for Stripe Customer metadata
+    const building = (data.buildings || []).find(b => b.id === bId);
+    const contact = bd.billingContact || {};
+    const email = contact.email || '';
+
+    // Create or retrieve existing Stripe Customer
+    let customerId = bd.stripeCustomerId;
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        name: building?.name || bId,
+        email: email || undefined,
+        metadata: { buildingId: bId, platform: 'ManageMyStaffing' },
+      });
+      customerId = customer.id;
+      bd.stripeCustomerId = customerId;
+      data.billingData[bId] = bd;
+      markDirty();
+    }
+
+    const setupIntent = await stripe.setupIntents.create({
+      customer: customerId,
+      payment_method_types: ['card'],
+      metadata: { buildingId: bId },
+    });
+
+    auditLog('STRIPE_SETUP_INTENT_CREATED', req.user, { buildingId: bId, customerId });
+    res.json({ clientSecret: setupIntent.client_secret, customerId });
+  } catch (err) {
+    logger.error('stripe_setup_intent_failed', { err: err.message });
+    res.status(500).json({ error: 'Failed to create setup intent' });
+  }
+});
+
+// Create a Stripe Subscription for recurring billing
+app.post('/api/billing/subscribe', requireAuth, requireAdmin, async (req, res) => {
+  if (!STRIPE_SECRET_KEY) return res.status(501).json({ error: 'Stripe not configured' });
+  try {
+    const stripe = _stripeClient();
+    const { buildingId, plan } = req.body;
+    const bId = buildingId || req.user?.buildingId;
+    if (!bId) return res.status(400).json({ error: 'buildingId required' });
+    const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds || [])].filter(Boolean));
+    if (req.user.role !== 'superadmin' && !callerBIds.has(bId)) {
+      return res.status(403).json({ error: 'Out of scope' });
+    }
+
+    const planKey = (plan || 'professional').toLowerCase();
+    const priceId = STRIPE_PRICES[planKey];
+    if (!priceId) return res.status(400).json({ error: `No Stripe price configured for plan: ${planKey}` });
+
+    const data = await loadData();
+    const bd = (data.billingData || {})[bId];
+    if (!bd?.stripeCustomerId) {
+      return res.status(400).json({ error: 'No Stripe customer for this building — save a payment method first' });
+    }
+
+    // Cancel existing subscription if switching plans
+    if (bd.stripeSubscriptionId) {
+      try { await stripe.subscriptions.cancel(bd.stripeSubscriptionId); } catch (_) { /* may already be canceled */ }
+    }
+
+    const subscription = await stripe.subscriptions.create({
+      customer: bd.stripeCustomerId,
+      items: [{ price: priceId }],
+      default_payment_method: (await stripe.customers.retrieve(bd.stripeCustomerId)).invoice_settings?.default_payment_method || undefined,
+      metadata: { buildingId: bId, plan: planKey },
+    });
+
+    bd.stripeSubscriptionId = subscription.id;
+    bd.stripeSubscriptionStatus = subscription.status;
+    bd.plan = planKey.charAt(0).toUpperCase() + planKey.slice(1);
+    if (subscription.status === 'active') bd.payStatus = 'current';
+    data.billingData[bId] = bd;
+    markDirty();
+
+    auditLog('STRIPE_SUBSCRIPTION_CREATED', req.user, { buildingId: bId, subId: subscription.id, plan: planKey });
+    res.json({ subscriptionId: subscription.id, status: subscription.status });
+  } catch (err) {
+    logger.error('stripe_subscribe_failed', { err: err.message });
+    res.status(500).json({ error: 'Failed to create subscription' });
+  }
+});
+
+// Cancel a Stripe Subscription (at period end)
+app.post('/api/billing/cancel-subscription', requireAuth, requireAdmin, async (req, res) => {
+  if (!STRIPE_SECRET_KEY) return res.status(501).json({ error: 'Stripe not configured' });
+  try {
+    const stripe = _stripeClient();
+    const { buildingId } = req.body;
+    const bId = buildingId || req.user?.buildingId;
+    if (!bId) return res.status(400).json({ error: 'buildingId required' });
+    const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds || [])].filter(Boolean));
+    if (req.user.role !== 'superadmin' && !callerBIds.has(bId)) {
+      return res.status(403).json({ error: 'Out of scope' });
+    }
+
+    const data = await loadData();
+    const bd = (data.billingData || {})[bId];
+    if (!bd?.stripeSubscriptionId) {
+      return res.status(400).json({ error: 'No active subscription for this building' });
+    }
+
+    const updated = await stripe.subscriptions.update(bd.stripeSubscriptionId, {
+      cancel_at_period_end: true,
+    });
+
+    bd.stripeSubscriptionStatus = 'cancel_at_period_end';
+    data.billingData[bId] = bd;
+    markDirty();
+
+    auditLog('STRIPE_SUBSCRIPTION_CANCEL_SCHEDULED', req.user, { buildingId: bId, subId: updated.id });
+    res.json({ ok: true, cancelAt: updated.cancel_at });
+  } catch (err) {
+    logger.error('stripe_cancel_failed', { err: err.message });
+    res.status(500).json({ error: 'Failed to cancel subscription' });
+  }
+});
+
+// Fetch real Stripe invoices for a building
+app.get('/api/billing/invoices/:buildingId', requireAuth, requireAdmin, async (req, res) => {
+  if (!STRIPE_SECRET_KEY) return res.status(501).json({ error: 'Stripe not configured' });
+  try {
+    const stripe = _stripeClient();
+    const bId = req.params.buildingId;
+    const callerBIds = new Set([req.user.buildingId, ...(req.user.buildingIds || [])].filter(Boolean));
+    if (req.user.role !== 'superadmin' && !callerBIds.has(bId)) {
+      return res.status(403).json({ error: 'Out of scope' });
+    }
+    const data = await loadData();
+    const bd = (data.billingData || {})[bId];
+    if (!bd?.stripeCustomerId) {
+      return res.json([]);  // No Stripe customer yet — return empty
+    }
+
+    const invoices = await stripe.invoices.list({
+      customer: bd.stripeCustomerId,
+      limit: 24,
+    });
+
+    const result = invoices.data.map(inv => ({
+      id: inv.number || inv.id,
+      date: new Date(inv.created * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      due: inv.due_date ? new Date(inv.due_date * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null,
+      amount: '$' + (inv.amount_paid / 100).toFixed(2),
+      status: inv.status === 'paid' ? 'Paid' : inv.status === 'open' ? 'Pending' : inv.status === 'uncollectible' ? 'Overdue' : inv.status,
+      pdfUrl: inv.invoice_pdf || null,
+      hostedUrl: inv.hosted_invoice_url || null,
+    }));
+
+    res.json(result);
+  } catch (err) {
+    logger.error('stripe_invoices_fetch_failed', { err: err.message });
+    res.status(500).json({ error: 'Failed to fetch invoices' });
+  }
+});
+
+// SA-only: send a one-time Stripe Invoice to a building
+app.post('/api/billing/send-invoice', requireAuth, requireSuperAdmin, async (req, res) => {
+  if (!STRIPE_SECRET_KEY) return res.status(501).json({ error: 'Stripe not configured' });
+  try {
+    const stripe = _stripeClient();
+    const { buildingId, amount, description, dueDate } = req.body;
+    if (!buildingId || !amount || !description) {
+      return res.status(400).json({ error: 'buildingId, amount, and description are required' });
+    }
+
+    const data = await loadData();
+    const bd = (data.billingData || {})[buildingId];
+    if (!bd?.stripeCustomerId) {
+      return res.status(400).json({ error: 'No Stripe customer for this building — building must save a payment method first' });
+    }
+
+    // Create an invoice item, then finalize and send the invoice
+    await stripe.invoiceItems.create({
+      customer: bd.stripeCustomerId,
+      amount: Math.round(parseFloat(amount) * 100),  // dollars to cents
+      currency: 'usd',
+      description,
+    });
+
+    const invoice = await stripe.invoices.create({
+      customer: bd.stripeCustomerId,
+      collection_method: 'send_invoice',
+      days_until_due: dueDate ? Math.max(1, Math.ceil((new Date(dueDate) - Date.now()) / 86400000)) : 30,
+      metadata: { buildingId, type: 'one-time' },
+    });
+
+    const finalized = await stripe.invoices.finalizeInvoice(invoice.id);
+    await stripe.invoices.sendInvoice(finalized.id);
+
+    auditLog('STRIPE_INVOICE_SENT', req.user, { buildingId, invoiceId: finalized.id, amount });
+    res.json({ ok: true, invoiceId: finalized.id, hostedUrl: finalized.hosted_invoice_url });
+  } catch (err) {
+    logger.error('stripe_send_invoice_failed', { err: err.message });
+    res.status(500).json({ error: 'Failed to send invoice' });
+  }
+});
+
 // ── GET /api/data ─────────────────────────────────────────────────────────────
 // Returns ETag header so client can do optimistic concurrency on writes.
 let _dataVersion = Date.now().toString(36);
@@ -8543,6 +9149,26 @@ app.post('/api/data', requireAuth, requireAdmin, async (req, res) => {
   }
 
   dataCache = data;
+
+  // ── Journal the mutation as a single per-collection entry ────────────────
+  // Written to the change_journal table BEFORE persistCache so it survives
+  // container crashes. One entry per collection (not per item) to avoid
+  // flooding the connection pool on large payloads.
+  if (_useDB) {
+    const journalKeys = ['buildings','employees','shifts','schedulePatterns','accounts','companies'];
+    for (const key of journalKeys) {
+      if (Array.isArray(payload[key]) && payload[key].length > 0) {
+        // Journal a summary entry per collection — awaited to ensure durability
+        try {
+          await dbRepo.appendJournal(key, `bulk:${req.user?.id || 'unknown'}`, 'UPDATE',
+            { collection: key, count: payload[key].length, items: payload[key] });
+        } catch (e) {
+          // Journal failure must not block the save
+          logger.error('journal_write_failed', { collection: key, err: e.message });
+        }
+      }
+    }
+  }
 
   // ── Flush to durable storage BEFORE responding ──────────────────────────
   // Pre-fix: markDirty() scheduled a 200ms debounced persist — the client
@@ -9971,8 +10597,11 @@ async function _initServiceBus() {
 
 // Worker — processes one queued alert job (email + SMS fan-out).
 async function _processAlertJob(job) {
-  if (!ACS_CONNECTION_STRING) return;
   const { kind, recipients, subject, message, fromEmail, fromPhone, jobId } = job || {};
+  // BUG FIX: was checking !ACS_CONNECTION_STRING for ALL job types, which blocked
+  // SMS jobs when ACS (email) wasn't configured. Check per-kind instead.
+  if (kind === 'email' && !ACS_CONNECTION_STRING) return;
+  if (kind === 'sms' && !TWILIO_ACCOUNT_SID) return;
 
   if (kind === 'email') {
     const { EmailClient } = require('@azure/communication-email');
@@ -10076,8 +10705,12 @@ app.post('/api/alert', requireAuth, requireAdmin, async (req, res) => {
   const emailList = viaEmail ? employees.filter(e => e.notifEmail && e.email) : [];
   const smsList   = viaSMS   ? employees.filter(e => e.notifSMS  && e.phone)  : [];
 
-  if (!ACS_CONNECTION_STRING) {
-    return res.status(503).json({ error: 'Messaging not configured' });
+  // Validate that the requested channels are configured
+  if (emailList.length && !ACS_CONNECTION_STRING) {
+    return res.status(503).json({ error: 'Email not configured (ACS credentials missing)' });
+  }
+  if (smsList.length && !TWILIO_ACCOUNT_SID) {
+    return res.status(503).json({ error: 'SMS not configured (Twilio credentials missing)' });
   }
 
   const jobId = crypto.randomUUID();
@@ -10240,8 +10873,8 @@ app.post('/api/sms', requireAuth, requireAdmin, async (req, res) => {
   const { to, message } = req.body || {};
   if (!to || !message) return res.status(400).json({ error: 'to and message are required' });
   if (message.length > 1600) return res.status(400).json({ error: 'message too long (1600 char max)' });
-  if (!ACS_CONNECTION_STRING) {
-    return res.status(503).json({ error: 'SMS not configured' });
+  if (!TWILIO_ACCOUNT_SID) {
+    return res.status(503).json({ error: 'SMS not configured (Twilio credentials missing)' });
   }
   const normalized = toE164(to);
   if (!normalized) return res.status(400).json({ error: `Invalid phone number: ${to}` });
@@ -10368,6 +11001,7 @@ let _server;
 
   if (!ACS_CONNECTION_STRING) logger.warn('acs_not_configured');
   if (!TWILIO_ACCOUNT_SID)    logger.warn('twilio_not_configured');
+  if (!STRIPE_SECRET_KEY)     logger.warn('stripe_not_configured');
   if (IS_PROD && DATA_FILE.toLowerCase().includes('onedrive')) {
     logger.error('PHI_DATA_FILE_ON_ONEDRIVE_NOT_PERMITTED_IN_PRODUCTION');
     process.exit(1);
